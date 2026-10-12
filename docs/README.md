@@ -17,6 +17,7 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 | [`guides/`](guides/) | Executable user workflows for a first repository, existing builds, encryption, [packaging ordinary files](guides/project-from-files.md), and [package resolution](guides/resolve-packages.md). |
 | [`api/`](api/README.md) | Network capability maps for liquid's server components, indexed below. |
 | [`build/`](build/README.md) | Local and continuous-integration build verification, indexed below. |
+| [`releases/`](releases/README.md) | One page per tagged release and how a release is cut; [`v0.1.0`](releases/v0.1.0.md) is the first and lists every implemented feature and command. |
 
 ## Library
 

@@ -94,3 +94,29 @@ Use [status](status.md) and the relevant implementation page for current behavio
 - Support every language, platform and operating system — with the tier of support
   stated honestly rather than implied.
 
+## 2026-10-12: the duplicates returned, and were removed again
+
+By the `v0.1.0` release the root `README.md` had grown back to 614 lines. After the front door of
+issue #284 it again carried the names, the design axioms, the list of goals, the library targets,
+two more build sections, a quoted status inventory, and a second documentation index with repeated
+rows. `CLAUDE.md` carried about 260 lines of per-issue status under *What this repo is*.
+
+Both were cut back in the release pull request. Nothing was moved, because every passage already
+had a maintained home:
+
+| Removed from | Passage | Where it lives |
+|---|---|---|
+| `README.md` | Names, design axioms, what liquid must do | [feature index](../features/README.md) |
+| `README.md` | Library and binary targets | [libliquid](libliquid.md) |
+| `README.md` | Second and third build sections, benchmark option | [local build](../build/local.md) |
+| `README.md` | Quoted phase status | [implementation status](status.md) |
+| `README.md` | Per-page documentation list | [documentation index](../README.md) |
+| `README.md` | Where liquid sits beside Metis and Zetta | [feature 23](../features/23-metis-and-zetta.md) |
+| `CLAUDE.md` | Per-issue status paragraphs | [implementation status](status.md), with each issue cited on its topic page |
+
+A check of the removed `CLAUDE.md` text against `docs/library/`, `docs/cli/`, `docs/build/` and
+`docs/api/` found every code term in it present there. Of the 104 issue numbers it cited, four
+(#54, #82, #83 and #288) are not cited on any of those pages.
+
+The cause is the same as before: merges of long-lived branches re-added passages that an earlier
+change had removed. `CLAUDE.md` now says that feature status does not live in it.
