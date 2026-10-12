@@ -193,8 +193,10 @@ the first.
 
 1. **Steve names the version.** Confirm what Lake is built from: liquid-bridge's pin of
    `modules/liquid` must be an ancestor of `origin/main`.
-2. **On a branch `docs/release-vX.Y.Z`**, move the version in both places: `version_string()` in
-   `src/version.cpp` and `project(liquid VERSION ...)` in `CMakeLists.txt`. The library's
+2. **On a branch `docs/release-vX.Y.Z`**, move the version in all three places:
+   `current_version()` in `include/liquid/version.hpp`, `version_string()` in `src/version.cpp`,
+   and `project(liquid VERSION ...)` in `CMakeLists.txt`. `Version.StringMatchesStruct` fails when
+   the first two disagree. The library's
    `VERSION`/`SOVERSION` properties are the ABI version and move only on an ABI break.
 3. **Write `docs/releases/vX.Y.Z.md`** and add it to `docs/releases/README.md`: what the release
    includes, what it does not, known issues with their tracking issues, and verification. The

@@ -9,9 +9,10 @@ does not, what is knowingly still broken, and how it was verified.
 
 ## Conventions
 
-- **Cut a release from `main`.** The version is `version_string()` in `src/version.cpp` and
-  `project(liquid VERSION ...)` in `CMakeLists.txt`; move both in the pull request that adds the
-  release page. The steps are in the root `CLAUDE.md`, under *Cutting a release*.
+- **Cut a release from `main`.** The version is `current_version()` in
+  `include/liquid/version.hpp`, `version_string()` in `src/version.cpp` and
+  `project(liquid VERSION ...)` in `CMakeLists.txt`; move all three in the pull request that adds
+  the release page. The steps are in the root `CLAUDE.md`, under *Cutting a release*.
 - **Tag the merge commit** of that pull request `vX.Y.Z` and publish the GitHub release from the
   page.
 - **A first release, or one after a long gap, lists everything in it**, not a summary. Check the
