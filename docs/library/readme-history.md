@@ -94,29 +94,40 @@ Use [status](status.md) and the relevant implementation page for current behavio
 - Support every language, platform and operating system — with the tier of support
   stated honestly rather than implied.
 
-## 2026-10-12: the duplicates returned, and were removed again
+## 2026-10-12: the README becomes the introduction
 
 By the `v0.1.0` release the root `README.md` had grown back to 614 lines. After the front door of
 issue #284 it again carried the names, the design axioms, the list of goals, the library targets,
 two more build sections, a quoted status inventory, and a second documentation index with repeated
 rows. `CLAUDE.md` carried about 260 lines of per-issue status under *What this repo is*.
 
-Both were cut back in the release pull request. Nothing was moved, because every passage already
-had a maintained home:
+The release pull request rewrote the README once, as the introduction to the project, instead of
+cutting it back to the short front door again. A bare front door told a newcomer how to build
+liquid and nothing about why it exists. The page now opens with what liquid is, the next
+generation of Git, and makes the argument of the [research synthesis](../research/99-synthesis/README.md):
+what Git left on the table, the thesis, drips and changes, what one tool owning the whole stack
+makes nearly free, and a path in from Git. It keeps the first result and the tour, lists what
+works today with a link per capability, and says what is new and what is not there yet. The
+design axioms, the names and the library targets are on the page once each.
 
-| Removed from | Passage | Where it lives |
-|---|---|---|
-| `README.md` | Names, design axioms, what liquid must do | [feature index](../features/README.md) |
-| `README.md` | Library and binary targets | [libliquid](libliquid.md) |
-| `README.md` | Second and third build sections, benchmark option | [local build](../build/local.md) |
-| `README.md` | Quoted phase status | [implementation status](status.md) |
-| `README.md` | Per-page documentation list | [documentation index](../README.md) |
-| `README.md` | Where liquid sits beside Metis and Zetta | [feature 23](../features/23-metis-and-zetta.md) |
-| `CLAUDE.md` | Per-issue status paragraphs | [implementation status](status.md), with each issue cited on its topic page |
+What left the README, and where it lives:
 
-A check of the removed `CLAUDE.md` text against `docs/library/`, `docs/cli/`, `docs/build/` and
-`docs/api/` found every code term in it present there. Of the 104 issue numbers it cited, four
-(#54, #82, #83 and #288) are not cited on any of those pages.
+| Passage | Where it lives |
+|---|---|
+| The repeated copies of names, axioms, goals, targets and build sections | One copy each stays in the README; the full text is in the [feature index](../features/README.md), [libliquid](libliquid.md) and [local build](../build/local.md) |
+| The list of what liquid must do | [feature index](../features/README.md); the README lists what it does today instead |
+| Quoted phase status | [implementation status](status.md) |
+| The per-page documentation list, with repeated rows | [documentation index](../README.md) |
+| The benchmark option and install layout | [local build](../build/local.md) |
 
-The cause is the same as before: merges of long-lived branches re-added passages that an earlier
-change had removed. `CLAUDE.md` now says that feature status does not live in it.
+A check of every removed passage against `docs/` found the index lines and a few reworded
+sentences as the only text without a near-verbatim copy; no capability, option or decision was
+described only in the README.
+
+The status text removed from `CLAUDE.md` was checked against `docs/library/`, `docs/cli/`,
+`docs/build/` and `docs/api/`: every code term in it is present there. Of the 104 issue numbers
+it cited, four (#54, #82, #83 and #288) are not cited on any of those pages.
+
+The cause of the growth is the same as before: merges of long-lived branches re-added passages
+that an earlier change had removed. `CLAUDE.md` now has *The README is the introduction*, which
+says each thing appears once and that a conflict in `README.md` is resolved by hand.

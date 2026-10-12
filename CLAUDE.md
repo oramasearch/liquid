@@ -146,6 +146,26 @@ Unix-domain socket fixtures use the scoped `tests/socket_fixture.hpp` helper, in
 repository paths. Native byte limits, temporary-root fallback, and cleanup are documented in
 [`docs/build/socket-fixtures.md`](docs/build/socket-fixtures.md) (liquid #305).
 
+### The README is the introduction
+
+Steve, 2026-10-12: *"liquid is a next generation git... the readme should act like it"* and *"the
+readme should be a great introduction, with docs/\* as spinoffs for details"*.
+
+The root `README.md` is what someone who has just found liquid reads. It says what liquid is (the
+next generation of Git), argues why it is one tool in the voice of the
+[research synthesis](docs/research/99-synthesis/README.md), shows a first result, tours the
+workflows, and says what works today and what does not. Rules that keep it good:
+
+- **Every section hands off to a `docs/` page** for the detail. The README states the capability
+  in a sentence and links; it does not carry per-issue status, option lists or design notes.
+- **Each thing appears once.** The page had grown to 614 lines by repeating its own sections
+  after merges. Before adding a section, check that it is not already there; when a merge
+  conflicts in `README.md`, resolve it by hand and never keep both sides.
+- **It claims only what `docs/library/status.md` says is implemented**, and it has a section
+  that says plainly what is not there yet.
+- **Commands shown are real**: taken from the guides, which run as tests, or checked against
+  `docs/reference/cli/`.
+
 ### Formatting
 
 `clang-format` with the repository's `.clang-format` (LLVM base, 100 columns, 4-space indents) before
@@ -163,9 +183,8 @@ skipped. Treat them as the same checklist, not as an afterthought.
 4. **The status record, the docs index, and this file.** Any change to what liquid *is* or
    what it *does* updates `docs/features/README.md`, the implementation status in
    `docs/library/status.md`, and this file. A new top-level directory or a new convention
-   updates the root `README.md` and this file. The root `README.md` is a front door: a
-   one-paragraph statement, a short status, build commands, and links; feature and status
-   detail lives under `docs/`. A new `docs/` subdirectory that is not in `docs/README.md`
+   updates the root `README.md` and this file. See *The README is the introduction*
+   below. A new `docs/` subdirectory that is not in `docs/README.md`
    is a bug.
 5. **Proof is local.** Build and run the suite (`cmake --build build && ctest --test-dir build`)
    and record the counts in the pull request. Linux proof is the cluster BuildKit lane
