@@ -216,6 +216,23 @@ Do not leave a superseded claim standing next to its correction.
 **No estimates.** Never preface work with size or duration guesses. Do the task, report
 what changed.
 
+## Branches: feature branches and pull requests always target `dev`
+
+Steve, 2026-10-12: *"shouldn't you be merging into dev branch? we're not cutting a release yet"*, and
+*"feature branches / prs always target dev branch"*.
+
+- **Branch from `origin/dev`**, never from `main`.
+- **Open every pull request with `--base dev`**, written out. This repository's default branch on
+  GitHub is `main`, so `gh pr create` without `--base` targets `main`.
+- **Before merging, read the base back**: `gh pr view <n> --json baseRefName` must say `dev`.
+- **Never push, merge or fast-forward to `main`** in ordinary work. `main` is the last release and
+  moves only by the release pull request that promotes `dev` to `main`, when Steve names a version
+  (*Cutting a release* below).
+- Images built for the dev cluster come from `dev`.
+
+The org-wide rule is in the umbrella bridge's `CLAUDE.md`
+(https://github.com/oramasearch/orama-bridge/blob/main/CLAUDE.md).
+
 ## Cutting a release
 
 A release is a tag on `main`. The pages and their conventions are in
