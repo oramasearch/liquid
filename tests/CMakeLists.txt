@@ -254,6 +254,14 @@ target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TLS_CERTIFICATE="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
   LIQUID_TLS_PRIVATE_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem"
   LIQUID_SECRET_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sealed-secret")
+# The version lives in CMakeLists.txt, include/liquid/version.hpp and src/version.cpp.
+# Version.MatchesProjectVersion compares the code with project(VERSION); release-notes-page
+# fails when the release has no page under docs/releases/.
+target_compile_definitions(liquid-tests PRIVATE
+  LIQUID_PROJECT_VERSION="${PROJECT_VERSION}")
+add_test(NAME release-notes-page
+  COMMAND ${CMAKE_COMMAND} -E cat
+    ${PROJECT_SOURCE_DIR}/docs/releases/v${PROJECT_VERSION}.md)
 target_compile_definitions(liquid-tests PRIVATE
   LIQUID_TRANSPARENCY_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/transparency/fixtures"
   LIQUID_TRANSPARENCY_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/transparency/fixture.json"

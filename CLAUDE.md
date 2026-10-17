@@ -10,9 +10,10 @@ the bridge remains authoritative.
 **liquid** — a version control system, build system, package manager, artifact service
 and runtime in one program. See [`README.md`](README.md).
 
-**Status:** The current release is **v0.1.0** (2026-10-12), the first tagged release;
-[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md) lists everything in it. Lake `v0.1.0` is built
-from this source.
+**Status:** The current release is **v0.2.0** (2026-10-17);
+[`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md) says what changed since `v0.1.0`, and
+[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md) is the full inventory. Lake `v0.2.0` is built
+from liquid `v0.1.0` (`f669726`), the same library source.
 
 **Feature status does not live in this file.** The authoritative inventory of what libliquid and
 the `liquid` binary implement, by phase, with the known limits, is
@@ -237,15 +238,16 @@ The org-wide rule is in the umbrella bridge's `CLAUDE.md`
 
 A release is a tag on `main`. The pages and their conventions are in
 [`docs/releases/`](docs/releases/README.md); read its `README.md` first. `v0.1.0` (2026-10-12) was
-the first.
+the first. The org-wide procedure is the `cut-release` skill; this section adds liquid's specifics.
 
 1. **Steve names the version.** Confirm what Lake is built from: liquid-bridge's pin of
-   `modules/liquid` must be an ancestor of `origin/main`.
-2. **On a branch `docs/release-vX.Y.Z`**, move the version in all three places:
+   `modules/liquid` must be an ancestor of `origin/dev`.
+2. **On a branch `docs/release-vX.Y.Z` from `origin/dev`**, move the version in all three places:
    `current_version()` in `include/liquid/version.hpp`, `version_string()` in `src/version.cpp`,
    and `project(liquid VERSION ...)` in `CMakeLists.txt`. `Version.StringMatchesStruct` fails when
-   the first two disagree. The library's
-   `VERSION`/`SOVERSION` properties are the ABI version and move only on an ABI break.
+   the first two disagree, `Version.MatchesProjectVersion` when the code and `CMakeLists.txt`
+   disagree, and the ctest `release-notes-page` when `docs/releases/vX.Y.Z.md` is missing. The
+   library's `VERSION`/`SOVERSION` properties are the ABI version and move only on an ABI break.
 3. **Write `docs/releases/vX.Y.Z.md`** and add it to `docs/releases/README.md`: what the release
    includes, what it does not, known issues with their tracking issues, and verification. The
    feature list follows `docs/library/status.md`; a specification under `docs/features/` is not a
@@ -253,8 +255,14 @@ the first.
 4. **Prove it**: build, run the full suite, and put the counts in the page. A failure is fixed or
    listed as a known issue with an issue filed, never left out. Run the five finishing checks
    below.
-5. **Open the pull request into `main`** and merge it with a merge commit, never a squash.
-6. **Tag the merge commit** `vX.Y.Z` (`git tag vX.Y.Z <merge commit> && git push origin vX.Y.Z`),
+   Linux proof is the cluster BuildKit lane
+   (`codex-work/build/liquid-linux-test/run-liquid-linux-tests.sh <worktree> <label>`).
+5. **Open the pull request into `dev`** (`--base dev`, read back) and merge it with a merge commit,
+   never a squash. Then open the release pull request `--base main --head dev`, write its title and
+   description, and merge it with a merge commit and without `--delete-branch` (the head is `dev`).
+   This is the only pull request that targets `main`.
+6. **Tag the release pull request's merge commit** `vX.Y.Z`
+   (`git tag -a vX.Y.Z <merge commit> -m "liquid vX.Y.Z" && git push origin vX.Y.Z`),
    then publish the GitHub release from the page:
    `gh release create vX.Y.Z --repo oramasearch/liquid --verify-tag --title "Release vX.Y.Z" --notes-file <page without its first heading, relative links made absolute at the tag>`.
 
