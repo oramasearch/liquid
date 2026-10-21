@@ -188,9 +188,17 @@ class decoder {
         case 3:
             return read_text(*argument);
         case 4:
-            return read_array(*argument);
-        case 5:
-            return read_map(*argument);
+        case 5: {
+            // Arrays and maps recurse. A hostile input of nested one-element arrays would
+            // otherwise exhaust the stack in two bytes per level (liquid #407).
+            if (depth_ == maximum_depth) {
+                return std::unexpected(failure("nesting is deeper than 128 levels"));
+            }
+            ++depth_;
+            auto nested = major == 4 ? read_array(*argument) : read_map(*argument);
+            --depth_;
+            return nested;
+        }
         default:
             return std::unexpected(failure("unsupported major type"));
         }
@@ -305,8 +313,11 @@ class decoder {
         return value{std::move(result)};
     }
 
+    static constexpr std::size_t maximum_depth = 128;
+
     std::span<const std::byte> input_;
     std::size_t position_{0};
+    std::size_t depth_{0};
 };
 
 } // namespace
