@@ -269,6 +269,17 @@ constexpr auto flags_identity = std::to_array<flag>({
      "Show only the public TAAP/1 document as unpadded base64url canonical CBOR, "
      "without a newline. Only for show; incompatible with --json (exit 2).",
      "false"},
+    {"--chain",
+     {},
+     "Show the identity's whole public document chain, oldest first, as unpadded base64url "
+     "canonical CBOR, without a newline: the input to identity trust on another machine. Only "
+     "for show; incompatible with --document and --json (exit 2).",
+     "false"},
+    {"--accept-compromise-rotation",
+     {},
+     "Only for trust: also accept rotations that carry a compromise declaration but no signature "
+     "from the key they replace. Decide this out of band; a sync never does.",
+     "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
 });
 constexpr auto flags_release = std::to_array<flag>({
@@ -1010,13 +1021,18 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::retain},
     {"identity",
-     "identity [show [--document]|rotate [--to software|fido2|piv:9c]] [--json]",
-     "show or rotate the device identity",
+     "identity [show [--document|--chain]|rotate [--to software|fido2|piv:9c]|trust "
+     "<chain|-> [--accept-compromise-rotation]] [--json]",
+     "show, rotate, or trust identities",
      "available",
      flags_identity,
-     "Show the device TAAP identity, export its public document for sign-up, or rotate its signing "
-     "key with a linked successor document. The private signing key stays local for every custody.",
-     "liquid identity show --document\nliquid identity rotate --json",
+     "Show the device TAAP identity, export its public document for sign-up or its whole chain "
+     "for other machines, rotate its signing key with a linked successor document, or trust "
+     "another identity's chain. A signer name verifies only against a chain this machine holds: "
+     "its own, one trusted here, or one received and verified during sync. The private signing "
+     "key stays local for every custody.",
+     "liquid identity show --document\nliquid identity show --chain > me.chain\nliquid identity "
+     "trust - < colleague.chain\nliquid identity rotate --json",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::identity},

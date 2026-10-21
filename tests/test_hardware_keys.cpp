@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -682,6 +683,17 @@ auto open_identity(std::string_view name) -> liquid::signer {
     return std::move(*signer);
 }
 
+// A verifier binds a signer's name to its key only through a chain it holds (liquid#383), so the
+// current home trusts each signer's (single, initial) identity document.
+auto trust_identities(std::initializer_list<const liquid::signer*> signers) -> void {
+    for (const auto* value : signers) {
+        const auto document = value->document();
+        ASSERT_TRUE(document) << document.error().message;
+        const auto trusted = liquid::trust_identity_chain(std::array{*document});
+        ASSERT_TRUE(trusted) << trusted.error().message;
+    }
+}
+
 auto test_signatures(std::string_view name, std::string_view destination) -> void {
     auto signer = open_identity(name);
     const auto original = signer.identity();
@@ -904,6 +916,23 @@ TEST(ReleaseApproval, threshold_counts_distinct_valid_identities) {
     ASSERT_TRUE(first_approval) << first_approval.error().message;
     ASSERT_TRUE(second_approval) << second_approval.error().message;
 
+    // The verifier runs in `third`'s home. Until it trusts the other identities, the policy's
+    // issuer is unknown and the policy is refused.
+    const auto both = std::array{*first_approval, *second_approval};
+    auto unknown_policy = liquid::verify_release(artifact, *policy, both);
+    ASSERT_FALSE(unknown_policy);
+    EXPECT_EQ(unknown_policy.error().code, liquid::errc::unauthorized);
+    trust_identities({&policy_signer});
+    auto unknown_approvers = liquid::verify_release(artifact, *policy, both);
+    ASSERT_TRUE(unknown_approvers) << unknown_approvers.error().message;
+    EXPECT_FALSE(unknown_approvers->satisfied);
+    EXPECT_TRUE(unknown_approvers->distinct_valid_signers.empty());
+    auto expected_unknown =
+        std::vector<std::string>{first.identity().taap_id, second.identity().taap_id};
+    std::ranges::sort(expected_unknown);
+    EXPECT_EQ(unknown_approvers->unknown_signers, expected_unknown);
+    trust_identities({&first, &second});
+
     const auto one = std::array{*first_approval};
     auto one_result = liquid::verify_release(artifact, *policy, one);
     ASSERT_TRUE(one_result) << one_result.error().message;
@@ -948,6 +977,7 @@ TEST(ReleaseApproval, approval_after_declared_compromise_is_rejected) {
     auto rotated = liquid::runtime::block_on(second.rotate(liquid::compromise_declaration{
         second.identity().key_fingerprint, signature->signed_at, "release key compromised"}));
     ASSERT_TRUE(rotated) << rotated.error().message;
+    trust_identities({&policy_signer, &first});
     const auto approvals = std::array{*first_approval, *second_approval};
     auto result = liquid::verify_release(artifact, *policy, approvals);
     ASSERT_TRUE(result) << result.error().message;

@@ -108,14 +108,63 @@ private:
     std::unique_ptr<impl> impl_;
 };
 
+// Verifies a signature attributed to the identity named by `by.taap_id`. The name is bound to a
+// key only through that identity's document chain, read from this machine's identity store (the
+// local identity and every chain accepted by `trust_identity_chain`). Without a chain the result
+// is the unknown-signer error (`is_unknown_signer`), never `true`; `by.public_key` is not trusted.
 [[nodiscard]] LIQUID_EXPORT result<bool> verify(const actor& by,
                                                 std::string_view artifact_type,
                                                 std::span<const std::byte> canonical_body,
                                                 const signature& signed_value);
 
+// Verifies a signature against an identity chain the caller supplies, for example one carried
+// with a request. The chain must start at the identity's initial document, whose key the name is
+// derived from, and every rotation must be signed by the key it replaces; a rotation that relies
+// only on a compromise declaration is accepted solely from the local identity store.
+[[nodiscard]] LIQUID_EXPORT result<bool> verify(const actor& by,
+                                                std::span<const identity_document> chain,
+                                                std::string_view artifact_type,
+                                                std::span<const std::byte> canonical_body,
+                                                const signature& signed_value);
+
+// Checks only that `key` made the signature. It says nothing about who holds the key: use it
+// solely for a key the caller itself bound to a name, such as a session key it minted and stored.
+[[nodiscard]] LIQUID_EXPORT result<bool>
+verify_key_signature(const actor& key,
+                     std::string_view artifact_type,
+                     std::span<const std::byte> canonical_body,
+                     const signature& signed_value);
+
+// True for the error `verify` returns when no identity chain binds the signer's name to a key.
+// Its code is `errc::unauthorized`, so a caller that refuses every error stays closed.
+[[nodiscard]] LIQUID_EXPORT bool is_unknown_signer(const error& value) noexcept;
+
 [[nodiscard]] LIQUID_EXPORT result<bool> verify_document(const identity_document& document);
 [[nodiscard]] LIQUID_EXPORT result<verified_identity>
 verify_chain(std::span<const identity_document> documents);
+
+struct LIQUID_EXPORT identity_trust_options {
+    // Accept rotations beyond the already-stored chain that carry only a compromise declaration
+    // and no signature from the key they replace. Only an out-of-band decision should set this.
+    bool accept_compromise_rotation{};
+};
+
+// Verifies `chain` and stores it in this machine's identity store, so `verify(actor, ...)`
+// resolves its name. A chain already stored may only be extended: a chain that differs from the
+// stored one is refused with `errc::conflict`.
+[[nodiscard]] LIQUID_EXPORT result<verified_identity>
+trust_identity_chain(std::span<const identity_document> chain, identity_trust_options options = {});
+
+// Returns the stored chain for `taap_id` (the local identity or one accepted by
+// `trust_identity_chain`), or the unknown-signer error when there is none.
+[[nodiscard]] LIQUID_EXPORT result<std::vector<identity_document>>
+load_identity_chain(std::string_view taap_id);
+
+// A chain on the wire: canonical CBOR array of complete encoded identity documents, oldest first.
+[[nodiscard]] LIQUID_EXPORT result<std::vector<std::byte>>
+encode_identity_chain(std::span<const identity_document> chain);
+[[nodiscard]] LIQUID_EXPORT result<std::vector<identity_document>>
+decode_identity_chain(std::span<const std::byte> encoded);
 
 struct LIQUID_EXPORT argon2_parameters {
     std::uint32_t memory_kib{64U * 1024U};

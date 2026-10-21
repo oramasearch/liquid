@@ -62,7 +62,11 @@ patch { v:1, kind:"patch", supersedes:result_id, target:result_id,
 
 `object` identifies the frontend's relocatable replacement object. `create_patch` stores the object
 and record, signs a `hot_update/1` attestation, and indexes the record by target. `verify_patch`
-requires a matching valid signature before reading or delivering the object. `hot_update::status`
+requires a matching valid signature before reading or delivering the object. The signature counts
+only when the issuer's name is bound to its key by an identity chain this machine holds (liquid#383):
+a patch attested by an identity with no stored chain is refused with `hot-update attestation is
+invalid: unknown signer`, before the object is read (`HotUpdate.PatchFromAnUnknownSignerIsRefused`).
+Which identities may sign a patch at all is a separate allow-list, liquid#388. `hot_update::status`
 walks the signed `supersedes` chain and returns the base artifact plus every patch in application
 order, so composition remains reconstructible.
 

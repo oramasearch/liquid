@@ -302,6 +302,20 @@ auto decode_item(std::uint8_t type, const cbor::value& payload) -> result<sync_i
         }
         return sync_item{.kind = sync_item_kind::presence, .body = *body};
     }
+    if (type == static_cast<std::uint8_t>(sync_item_kind::identity)) {
+        const auto* author_field = find(payload, "author");
+        const auto* body_field = find(payload, "body");
+        auto author = author_field
+                          ? decode_actor(*author_field)
+                          : result<actor>{std::unexpected(failure("identity author missing"))};
+        const auto* body =
+            body_field ? std::get_if<cbor::value::bytes>(&body_field->data) : nullptr;
+        if (!author || !body) {
+            return std::unexpected(author ? failure("invalid identity frame") : author.error());
+        }
+        return sync_item{
+            .kind = sync_item_kind::identity, .author = std::move(*author), .body = *body};
+    }
     return std::unexpected(failure("unknown metadata frame type"));
 }
 
@@ -324,6 +338,9 @@ auto item_value(const sync_item& item) -> cbor::value {
     }
     if (item.kind == sync_item_kind::presence) {
         return map({{"body", bytes(item.body)}});
+    }
+    if (item.kind == sync_item_kind::identity) {
+        return map({{"author", actor_value(item.author)}, {"body", bytes(item.body)}});
     }
     return map({{"name", item.name}, {"change", to_string(item.reference.value)}});
 }

@@ -17,7 +17,13 @@ policy by digest prevents an approval from moving to a different role, threshold
 expiry.
 
 `verify_release(artifact, policy, approvals)` first verifies the policy signature and expiry, then
-verifies every matching approval through the normal identity-chain verifier. It counts distinct
+verifies every matching approval through the normal identity-chain verifier. Both bind each signer's
+name to its key only through an identity chain the verifying machine holds (liquid#383): a policy
+whose issuer is unknown is refused with `errc::unauthorized`, and an approval from a listed identity
+whose chain is unknown does not count and is reported in `unknown_signers`. Distribute each signer's
+chain with `liquid identity show --chain` and accept it with `liquid identity trust <chain>`
+([identity.md](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)). Which
+identity may issue the policy is liquid#384. It counts distinct
 TAAP identity identifiers that appear in the policy. Repeated approvals from one identity count
 once. An approval from an unlisted identity, for another artifact or policy, after policy expiry,
 or at or after that key's signed compromise declaration does not count. The result reports
@@ -46,8 +52,9 @@ surface, not the threshold rule.
 `.liquid/release/policy.cbor`; `--role` defaults to `targets`, `--not-after` accepts an explicit UTC
 expiry, and the default expiry is printed. `liquid release approve <artifact>` writes one approval
 per issuer below `.liquid/release/approvals/<artifact>/`. `liquid release verify <artifact>` loads
-those canonical records, prints the distinct count and missing identities, and exits nonzero when
-the threshold is not satisfied.
+those canonical records, prints the distinct count and missing identities, prints
+`unknown_signer=<id>` for each listed identity whose approval is present but whose chain this
+machine does not hold, and exits nonzero when the threshold is not satisfied.
 
 Policy and approval files are evidence and should be committed or distributed with the release.
 The directory is not a private-key store.
@@ -57,7 +64,10 @@ The directory is not a private-key store.
 `ReleaseApproval.threshold_counts_distinct_valid_identities` covers one-of-three refusal,
 duplicate-identity counting, and two-of-three success.
 `ReleaseApproval.approval_after_declared_compromise_is_rejected` proves that the identity chain's
-signing-time compromise rule applies to release approvals.
+signing-time compromise rule applies to release approvals. The threshold test first verifies with no
+other identity trusted (the policy is refused), then with only the policy issuer trusted (both
+approvals are `unknown_signers`), before trusting the approvers. `cli-release` does the same through
+`liquid identity show --chain` and `liquid identity trust`.
 
 Real hardware is not required by CI. Hardware runs should record the date, token model, selected
 backend, and result here when performed.

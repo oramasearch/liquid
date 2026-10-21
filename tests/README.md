@@ -299,7 +299,12 @@ identity through the CLI, then decodes, re-encodes, and verifies the stored cano
 through the public API. `test_hardware_keys.cpp` drives CTAP2, PIV, and TPM command-level doubles,
 cross-backend identity rotation, private-key absence in CLI document output for software, FIDO2
 EdDSA/ES256, and PIV custody, malformed signature rejection, and threshold release approval
-including compromise-time refusal. On Linux it also drives an installed `swtpm` through the TPM
+including compromise-time refusal and refusal of signers whose identity chain is not trusted.
+Signer attribution (liquid#383) is covered where each verifier lives: `test_identity.cpp` (chain
+rules and the unknown-signer result), `test_sync.cpp` (identity frames), `attestation/`,
+`admission/`, `build/test_policy.cpp`, `test_hot_update.cpp`, and `cli/release.cmake`. Tests that
+model two machines in one process switch `LIQUID_HOME` between identities and move chains with
+`trust_identity_chain` or `liquid identity show --chain` / `identity trust`. On Linux it also drives an installed `swtpm` through the TPM
 command transport.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,

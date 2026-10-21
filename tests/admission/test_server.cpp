@@ -207,6 +207,15 @@ auto mint_with_cli(const std::filesystem::path& root) -> liquid::attestation {
                         " && LIQUID_HOME=" + shell_quote(root / "identity") + " " +
                         shell_quote(LIQUID_CLI) + " attest verify " + liquid::to_string(*id);
     EXPECT_EQ(std::system(verify.c_str()), 0);
+    // The admission server verifies the issuer's name only against an identity chain it holds
+    // (liquid#383), so the issuer's chain is trusted in the server's own home.
+    const auto trust = "LIQUID_HOME=" + shell_quote(root / "identity") + " " +
+                       shell_quote(LIQUID_CLI) + " identity show --chain > " +
+                       shell_quote(root / "issuer.chain") +
+                       " && LIQUID_HOME=" + shell_quote(root / "server-home") + " " +
+                       shell_quote(LIQUID_CLI) + " identity trust - < " +
+                       shell_quote(root / "issuer.chain") + " > " + shell_quote(root / "trust.out");
+    EXPECT_EQ(std::system(trust.c_str()), 0);
     auto opened = liquid::runtime::block_on(liquid::store::open(root / ".liquid-store"));
     EXPECT_TRUE(opened) << opened.error().message;
     if (!opened) {
@@ -229,7 +238,9 @@ auto server_arguments(const std::filesystem::path& root,
                       std::uint16_t port,
                       std::uint16_t control_port,
                       bool tls) -> std::vector<std::string> {
-    auto output = std::vector<std::string>{LIQUID_CLI,
+    auto output = std::vector<std::string>{"/usr/bin/env",
+                                           "LIQUID_HOME=" + (root / "server-home").string(),
+                                           LIQUID_CLI,
                                            "serve",
                                            "admission",
                                            "--policy",
@@ -252,7 +263,9 @@ auto server_arguments(const std::filesystem::path& root,
 auto policy_set_server_arguments(const std::filesystem::path& root,
                                  std::uint16_t port,
                                  std::uint16_t control_port) -> std::vector<std::string> {
-    return {LIQUID_CLI,
+    return {"/usr/bin/env",
+            "LIQUID_HOME=" + (root / "server-home").string(),
+            LIQUID_CLI,
             "serve",
             "admission",
             "--policies",

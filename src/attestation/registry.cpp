@@ -411,10 +411,15 @@ verify_attestation(const attestation& value, const attestation_verification_opti
     if (!body) {
         return attestation_verification{false, body.error().message};
     }
-    auto signature = verify(value.issuer, "attestation", *body, *signed_value);
+    auto signature =
+        options.issuer_chain.empty()
+            ? verify(value.issuer, "attestation", *body, *signed_value)
+            : verify(value.issuer, options.issuer_chain, "attestation", *body, *signed_value);
     if (!signature || !*signature) {
-        return attestation_verification{
-            false, signature ? "invalid attestation signature" : signature.error().message};
+        return attestation_verification{false,
+                                        signature ? "invalid attestation signature"
+                                                  : signature.error().message,
+                                        !signature && is_unknown_signer(signature.error())};
     }
     auto schema = attestation_profile_registry::global().validate(value);
     if (!schema) {

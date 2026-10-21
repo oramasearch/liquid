@@ -2,7 +2,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <utility>
@@ -333,6 +335,45 @@ TEST(HotUpdate, UnsignedPatchIsRefused) {
 
     ASSERT_FALSE(verified);
     EXPECT_EQ(verified.error().code, liquid::errc::unauthorized);
+}
+
+// liquid#383: a patch attested by an identity this machine has no chain for is an unknown signer,
+// and the patch is refused before anything is delivered.
+TEST(HotUpdate, PatchFromAnUnknownSignerIsRefused) {
+    const auto* previous = std::getenv("LIQUID_HOME");
+    const auto restore = previous ? std::optional<std::string>{previous} : std::nullopt;
+    const auto author_home = liquid::test::fixture_path("liquid-hot-update-author-home");
+    const auto receiver_home = liquid::test::fixture_path("liquid-hot-update-receiver-home");
+    std::error_code code;
+    std::filesystem::remove_all(author_home, code);
+    std::filesystem::remove_all(receiver_home, code);
+    setenv("LIQUID_HOME", author_home.c_str(), 1);
+    {
+        auto fixture = hot_update_repository{};
+        const auto plan = liquid::hot_update_plan{.supersedes = fixture.result(18),
+                                                  .target = fixture.result(19),
+                                                  .tier = liquid::hot_update_tier::tier_1,
+                                                  .outcome = liquid::hot_update_outcome::patched,
+                                                  .symbols = {"answer"}};
+        auto created = liquid::runtime::block_on(
+            liquid::hot_update::create_patch(fixture.value(), plan, {std::byte{5}, std::byte{6}}));
+        ASSERT_TRUE(created) << created.error().message;
+
+        setenv("LIQUID_HOME", receiver_home.c_str(), 1);
+        auto verified = liquid::runtime::block_on(
+            liquid::hot_update::verify_patch(fixture.value(), created->record));
+        ASSERT_FALSE(verified) << "a patch signed by an unknown identity was accepted";
+        EXPECT_EQ(verified.error().code, liquid::errc::unauthorized);
+        EXPECT_NE(verified.error().message.find("unknown signer"), std::string::npos)
+            << verified.error().message;
+    }
+    if (restore) {
+        setenv("LIQUID_HOME", restore->c_str(), 1);
+    } else {
+        unsetenv("LIQUID_HOME");
+    }
+    std::filesystem::remove_all(author_home, code);
+    std::filesystem::remove_all(receiver_home, code);
 }
 
 } // namespace

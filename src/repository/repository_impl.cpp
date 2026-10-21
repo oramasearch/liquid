@@ -3170,6 +3170,26 @@ auto import_synced_drip(repository_document& candidate,
     return {};
 }
 
+// An author's identity chain arrives ahead of the drips and changes it attributes. It is
+// verified and stored, so the signature checks that follow can bind the author's name to a key
+// (liquid#383). A rotation not signed by the key it replaces is refused here; only an out-of-band
+// `liquid identity trust --accept-compromise-rotation` accepts one.
+auto import_synced_identity(const sync_item& item) -> result<void> {
+    auto chain = decode_identity_chain(item.body);
+    if (!chain) {
+        return std::unexpected(chain.error());
+    }
+    if (chain->front().subject.taap_id != item.author.taap_id) {
+        return std::unexpected(
+            failure(errc::corrupt, "identity chain does not match its frame author"));
+    }
+    auto trusted = trust_identity_chain(*chain);
+    if (!trusted) {
+        return std::unexpected(trusted.error());
+    }
+    return {};
+}
+
 runtime::task<void>
 import_synced_change(store& objects, algorithm hash_algorithm, const sync_item& item) {
     auto value = objects::decode_change(item.body, hash_algorithm);
@@ -3756,6 +3776,8 @@ runtime::task<void> import_sync_item(sync_import_state& state, const sync_item& 
     case sync_item_kind::presence:
         co_return std::unexpected(
             failure(errc::corrupt, "presence reached the persistent sync importer"));
+    case sync_item_kind::identity:
+        co_return import_synced_identity(item);
     }
     co_return std::unexpected(failure(errc::corrupt, "unknown sync item kind"));
 }
@@ -9935,6 +9957,35 @@ runtime::task<sync_export> repository::export_drips(journal_cursor cursor,
             changes.push_back(parent.id.value);
         }
     }
+
+    // Each author's identity chain travels ahead of the records it signs, so the receiver can
+    // bind the author's name to its key (liquid#383). An author whose chain this machine does not
+    // hold is sent without one, and the receiver refuses that author's records.
+    auto authors = std::vector<actor>{};
+    for (const auto& item : items) {
+        if (!std::ranges::contains(authors, item.author.taap_id, &actor::taap_id)) {
+            authors.push_back(item.author);
+        }
+    }
+    auto identities = std::vector<sync_item>{};
+    for (const auto& author : authors) {
+        auto chain = load_identity_chain(author.taap_id);
+        if (!chain) {
+            if (is_unknown_signer(chain.error())) {
+                continue;
+            }
+            co_return std::unexpected(chain.error());
+        }
+        auto body = encode_identity_chain(*chain);
+        if (!body) {
+            co_return std::unexpected(body.error());
+        }
+        identities.push_back(
+            {.kind = sync_item_kind::identity, .author = author, .body = std::move(*body)});
+    }
+    items.insert(items.begin(),
+                 std::make_move_iterator(identities.begin()),
+                 std::make_move_iterator(identities.end()));
 
     auto directories = std::set<node_id>{};
     append_working_directories(impl_->current.root, directories);

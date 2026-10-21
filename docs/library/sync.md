@@ -114,9 +114,13 @@ after the end frame, or a stream without an end frame.
 | 3 | change | `{author, id, body}`; signed change bytes, digest, and verifiable TAAP key |
 | 4 | directory | `{repository, node, root, message}`; two 16-byte IDs, a root marker, and an automerge v1 sync message |
 | 5 | ref | `{name, change}` |
+| 6 | presence | `{body}`; an ephemeral presence record, applied without changing durable state |
+| 7 | identity | `{author, body}`; `body` is an author's identity document chain (`encode_identity_chain`) |
 | 255 | end | empty |
 
-Drips retain journal order. A change follows the drips it cuts. Directory messages use the
+Identity frames come first: one per distinct drip and change author whose chain the sender holds
+(its own, and every chain it has received). Drips retain journal order. A change follows the drips
+it cuts. Directory messages use the
 existing checked CRDT receive path, are emitted only for directories reachable from the current
 working root, are received into blank documents, and merge into the receiver's reachable candidate
 directory documents. They are associated with their directory by `node`. Ref frames are applied
@@ -138,12 +142,23 @@ sync-capable document. Conflict-heavy states that fail that check use complete u
 bytes instead. Import opens a full candidate before receiving peer messages, so a retry can name a
 dependency older than a compact checkpoint head.
 
-Before import changes state, the receiver parses every frame, verifies each actor identifier and
-TAAP signature, checks each change digest and referenced object, applies every selected directory
+Before import changes state, the receiver parses every frame, verifies and stores each identity
+chain, verifies each actor identifier and TAAP signature against the author's stored chain, checks each change digest and referenced object, applies every selected directory
 message to a blank checked receiver, merges each received document into the corresponding
 candidate through the checked patch-returning path, and validates the
 accepted refs. A validation failure rejects the selected import. The error `item` is the zero-based
 metadata-frame index that failed.
+
+A drip or change is attributed to its author only through the author's identity chain (liquid#383).
+The receiver accepts an identity frame's chain only when it starts at the initial document named
+after its own key, names the frame's author, extends whatever chain is already stored for that
+identity, and has every new rotation signed by the key it replaces; it is then stored in the
+receiver's `LIQUID_HOME`, even if a later frame fails. A drip or change whose author has no stored
+chain is refused as an unknown signer (`errc::unauthorized`, `is_unknown_signer`), and one signed by
+a key outside the author's chain is refused as `signing key is not in the identity chain`. A peer
+that sends no identity frames, such as one built before liquid#383, therefore cannot deliver another
+person's records; its own records are accepted once the receiver trusts its chain by hand
+([identity.md](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)).
 
 ## Chunk stream
 

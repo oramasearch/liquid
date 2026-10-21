@@ -27,6 +27,9 @@ enum class sync_item_kind : std::uint8_t {
     directory = 3,
     reference = 4,
     presence = 5,
+    // An author's identity document chain (`body` is `encode_identity_chain`). It travels ahead of
+    // the drips and changes it attributes; the receiver verifies and stores it before them.
+    identity = 6,
 };
 
 struct LIQUID_EXPORT sync_item {

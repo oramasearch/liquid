@@ -86,7 +86,11 @@ Audit-only sets need no source probe. `/healthz` reports process health separate
 An image is attested when an attestation subject equals the `sha256:...` digest in its digest-pinned
 reference, its profile occurs in `profiles`, its TAAP issuer occurs in `issuers`, and
 `verify_attestation` accepts every signature, profile, subject-kind, schema, freshness, status, and
-disclosure rule. `image_provenance/1` gives the image projection work one exact statement:
+disclosure rule. `issuers` names identities; the server binds each name to a key only through that
+issuer's identity chain in the server's own `LIQUID_HOME` (liquid#383). Provision it before serving:
+`liquid identity show --chain` where the issuer signs, then `liquid identity trust <chain>` in the
+server's home. Without it the issuer is unknown, the attestation is refused with
+`attestation.unknown_signer`, and the image is denied ([identity.md](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)). `image_provenance/1` gives the image projection work one exact statement:
 
 - subject: the image's SHA-256 digest; subject kind: `artifact`
 - `image:text`: the complete digest-pinned image reference
@@ -192,11 +196,12 @@ least one denied it.
 The stable rule ids are `policy.audit_only`, `policy.image_exempt`,
 `policy.namespace_exempt`, `image.digest_required`, `attestation.source_unavailable`,
 `attestation.missing`, `attestation.subject_mismatch`, `attestation.issuer_rejected`,
-`attestation.profile_rejected`, `attestation.signature_invalid`, `attestation.verified`,
+`attestation.profile_rejected`, `attestation.signature_invalid`, `attestation.unknown_signer`,
+`attestation.verified`,
 `transparency.policy_denied`, `transparency.verifier_unavailable`, and
 `transparency.not_included`. The stable human reason
 vocabulary remains `no attestation`, `issuer not accepted`, `profile not accepted`,
-`signature invalid`, `image not pinned by digest`, `not in log`, `checkpoint stale`,
+`signature invalid`, `issuer identity unknown`, `image not pinned by digest`, `not in log`, `checkpoint stale`,
 `log verifier unavailable`, `log verification denied by policy`, `attestation source unavailable`,
 and `exempt`; detailed verifier failures retain their original messages.
 

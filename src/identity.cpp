@@ -10,9 +10,11 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <utility>
+#include <variant>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -22,6 +24,7 @@
 
 #include "crypto/crypto.hpp"
 #include "crypto/signature.hpp"
+#include "encoding/cbor.hpp"
 #include "identity/custody/common.hpp"
 #include "identity/custody/providers.hpp"
 #include "identity/key_version.hpp"
@@ -455,6 +458,10 @@ struct stored_document {
 };
 
 auto load_stored_documents(const actor& subject) -> result<std::vector<stored_document>> {
+    if (!valid_fingerprint(subject.fingerprint)) {
+        return std::unexpected(identity_error(
+            errc::invalid_argument, "invalid identity fingerprint", subject.taap_id));
+    }
     const auto directory = document_directory(subject);
     auto paths = std::vector<std::filesystem::path>{};
     std::error_code code;
@@ -912,27 +919,96 @@ auto declares_compromised(const identity_document& document, std::string_view fi
     return nullptr;
 }
 
-} // namespace
+// An identifier is the fingerprint of its identity's initial key. That is the only thing that ties
+// a name to a key without a third party, so an initial document must name its own key.
+auto names_its_own_key(const identity_document& document) -> bool {
+    return document.subject.fingerprint == document.subject.key_fingerprint &&
+           document.subject.taap_id ==
+               "taap:1:" + document.subject.algorithm + ":" + document.subject.fingerprint;
+}
 
-result<bool> verify(const actor& by,
-                    std::string_view artifact_type,
-                    std::span<const std::byte> canonical_body,
-                    const signature& signed_value) {
-    auto stored = load_stored_documents(by);
-    if (!stored) {
-        if (stored.error().code == errc::not_found) {
-            return verify_with_key(by, artifact_type, canonical_body, signed_value);
+// A rotation proves continuity of control only when the key it replaces signed it. One that
+// carries just a compromise declaration was signed by its new key alone.
+auto signed_by_replaced_key(const identity_document& previous, const identity_document& current)
+    -> bool {
+    const auto replaced = signing_key_identifier(previous.subject);
+    return std::ranges::any_of(current.signatures, [&](const signature& value) {
+        return value.signing_key_identifier == replaced;
+    });
+}
+
+auto first_unproven_rotation(std::span<const identity_document> documents, std::size_t from)
+    -> std::optional<std::size_t> {
+    for (auto index = std::max<std::size_t>(from, 1); index < documents.size(); ++index) {
+        if (!signed_by_replaced_key(documents[index - 1], documents[index])) {
+            return index;
         }
-        return std::unexpected(stored.error());
     }
-    auto documents = std::vector<identity_document>{};
-    documents.reserve(stored->size());
-    for (const auto& document : *stored) {
-        documents.push_back(document.document);
+    return std::nullopt;
+}
+
+constexpr std::string_view unknown_signer_message =
+    "unknown signer: no identity chain binds this name to a key";
+
+auto unknown_signer(std::string_view taap_id) -> error {
+    return identity_error(
+        errc::unauthorized, std::string{unknown_signer_message}, std::string{taap_id});
+}
+
+// The identifier fingerprint is the last field of `taap:1:<algorithm>:<fingerprint>`.
+auto name_fingerprint(std::string_view taap_id) -> std::optional<std::string> {
+    constexpr std::string_view prefix = "taap:1:";
+    const auto separator = taap_id.rfind(':');
+    if (!taap_id.starts_with(prefix) || separator == std::string_view::npos ||
+        separator < prefix.size()) {
+        return std::nullopt;
+    }
+    const auto fingerprint = taap_id.substr(separator + 1);
+    if (!valid_fingerprint(fingerprint)) {
+        return std::nullopt;
+    }
+    return std::string{fingerprint};
+}
+
+auto stored_chain(std::string_view taap_id) -> result<std::vector<stored_document>> {
+    const auto fingerprint = name_fingerprint(taap_id);
+    if (!fingerprint) {
+        return std::unexpected(unknown_signer(taap_id));
+    }
+    auto subject = actor{};
+    subject.taap_id = taap_id;
+    subject.fingerprint = *fingerprint;
+    auto stored = load_stored_documents(subject);
+    if (!stored && stored.error().code == errc::not_found) {
+        return std::unexpected(unknown_signer(taap_id));
+    }
+    return stored;
+}
+
+auto verify_against_chain(const actor& by,
+                          std::span<const identity_document> documents,
+                          bool require_continuity,
+                          std::string_view artifact_type,
+                          std::span<const std::byte> canonical_body,
+                          const signature& signed_value) -> result<bool> {
+    if (documents.empty()) {
+        return std::unexpected(unknown_signer(by.taap_id));
     }
     auto chain = verify_chain(documents);
     if (!chain) {
         return std::unexpected(chain.error());
+    }
+    const auto& initial = documents.front().subject;
+    if (by.taap_id != initial.taap_id ||
+        (!by.fingerprint.empty() && by.fingerprint != initial.fingerprint)) {
+        return std::unexpected(identity_error(
+            errc::unauthorized, "signer name does not match its identity chain", by.taap_id));
+    }
+    if (require_continuity && first_unproven_rotation(documents, 1)) {
+        return std::unexpected(
+            identity_error(errc::unauthorized,
+                           "identity chain has a rotation not signed by the key it replaces",
+                           by.taap_id));
     }
     for (std::size_t index = 0; index < documents.size(); ++index) {
         const auto& candidate = documents[index].subject;
@@ -957,8 +1033,46 @@ result<bool> verify(const actor& by,
         identity_error(errc::unauthorized, "signing key is not in the identity chain", by.taap_id));
 }
 
+} // namespace
+
+result<bool> verify(const actor& by,
+                    std::string_view artifact_type,
+                    std::span<const std::byte> canonical_body,
+                    const signature& signed_value) {
+    auto stored = stored_chain(by.taap_id);
+    if (!stored) {
+        return std::unexpected(stored.error());
+    }
+    auto documents = std::vector<identity_document>{};
+    documents.reserve(stored->size());
+    for (auto& document : *stored) {
+        documents.push_back(std::move(document.document));
+    }
+    return verify_against_chain(by, documents, false, artifact_type, canonical_body, signed_value);
+}
+
+result<bool> verify(const actor& by,
+                    std::span<const identity_document> chain,
+                    std::string_view artifact_type,
+                    std::span<const std::byte> canonical_body,
+                    const signature& signed_value) {
+    return verify_against_chain(by, chain, true, artifact_type, canonical_body, signed_value);
+}
+
+result<bool> verify_key_signature(const actor& key,
+                                  std::string_view artifact_type,
+                                  std::span<const std::byte> canonical_body,
+                                  const signature& signed_value) {
+    return verify_with_key(key, artifact_type, canonical_body, signed_value);
+}
+
+bool is_unknown_signer(const error& value) noexcept {
+    return value.code == errc::unauthorized && value.message == unknown_signer_message;
+}
+
 result<bool> verify_document(const identity_document& document) {
-    if (!valid_subject(document) || document.signatures.empty()) {
+    if (!valid_subject(document) || document.signatures.empty() ||
+        (!document.previous_document_hash && !names_its_own_key(document))) {
         return std::unexpected(identity_error(errc::unauthorized, "invalid identity document"));
     }
     auto body = identity_detail::canonical_document(document, false);
@@ -990,6 +1104,9 @@ result<verified_identity> verify_chain(std::span<const identity_document> docume
     if (!valid_timestamp(first.created_at) || !valid_timestamp(first.updated_at) ||
         first.updated_at < first.created_at || !valid_subject(first)) {
         return std::unexpected(chain_failure("identity_chain_invalid_document"));
+    }
+    if (!names_its_own_key(first)) {
+        return std::unexpected(chain_failure("identity_chain_identifier_not_derived_from_key"));
     }
     auto self_signed = verify_document(first);
     if (!self_signed || !*self_signed) {
@@ -1065,6 +1182,120 @@ result<verified_identity> verify_chain(std::span<const identity_document> docume
     }
     return verified_identity{
         documents.back().subject, {documents.back().subject}, compromised_history};
+}
+
+result<verified_identity> trust_identity_chain(std::span<const identity_document> chain,
+                                               identity_trust_options options) {
+    auto verified = verify_chain(chain);
+    if (!verified) {
+        return std::unexpected(verified.error());
+    }
+    const auto& subject = chain.front().subject;
+    auto encoded = std::vector<std::vector<std::byte>>{};
+    encoded.reserve(chain.size());
+    for (const auto& document : chain) {
+        auto bytes = identity_detail::canonical_document(document, true);
+        if (!bytes) {
+            return std::unexpected(bytes.error());
+        }
+        encoded.push_back(std::move(*bytes));
+    }
+    auto stored = load_stored_documents(subject);
+    if (!stored && stored.error().code != errc::not_found) {
+        return std::unexpected(stored.error());
+    }
+    const auto known = stored ? stored->size() : std::size_t{};
+    for (std::size_t index = 0; index < std::min(known, encoded.size()); ++index) {
+        if ((*stored)[index].bytes != encoded[index]) {
+            return std::unexpected(identity_error(
+                errc::conflict, "identity chain differs from the stored chain", subject.taap_id));
+        }
+    }
+    if (encoded.size() <= known) {
+        auto documents = std::vector<identity_document>{};
+        documents.reserve(stored->size());
+        for (const auto& document : *stored) {
+            documents.push_back(document.document);
+        }
+        return verify_chain(documents);
+    }
+    if (!options.accept_compromise_rotation && first_unproven_rotation(chain, known)) {
+        return std::unexpected(
+            identity_error(errc::unauthorized,
+                           "identity chain has a rotation not signed by the key it replaces",
+                           subject.taap_id));
+    }
+    const auto directory = document_directory(subject);
+    std::error_code code;
+    std::filesystem::create_directories(directory, code);
+    if (code) {
+        return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
+    }
+    for (auto index = known; index < encoded.size(); ++index) {
+        auto written = write_private(document_path(directory, index), encoded[index]);
+        if (!written) {
+            return std::unexpected(written.error());
+        }
+    }
+    return verified;
+}
+
+result<std::vector<identity_document>> load_identity_chain(std::string_view taap_id) {
+    auto stored = stored_chain(taap_id);
+    if (!stored) {
+        return std::unexpected(stored.error());
+    }
+    auto documents = std::vector<identity_document>{};
+    documents.reserve(stored->size());
+    for (auto& document : *stored) {
+        documents.push_back(std::move(document.document));
+    }
+    return documents;
+}
+
+result<std::vector<std::byte>> encode_identity_chain(std::span<const identity_document> chain) {
+    auto items = encoding::cbor::value::array{};
+    items.reserve(chain.size());
+    for (const auto& document : chain) {
+        auto bytes = identity_detail::canonical_document(document, true);
+        if (!bytes) {
+            return std::unexpected(bytes.error());
+        }
+        items.emplace_back(std::move(*bytes));
+    }
+    return encoding::cbor::encode(encoding::cbor::value{std::move(items)});
+}
+
+result<std::vector<identity_document>> decode_identity_chain(std::span<const std::byte> encoded) {
+    auto decoded = encoding::cbor::decode(encoded);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    const auto* items = std::get_if<encoding::cbor::value::array>(&decoded->data);
+    if (!items || items->empty()) {
+        return std::unexpected(
+            identity_error(errc::invalid_argument, "identity chain is not a document array"));
+    }
+    auto output = std::vector<identity_document>{};
+    output.reserve(items->size());
+    for (const auto& item : *items) {
+        const auto* bytes = std::get_if<encoding::cbor::value::bytes>(&item.data);
+        if (!bytes) {
+            return std::unexpected(
+                identity_error(errc::invalid_argument, "identity chain entry is not bytes"));
+        }
+        auto document = identity_detail::parse_document(*bytes);
+        if (!document) {
+            return std::unexpected(document.error());
+        }
+        output.push_back(std::move(*document));
+    }
+    auto reencoded = encode_identity_chain(output);
+    if (!reencoded || !std::ranges::equal(*reencoded, encoded)) {
+        return std::unexpected(
+            identity_error(errc::invalid_argument, "identity chain is not canonical"));
+    }
+    return output;
 }
 
 runtime::task<signer> identity_detail::local_signer() {

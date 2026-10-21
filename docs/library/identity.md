@@ -21,7 +21,9 @@ software keys remain on the client, and FIDO2 and PIV keys remain on their token
 existing identity does not ask the token to sign again or change the identity.
 
 `--document --json` is refused with a clear usage error on stderr and exit 2. `--document` applies
-only to `show`; using it with `rotate` also returns exit 2. Ordinary text and JSON summaries retain
+only to `show`; using it with `rotate` also returns exit 2. `--chain` prints the whole chain instead
+of the current document, for `liquid identity trust` on another machine (see
+[below](#how-a-verifier-obtains-and-trusts-another-persons-chain)). Ordinary text and JSON summaries retain
 their existing behavior. After a rotation, export returns the current successor document.
 
 The output matches [lake's sign-up identity contract](https://github.com/oramasearch/lake/blob/main/docs/api/identity.md):
@@ -94,15 +96,66 @@ history.
 
 Documents are retained as canonical CBOR at
 `$LIQUID_HOME/identity/<identity-fingerprint>/documents/NNN.cbor`; the legacy current-document
-path is updated to the newest document for local compatibility. `verify_chain` checks stored-byte
-links, stable identifiers, timestamps, declarations, and the required signatures, then returns the
-current key set. `verify(actor, ...)` resolves a non-current signing key through that local chain.
+path is updated to the newest document for local compatibility. `verify_chain` checks that the
+initial document's identifier is derived from its own key, then stored-byte links, stable
+identifiers, timestamps, declarations, and the required signatures, and returns the current key
+set. `verify(actor, ...)` resolves a non-current signing key through the stored chain.
 
 A verifier that holds only an old document can validate that document and signatures made with its
 key, but cannot identify a successor or its current key without receiving or resolving the chain.
 When presented a normal successor, it can prove old-key continuity. A compromise successor proves
 that the new key signed the declaration, but cannot prove continuity of control through the omitted
-old-key signature; that claim remains subject to verifier policy.
+old-key signature, so it is accepted only by the decision described below.
+
+## How a verifier obtains and trusts another person's chain
+
+A signature proves only that some key signed. Attribution needs one more fact: that the key belongs
+to the identity the record names. libliquid binds a name to a key in exactly one way, through that
+identity's document chain (liquid#383).
+
+- **The root of trust is the identifier itself.** A TAAP identifier is the fingerprint of the
+  identity's initial key, so the initial document proves its own name: `verify_chain` and
+  `verify_document` refuse an initial document whose `taap_id` and `fingerprint` are not derived
+  from its own key (`identity_chain_identifier_not_derived_from_key`). Every later key is bound by a
+  rotation signed by the key it replaces.
+- **`verify(actor, artifact_type, body, signature)` reads the chain from this machine's identity
+  store** (`$LIQUID_HOME/identity/<fingerprint>/documents/`), keyed by the name in `actor.taap_id`.
+  The store holds the local identity's own chain and every chain accepted by
+  `trust_identity_chain`. The actor's `public_key`, `fingerprint` and `key_fingerprint` are not
+  trusted. **With no stored chain the result is the unknown-signer error, never `true`.** Its code
+  is `errc::unauthorized`, so a caller that refuses every error stays closed;
+  `is_unknown_signer(error)` lets a caller say "unknown signer" rather than "bad signature". A
+  stored chain that does not contain the signing key gives `signing key is not in the identity
+  chain`. The name is validated as `taap:1:<algorithm>:<52 base32 characters>` before it is used as
+  a path.
+- **`verify(actor, chain, artifact_type, body, signature)` verifies against a chain the caller
+  supplies**, for example one carried with a request. It requires the chain to start at the
+  initial document, to name the same identity as `actor.taap_id`, and every rotation to carry the
+  replaced key's signature.
+- **`trust_identity_chain(chain, options)` stores a verified chain.** A chain already stored may only
+  be extended: a chain whose documents differ from the stored ones is a fork and is refused with
+  `errc::conflict`, and a shorter prefix changes nothing. Rotations beyond what is already stored
+  must be signed by the key they replace; a rotation that only declares the old key compromised is
+  signed by its new key alone, so anyone could write one for any public initial document. It is
+  accepted only with `accept_compromise_rotation`, an out-of-band decision that sync never makes.
+  The local identity's own compromise rotations are already in its store.
+- **`load_identity_chain(taap_id)` returns a stored chain**, and `encode_identity_chain` /
+  `decode_identity_chain` carry one as a canonical CBOR array of complete documents, oldest first.
+- **`verify_key_signature(key, ...)`** checks a signature against a key and nothing else. It is for a
+  key the caller itself bound to a name, such as a session key it minted and stored; it is never a
+  substitute for a chain.
+
+A chain reaches a verifier in one of three ways:
+
+| Path | How |
+|---|---|
+| **Sync** | Every exported drip and change author's stored chain travels as an `identity` frame ahead of the records it signs ([sync.md](sync.md#metadata-stream)). The receiver verifies it, stores it with `trust_identity_chain`, and only then checks the signatures. A sender relays every chain it holds, so a chain reaches a third machine. An author whose chain the sender does not hold is sent without one, and the receiver refuses that author's records as an unknown signer. |
+| **By hand** | `liquid identity show --chain` prints the whole chain as unpadded base64url; `liquid identity trust <chain>` (or `-` for standard input) verifies and stores it on another machine. This is how a release verifier, an admission server, a worker scheduler, or a build-policy checker learns the identities it should accept. |
+| **With the request** | A service that receives a chain with each request, such as lake's TAAP sign-in, passes it to `verify(actor, chain, ...)` or `attestation_verification_options::issuer_chain`. |
+
+Trusting a chain answers *who signed*, not *whether that signer may do this*. Who may issue a release
+policy or a hot-update patch is a separate allow-list (liquid#384, liquid#388); build policy and
+admission policy already name the identities they accept.
 
 `signer::rotate_to(custody, compromise?)` selects `software`, `fido2`, or `piv:9c`. The successor
 document includes the custody name, changes `key_algorithm` and `key_fingerprint`, and otherwise
@@ -143,8 +196,19 @@ Hardware `.key` records contain only the public credential descriptor needed to 
 again.
 
 `verify(actor, artifact_type, canonical_body, signature)` is synchronous. It returns `true` for a
-valid signature, `false` for an unsigned record, and `errc::unauthorized` for invalid signed data.
-`verify_document` checks the self-signature. Drips and changes use the same verification rules.
+valid signature by a key in the named identity's stored chain, `false` for an unsigned record,
+`errc::unauthorized` for invalid signed data, and the unknown-signer error (also
+`errc::unauthorized`) when no chain for the name is stored. `verify_document` checks the
+self-signature, and for an initial document that its identifier is derived from its key. Drips,
+changes, results, and attestations use the same verification rules.
+
+Verification against tests: `Identity.SignerNameWithoutAChainDoesNotVerify` signs with one key while
+naming another identity and gets an unknown signer, then shows that trusting the named identity's
+real chain does not make the other key verify. `Identity.InitialDocumentMustBeNamedAfterItsOwnKey`,
+`Identity.ChainTravelsAndIsTrustedOnlyByExtension`, `Identity.ForkedChainIsRefused`,
+`Identity.CompromiseOnlyRotationIsNotTrustedFromAnotherMachine`, and `Identity.SignerNameIsNotAPath`
+cover the rules above; `Sync.drip_signed_by_one_key_naming_another_identity_is_refused` and
+`Sync.author_identity_chain_travels_with_its_drips` cover sync.
 
 ## CRDT commit metadata
 

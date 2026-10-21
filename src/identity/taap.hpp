@@ -31,7 +31,8 @@ namespace liquid::identity_detail {
                                    std::string_view custody = {}) -> result<std::string>;
 [[nodiscard]] auto canonical_signature(const signature& value) -> result<std::vector<std::byte>>;
 [[nodiscard]] auto parse_signature(std::span<const std::byte> input) -> result<signature>;
-[[nodiscard]] auto canonical_document(const identity_document& document, bool include_signatures)
+[[nodiscard]] LIQUID_EXPORT auto canonical_document(const identity_document& document,
+                                                    bool include_signatures)
     -> result<std::vector<std::byte>>;
 [[nodiscard]] LIQUID_EXPORT auto parse_document(std::span<const std::byte> input)
     -> result<identity_document>;

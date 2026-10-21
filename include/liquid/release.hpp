@@ -26,6 +26,9 @@ struct LIQUID_EXPORT release_verification {
     bool satisfied{};
     std::vector<std::string> distinct_valid_signers;
     std::vector<std::string> missing;
+    // Listed signers whose approval is present but whose identity chain this machine does not
+    // hold. Their approvals do not count until the chain is trusted (`trust_identity_chain`).
+    std::vector<std::string> unknown_signers;
 };
 
 [[nodiscard]] LIQUID_EXPORT runtime::task<release_policy>

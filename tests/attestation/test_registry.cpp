@@ -3,7 +3,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <unistd.h>
 
 #include "identity/taap.hpp"
 #include "liquid/attestation.hpp"
@@ -145,6 +147,16 @@ auto sign_unknown_profile(liquid::attestation value) -> liquid::attestation {
     return value;
 }
 
+auto select_home(std::string_view name) -> std::filesystem::path {
+    const auto path =
+        std::filesystem::temp_directory_path() /
+        ("liquid-attestation-home-" + std::to_string(::getpid()) + "-" + std::string{name});
+    std::error_code code;
+    std::filesystem::remove_all(path, code);
+    setenv("LIQUID_HOME", path.c_str(), 1);
+    return path;
+}
+
 TEST(AttestationRegistry, all_profiles_accept_examples_and_reject_missing_required_fields) {
     const auto& registry = liquid::attestation_profile_registry::global();
     ASSERT_EQ(registry.profiles().size(), 17U);
@@ -262,6 +274,27 @@ TEST(AttestationRegistry, preserves_the_legacy_scan_result_digest) {
     ASSERT_TRUE(digest) << digest.error().message;
     EXPECT_EQ(liquid::to_string(*digest),
               "blake3:7bf3c617584910f326855bd9382c5bcc4b191dfd45eff381b5d9faf662c81423");
+}
+
+// liquid#383: an attestation's issuer is a name; it is bound to a key only by that name's identity
+// chain. A verifier that does not hold the issuer's chain must refuse the attestation.
+TEST(AttestationRegistry, refuses_an_issuer_whose_identity_chain_is_unavailable) {
+    const auto* previous = std::getenv("LIQUID_HOME");
+    const auto restore = previous ? std::optional<std::string>{previous} : std::nullopt;
+    const auto issuer_home = select_home("issuer");
+    const auto signed_value = sign(example("authorship/1"));
+    const auto verifier_home = select_home("verifier");
+    auto verified = liquid::verify_attestation(signed_value);
+    EXPECT_FALSE(verified && verified->verified)
+        << "an attestation verified without its issuer's identity chain";
+    std::error_code code;
+    std::filesystem::remove_all(issuer_home, code);
+    std::filesystem::remove_all(verifier_home, code);
+    if (restore) {
+        setenv("LIQUID_HOME", restore->c_str(), 1);
+    } else {
+        unsetenv("LIQUID_HOME");
+    }
 }
 
 } // namespace

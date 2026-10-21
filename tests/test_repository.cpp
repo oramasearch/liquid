@@ -1301,8 +1301,12 @@ TEST(RepositoryLocks, concurrent_offline_locks_reconcile_as_a_conflict_value) {
     ASSERT_TRUE(peer) << peer.error().message;
     ASSERT_TRUE(liquid::runtime::block_on(peer->lock("models/catalog.bin", "peer rebuild")));
     ASSERT_TRUE(liquid::runtime::block_on(source->lock("models/catalog.bin", "source rebuild")));
+    // The source exports from its own identity home, so its author chain travels with the drips
+    // and the peer can verify them (liquid#383).
+    identity_home.set(first_home);
     const auto items = exported_items(*source);
     ASSERT_TRUE(items) << items.error().message;
+    identity_home.set(second_home);
     auto imported = liquid::runtime::block_on(peer->import_drips(*items));
     ASSERT_TRUE(imported) << imported.error().message;
 

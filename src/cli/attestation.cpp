@@ -154,6 +154,11 @@ auto attestation(int argc, char** argv) -> int {
     }
     if (!verified->verified) {
         std::println(stderr, "error: invalid attestation: {}", verified->reason);
+        if (verified->unknown_signer) {
+            std::println(stderr,
+                         "hint: the issuer's identity chain is not on this machine; trust it "
+                         "with liquid identity trust <chain>");
+        }
         return 1;
     }
     std::println("verified {}", liquid::to_string(*id));

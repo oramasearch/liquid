@@ -143,6 +143,8 @@ result<release_verification> verify_release(digest artifact,
                                             const release_policy& policy,
                                             std::span<const release_approval> approvals,
                                             std::chrono::sys_seconds now) {
+    // The policy's issuer must be an identity this machine already trusts: an unknown issuer is
+    // refused like a bad signature (liquid#383). Who may issue a policy is liquid#384.
     auto policy_verified = verify_attestation(policy.statement, {.now = now});
     if (!policy_verified || !policy_verified->verified) {
         return std::unexpected(failure(
@@ -179,6 +181,7 @@ result<release_verification> verify_release(digest artifact,
     }
     const auto expected_policy = to_string(*policy_id);
     auto accepted = std::set<std::string>{};
+    auto unknown = std::set<std::string>{};
     for (const auto& approval : approvals) {
         const auto& statement = approval.statement;
         const auto* approval_policy =
@@ -194,9 +197,16 @@ result<release_verification> verify_release(digest artifact,
         auto verified = verify_attestation(statement, {.now = checked_at});
         if (verified && verified->verified) {
             accepted.insert(statement.issuer.taap_id);
+        } else if (verified && verified->unknown_signer) {
+            unknown.insert(statement.issuer.taap_id);
         }
     }
     output.distinct_valid_signers.assign(accepted.begin(), accepted.end());
+    for (const auto& identifier : unknown) {
+        if (!accepted.contains(identifier)) {
+            output.unknown_signers.push_back(identifier);
+        }
+    }
     for (const auto& signer : *signers) {
         if (!accepted.contains(signer)) {
             output.missing.push_back(signer);

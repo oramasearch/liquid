@@ -76,7 +76,7 @@ Commands are grouped as `liquid --help` groups them. Where Git has a command for
 
 | Command | Summary | Availability |
 |---|---|---|
-| [`identity`](identity.md) | show or rotate the device identity | available |
+| [`identity`](identity.md) | show, rotate, or trust identities | available |
 | [`keys`](keys.md) | inspect and manage data-key custody | available |
 | [`secret`](secret.md) | fetch, seal, or unseal a Lake environment secret | available |
 | [`sign`](sign.md) | sign a digest or projected platform installer | available |
