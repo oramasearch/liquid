@@ -42,6 +42,7 @@ struct run_paths {
     std::filesystem::path root;
     std::filesystem::path toolchain;
     std::filesystem::path outputs;
+    std::filesystem::path staging;
     std::filesystem::path stdout_path;
     std::filesystem::path stderr_path;
 };
@@ -131,10 +132,12 @@ auto prepare_run(const std::filesystem::path& repository_root, const digest& act
                      .root = run / "root",
                      .toolchain = run / "toolchain",
                      .outputs = run / "outputs",
+                     .staging = run / "staging",
                      .stdout_path = run / "stdout",
                      .stderr_path = run / "stderr"};
     auto code = std::error_code{};
-    for (const auto& path : {output.mount, output.root, output.toolchain, output.outputs}) {
+    for (const auto& path :
+         {output.mount, output.root, output.toolchain, output.outputs, output.staging}) {
         std::filesystem::create_directories(path, code);
         if (code)
             return std::unexpected(failure(errc::io, code.message(), path.string()));
@@ -195,50 +198,34 @@ auto denied_write(const std::shared_ptr<observations>& observed) -> std::optiona
     return std::nullopt;
 }
 
+// Collects declared outputs through no-follow descriptors under the output root (a link or special
+// node fails the action before it is read), normalises them, and stores the staged copies.
 runtime::task<std::vector<action_output>>
 collect_outputs(repository& source, const action_input& input, const run_paths& paths) {
     auto output = std::vector<action_output>{};
     for (const auto& declared : input.outputs) {
         const auto directory = declared.ends_with('/');
         const auto relative = directory ? declared.substr(0, declared.size() - 1) : declared;
-        const auto path = paths.outputs / relative;
-        auto code = std::error_code{};
-        if (!std::filesystem::exists(path, code))
-            continue;
-        if (code)
-            co_return std::unexpected(failure(errc::io, code.message(), path.string()));
-        auto files = std::vector<std::filesystem::path>{};
-        if (directory) {
-            for (auto iterator = std::filesystem::recursive_directory_iterator{path, code};
-                 !code && iterator != std::filesystem::recursive_directory_iterator{};
-                 ++iterator) {
-                if (iterator->is_regular_file())
-                    files.push_back(iterator->path());
-            }
-            if (code)
-                co_return std::unexpected(failure(errc::io, code.message(), path.string()));
-        } else if (std::filesystem::is_regular_file(path, code)) {
-            files.push_back(path);
+        const auto shape =
+            directory ? build_detail::output_shape::directory : build_detail::output_shape::file;
+        auto staged = co_await runtime::offload(
+            [root = paths.outputs, staging = paths.staging, relative, shape] {
+                return build_detail::stage_output(root, relative, shape, staging, true);
+            });
+        if (!staged) {
+            co_return std::unexpected(staged.error());
         }
-        for (const auto& file : files) {
-            auto normalised =
-                co_await runtime::offload([file] { return build_detail::normalise_file(file); });
-            if (!normalised) {
-                co_return std::unexpected(normalised.error());
-            }
-            if (!*normalised) {
-                co_return std::unexpected(normalised->error());
-            }
-            auto stored = co_await repository_detail::build_access::put_file(source, file);
+        if (!*staged) {
+            co_return std::unexpected(staged->error());
+        }
+        for (auto& file : **staged) {
+            auto stored = co_await repository_detail::build_access::put_file(source, file.staged);
+            auto code = std::error_code{};
+            std::filesystem::remove(file.staged, code);
             if (!stored)
                 co_return std::unexpected(stored.error());
-            const auto status = std::filesystem::status(file, code);
-            if (code)
-                co_return std::unexpected(failure(errc::io, code.message(), file.string()));
-            const auto mode = build_detail::normalised_output_mode(
-                static_cast<std::uint32_t>(status.permissions()) & 0777U);
             output.push_back(
-                {std::filesystem::relative(file, paths.outputs).generic_string(), mode, *stored});
+                {std::move(file.path), build_detail::normalised_output_mode(file.mode), *stored});
         }
     }
     std::ranges::sort(output, {}, &action_output::path);

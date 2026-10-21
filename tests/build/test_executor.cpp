@@ -6,10 +6,12 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <random>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "remote_blob_source.hpp"
@@ -800,6 +802,31 @@ TEST(Build, rejects_writes_outside_declared_outputs) {
     EXPECT_EQ(ran.error().code, liquid::errc::unauthorized);
     EXPECT_EQ(ran.error().message, "action wrote outside declared outputs");
 }
+
+#if defined(__linux__)
+TEST(Build, output_symlink_fails_before_its_host_target_is_read_or_rewritten) {
+    action_fixture fixture;
+    const auto sentinel = liquid::test::fixture_path("liquid-build-sentinel-" +
+                                                     fixture.location.path().filename().string());
+    constexpr auto sentinel_text = std::string_view{"host sentinel that no action may rewrite\n"};
+    {
+        auto output = std::ofstream{sentinel, std::ios::binary | std::ios::trunc};
+        output << sentinel_text;
+    }
+    auto ran = liquid::runtime::block_on(liquid::build::execute(
+        fixture.repository,
+        fixture.input({"fixture", "symlink", sentinel.string(), "out/payload.pyc"}, {"out/"})));
+    auto input = std::ifstream{sentinel, std::ios::binary};
+    const auto after =
+        std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    std::error_code code;
+    std::filesystem::remove(sentinel, code);
+    ASSERT_FALSE(ran);
+    EXPECT_EQ(ran.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(ran.error().message, "action output is a symbolic link");
+    EXPECT_EQ(after, sentinel_text);
+}
+#endif
 
 TEST(Build, has_fixed_environment) {
     action_fixture fixture;

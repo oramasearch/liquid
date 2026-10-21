@@ -244,7 +244,18 @@ tree.
 ### Output normalisation
 
 Collection classifies each output before hashing and storing. CPU-only rewriting runs through
-`runtime::offload`. The versioned rule names are fields of the sandbox-definition record, so
+`runtime::offload`.
+
+Collection never follows a link the action could have made (liquid #425). Each declared output is
+opened one component at a time below the output root with `O_NOFOLLOW`, and each node is checked
+before and after it is opened. A symbolic link anywhere under a declared output, or a FIFO, socket
+or device, fails the action with `errc::unauthorized` before anything is read through it; a link is
+not stored as an output either. A regular file is read from its verified descriptor, normalised in
+memory, and written to a new parent-owned file in the run's `staging/` directory, and that copy is
+what the store reads. The action's output file is never rewritten in place, so no host file reached
+through an output path can be read, normalised, imported, or published. Wrap verification collects
+its re-executed outputs the same way, without normalisation. Windows has no sandbox and the collector
+reports `errc::unsupported` there. The versioned rule names are fields of the sandbox-definition record, so
 machines with different implementations have different sandbox digests and cannot share entries.
 
 | Artifact kind | Canonical rule before storage |
