@@ -100,7 +100,10 @@ The Tier 2 reader implements the Thrift compact protocol for the footer and page
 one entry per row-group column chunk with schema, statistics, and decoded values. Data page v1,
 PLAIN, RLE/bit-packed levels, and dictionary indices are supported with uncompressed, gzip, and
 zstd pages. Snappy and unknown physical types, encodings, page types, or compressors are preserved
-as opaque column entries with the reason recorded.
+as opaque column entries with the reason recorded. The RLE/bit-packed decoder rejects bit widths
+above 64, run-header varints wider than 64 bits, and any run longer than the bytes left in its
+stream; run lengths are checked by division before they are multiplied, so a crafted run length
+cannot wrap the bounds check (liquid #432).
 
 ### SQLite
 
