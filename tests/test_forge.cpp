@@ -201,11 +201,13 @@ TEST(Forge, verifies_the_committed_certificate_over_tls) {
 // http1 client every https request uses, sync included.
 class scoped_environment final {
 public:
-    explicit scoped_environment(std::vector<std::pair<std::string, std::optional<std::string>>> values) {
+    explicit scoped_environment(
+        std::vector<std::pair<std::string, std::optional<std::string>>> values) {
         for (auto& [name, value] : values) {
             const auto* previous = std::getenv(name.c_str());
-            saved_.emplace_back(name, previous == nullptr ? std::optional<std::string>{}
-                                                          : std::optional<std::string>{previous});
+            saved_.emplace_back(name,
+                                previous == nullptr ? std::optional<std::string>{}
+                                                    : std::optional<std::string>{previous});
             assign(name, value);
         }
     }
