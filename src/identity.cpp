@@ -1324,6 +1324,13 @@ result<signature_check> check_signature(const actor& by,
     return signature_check{.signature_valid = *key_only, .identity_verified = false};
 }
 
+auto identity_detail::verify_with_pinned_key(const actor& pinned,
+                                             std::string_view artifact_type,
+                                             std::span<const std::byte> canonical_body,
+                                             const signature& signed_value) -> result<bool> {
+    return verify_with_key(pinned, artifact_type, canonical_body, signed_value);
+}
+
 result<bool> verify_document(const identity_document& document) {
     if (!valid_subject(document) || document.signatures.empty() ||
         (!document.previous_document_hash && !names_its_own_key(document))) {

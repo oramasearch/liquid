@@ -133,3 +133,6 @@ producing-install-tree behavior, including a checkout without ordinary repositor
 `log consistency`, and `log verify`, requiring exit 2 and specific HTTP/HTTPS diagnostics.
 It also runs the `HttpLogSource` API cases. The existing offline runner denies networking
 on macOS and Linux; no repository or server is required.
+`workers-trust.cmake` (liquid #416) requires `scheduler` and `worker` to refuse to start without
+`--trust-worker` or `--trust-scheduler`, to reject a file that is not an identity document, and to
+load a directory of documents written by `identity show --document`, skipping dot files.

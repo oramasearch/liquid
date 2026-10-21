@@ -27,15 +27,22 @@ completions populate ActionCache using the request's digest function.
 | RPC | Request | Response | Purpose |
 |---|---|---|---|
 | `Submit` | instance, action digest, scheduling record | REAPI `Operation` | Submit or join one operation. |
-| `Lease` | instance, worker TAAP ID, platform, size class | assignment, token, retry, Action, Command, schedule | Claim eligible work. |
-| `Heartbeat` | operation, worker, token | acknowledgement | Renew an active lease. |
-| `Complete` | operation, worker, token, ActionResult or failure | acknowledgement | Verify and accept a result, or apply bounded requeue. |
+| `Lease` | instance, worker TAAP ID, platform, size class, nonce, issue time, worker signature | assignment, 128-bit token, retry, Action, Command, schedule, worker, echoed nonce, scheduler signature | Claim eligible work. |
+| `Heartbeat` | operation, worker, token, nonce, issue time, worker signature | acknowledgement | Renew an active lease. |
+| `Complete` | operation, worker, token, ActionResult or failure, nonce, issue time, worker signature | acknowledgement | Verify and accept a result, or apply bounded requeue. |
 | `ReadObject` | native algorithm-tagged digest | bytes | Fetch a native store record with client digest verification. |
 | `Status` | empty | queue and worker counters | Inspect scheduler state. |
 | `Operation` | operation name | REAPI `Operation` | Poll a liquid submission without holding a transport request through execution. |
 
 The method prefix is `/liquid.scheduler.v1.Scheduler/`. This protocol is private to matching liquid
 versions; stock clients use the standard services.
+
+`Lease`, `Heartbeat`, and `Complete` are authenticated in both directions with pinned TAAP
+identities: the scheduler refuses an untrusted or wrongly signed worker request with
+`PERMISSION_DENIED`, and a worker refuses a lease the pinned scheduler did not sign for its
+request. The token became a string and the signature fields were added in liquid #416, so a
+scheduler and workers from before that change do not interoperate. The rules are in
+[`../library/workers.md`](../library/workers.md#authentication).
 
 ## Control listener
 
