@@ -198,6 +198,16 @@ TEST(ConfigurationErrors, twenty_golden_diagnostics_are_exact) {
     }
 }
 
+// liquid #407: the fuzzer found that `include` nested in a record parsed as a record with no path,
+// and formatting it read the first element of an empty field list.
+TEST(ConfigurationErrors, include_is_rejected_inside_a_record) {
+    const auto parsed =
+        liquid::parse_configuration("source p {\n    include {}\n}\n", "nested.liquid");
+    ASSERT_FALSE(parsed);
+    EXPECT_NE(parsed.error().message.find("include is a top-level statement"), std::string::npos)
+        << parsed.error().message;
+}
+
 TEST(ConfigurationLanguage, package_target_source_and_when_lower_to_typed_records) {
     const auto text = std::string{"source zlib {\n"
                                   "  url: \"https://example.test/zlib.tar.gz\"\n"
