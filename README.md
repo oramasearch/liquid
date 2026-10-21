@@ -41,6 +41,7 @@ private and no licence has been chosen yet.
 - [Where liquid sits](#where-liquid-sits)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
+- [Security](#security)
 - [Licence](#licence)
 
 ## What Git left on the table
@@ -423,6 +424,12 @@ release is cut, the recorded decisions, and the conventions inherited from
 
 When liquid gains or loses a capability, update the
 [implementation status](docs/library/status.md) first, then the matching line on this page.
+
+## Security
+
+Report a vulnerability privately, never in a public issue. [SECURITY.md](SECURITY.md) says how,
+what is in scope and what to expect; it is a draft until the reporting address and response times
+are approved ([oramasearch/liquid-bridge#11](https://github.com/oramasearch/liquid-bridge/issues/11)).
 
 ## Licence
 
