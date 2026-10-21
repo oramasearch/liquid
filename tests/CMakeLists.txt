@@ -224,6 +224,7 @@ endif()
 add_executable(liquid-build-fixture build/fixture.c)
 if(UNIX AND NOT APPLE)
   target_link_options(liquid-build-fixture PRIVATE -static)
+  liquid_no_sanitizer_runtime(liquid-build-fixture)
 endif()
 add_dependencies(liquid-tests liquid-build-fixture)
 # Says whether this host can attempt a FUSE mount at run time; CLI tests that mount skip
