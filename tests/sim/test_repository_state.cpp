@@ -778,6 +778,71 @@ INSTANTIATE_TEST_SUITE_P(Backends,
                          testing::Values(backend_kind::disk, backend_kind::memory),
                          backend_name);
 
+// liquid #344: a collection crashed at every one of its fault points, on a backend that then keeps
+// any subset of the writes since the last barrier with each key's own writes in order
+// (store_backend's ordering contract), for several seeds per fault point. The store and repository
+// reopen with every acknowledged file, collect again, and accept new work.
+TEST(RepositoryCollectionCrashDurability, SubsetCrashAtEveryCollectionFaultPoint) {
+    const auto seeds = environment_number("LIQUID_COLLECTION_CRASH_SEEDS", 2);
+    scoped_directory location("liquid-collection-crash-subset");
+    auto steps = std::uint64_t{};
+    {
+        auto host = shared_store_host{backend_kind::memory, location.path() / "probe"};
+        auto subject = std::optional<liquid::repository>{};
+        const auto prepared = prepare_garbage(host, subject);
+        ASSERT_FALSE(prepared) << *prepared;
+        auto recorder = recording_injector{};
+        {
+            auto guard = injector_guard{&recorder};
+            auto collected = liquid::runtime::block_on(subject->collect());
+            ASSERT_TRUE(collected) << message(collected.error());
+        }
+        steps = recorder.paths().size();
+    }
+    ASSERT_GT(steps, 0U);
+    for (auto target = std::uint64_t{1}; target <= steps; ++target) {
+        for (auto seed = std::uint64_t{}; seed != seeds; ++seed) {
+            const auto root = location.path() / "actual";
+            auto host = shared_store_host{backend_kind::memory, root};
+            auto subject = std::optional<liquid::repository>{};
+            const auto prepared = prepare_garbage(host, subject);
+            ASSERT_FALSE(prepared) << *prepared;
+            auto crash = crash_injector{target, [&] { host.freeze(true); }};
+            {
+                auto guard = injector_guard{&crash};
+                static_cast<void>(liquid::runtime::block_on(subject->collect()));
+            }
+            subject.reset();
+            host.objects.reset();
+            host.freeze(false);
+            const auto survived =
+                host.memory->crash(liquid::sim::crash_durability::subset, seed * 7919U + target);
+            const auto where = "crash at collection fault point " + std::to_string(target) +
+                               " of " + std::to_string(steps) + " (" + crash.where() + "), seed " +
+                               std::to_string(seed) + ", " + std::to_string(survived) +
+                               " unbarriered writes kept";
+
+            auto opened = host.open();
+            ASSERT_TRUE(opened) << where << ": " << message(opened.error());
+            auto reopened = liquid::runtime::block_on(
+                liquid::repository::open("workspace/alpha", host.repository_options(3)));
+            ASSERT_TRUE(reopened) << where << ": " << message(reopened.error());
+            auto kept = liquid::runtime::block_on(reopened->read("kept"));
+            ASSERT_TRUE(kept) << where << ": " << message(kept.error());
+            EXPECT_EQ(*kept, bytes_of("acknowledged")) << where;
+            auto scratch = liquid::runtime::block_on(reopened->read("scratch"));
+            ASSERT_TRUE(scratch) << where << ": " << message(scratch.error());
+            EXPECT_EQ(*scratch, bytes_of("scratch contents, round 7")) << where;
+            auto collected = liquid::runtime::block_on(reopened->collect());
+            ASSERT_TRUE(collected) << where << ": " << message(collected.error());
+            ASSERT_TRUE(liquid::runtime::block_on(reopened->write("after", bytes_of("usable"))))
+                << where;
+            *reopened = {};
+            host.objects.reset();
+        }
+    }
+}
+
 // The seeded crash schedule for repositories: one schedule of writes, cuts, replication-cursor
 // updates, reopens, and collections runs once to count fault points, then again with a crash at
 // one of them chosen by the seed. After the crash the store and repository reopen, every
@@ -976,9 +1041,11 @@ std::optional<std::string> verify_recovered(shared_store_host& host,
     return std::nullopt;
 }
 
-std::optional<std::string> run_repository_simulation(std::uint64_t seed,
-                                                     backend_kind kind,
-                                                     const std::filesystem::path& workspace) {
+std::optional<std::string> run_repository_simulation(
+    std::uint64_t seed,
+    backend_kind kind,
+    const std::filesystem::path& workspace,
+    liquid::sim::crash_durability durability = liquid::sim::crash_durability::everything) {
     auto random = std::mt19937_64{seed};
     const auto schedule = make_repository_schedule(random);
     const auto prepare =
@@ -1056,6 +1123,11 @@ std::optional<std::string> run_repository_simulation(std::uint64_t seed,
     subject.reset();
     host.objects.reset();
     host.freeze(false);
+    if (durability != liquid::sim::crash_durability::everything) {
+        // liquid #344: the backend also loses what the mode allows of the writes since the last
+        // barrier.
+        static_cast<void>(host.memory->crash(durability, seed ^ 0x3443344334433443ULL));
+    }
     auto verified = verify_recovered(host, acknowledged, interrupted);
     host.objects.reset();
     std::filesystem::remove_all(actual_root);
@@ -1090,5 +1162,41 @@ INSTANTIATE_TEST_SUITE_P(Backends,
                          RepositoryStateSimulation,
                          testing::Values(backend_kind::disk, backend_kind::memory),
                          backend_name);
+
+// liquid #344: the repository schedule on the memory backend, with a crash that also loses writes
+// since the last barrier: a prefix of their issue order (what lake's workspace store gives today),
+// or any subset with each key's own writes in order (store_backend's contract). Every check of
+// RepositoryStateSimulation must hold under both.
+class RepositoryCrashDurability : public testing::TestWithParam<liquid::sim::crash_durability> {};
+
+TEST_P(RepositoryCrashDurability, SeededCrashRecovery) {
+    const auto* single_seed = std::getenv("LIQUID_REPOSITORY_SIM_SEED");
+    const auto first = single_seed ? environment_number("LIQUID_REPOSITORY_SIM_SEED", 0) : 0;
+    const auto count = single_seed ? 1 : environment_number("LIQUID_REPOSITORY_SIM_SEEDS", 40);
+    const auto prefix = GetParam() == liquid::sim::crash_durability::prefix;
+    const auto workspace = liquid::test::fixture_path(std::string{"liquid-repository-durability-"} +
+                                                      (prefix ? "prefix" : "subset"));
+    std::filesystem::create_directories(workspace);
+    for (auto offset = std::uint64_t{}; offset != count; ++offset) {
+        const auto seed = first + offset;
+        const auto failure =
+            run_repository_simulation(seed, backend_kind::memory, workspace, GetParam());
+        ASSERT_FALSE(failure.has_value())
+            << "seed=" << seed << ": " << *failure
+            << "\nreplay: LIQUID_REPOSITORY_SIM_SEED=" << seed
+            << " ctest --test-dir build -R RepositoryCrashDurability --output-on-failure";
+    }
+    std::filesystem::remove_all(workspace);
+}
+
+INSTANTIATE_TEST_SUITE_P(Modes,
+                         RepositoryCrashDurability,
+                         testing::Values(liquid::sim::crash_durability::prefix,
+                                         liquid::sim::crash_durability::subset),
+                         [](const auto& parameter) -> std::string {
+                             return parameter.param == liquid::sim::crash_durability::prefix
+                                        ? "Prefix"
+                                        : "Subset";
+                         });
 
 } // namespace

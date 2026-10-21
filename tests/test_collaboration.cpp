@@ -2,11 +2,15 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 #include "identity/taap.hpp"
 #include "liquid/repository.hpp"
@@ -14,6 +18,7 @@
 #include "liquid/store.hpp"
 #include "memory_backend.hpp"
 #include "objects/records.hpp"
+#include "store/faults.hpp"
 #include "temporary_directory.hpp"
 
 namespace {
@@ -529,5 +534,204 @@ TEST(Collaboration, published_and_discarded_sessions_stay_gone_after_a_crash) {
         EXPECT_EQ(resurrected.error().code, liquid::errc::not_found);
     }
 }
+
+// liquid #344: a session's publish or discard crashed at each of its fault points, on a backend
+// that then keeps what `crash_durability` allows of the writes since the last barrier. `Everything`
+// keeps them all (a process crash); `Subset` keeps any subset with each key's own writes in order,
+// store_backend's ordering contract, for several seeds per fault point. After either, the store and
+// repository reopen, the file holds the fork point's value or the session's, a session that comes
+// back can be discarded, and the repository accepts a new change.
+class crash_at_step final : public liquid::store_detail::fault_injector {
+public:
+    explicit crash_at_step(std::uint64_t target, std::function<void()> on_crash = {})
+        : target_(target), on_crash_(std::move(on_crash)) {}
+
+    void visit(liquid::store_detail::fault_event) override {
+        ++steps_;
+        if (steps_ != target_ || fired_) {
+            return;
+        }
+        fired_ = true;
+        if (on_crash_) {
+            on_crash_();
+        }
+        throw std::runtime_error("simulated session crash");
+    }
+
+    [[nodiscard]] std::uint64_t steps() const noexcept {
+        return steps_;
+    }
+
+private:
+    std::uint64_t target_{};
+    std::function<void()> on_crash_;
+    std::uint64_t steps_{};
+    bool fired_{};
+};
+
+class session_injector_guard {
+public:
+    explicit session_injector_guard(liquid::store_detail::fault_injector* injector)
+        : previous_(liquid::store_detail::set_fault_injector(injector)) {}
+    ~session_injector_guard() {
+        liquid::store_detail::set_fault_injector(previous_);
+    }
+    session_injector_guard(const session_injector_guard&) = delete;
+    session_injector_guard& operator=(const session_injector_guard&) = delete;
+
+private:
+    liquid::store_detail::fault_injector* previous_{};
+};
+
+enum class session_ending : std::uint8_t { publish, discard };
+
+using session_crash_case = std::tuple<session_ending, liquid::sim::crash_durability>;
+
+class SessionCrashDurability : public testing::TestWithParam<session_crash_case> {};
+
+// Runs one session up to its ending under `injector`, then crashes the backend with `durability`.
+// Returns a failure message, or nothing when the recovered repository is consistent.
+auto run_session_crash(const std::filesystem::path& root,
+                       session_ending ending,
+                       liquid::store_detail::fault_injector* injector,
+                       const std::shared_ptr<liquid::sim::memory_store_backend>& backend,
+                       liquid::sim::crash_durability durability,
+                       std::uint64_t seed) -> std::optional<std::string> {
+    auto store_options = liquid::store_options{};
+    store_options.backend = backend;
+    auto forked_id = liquid::session_id{};
+    {
+        auto opened_store = liquid::runtime::block_on(liquid::store::open(root, store_options));
+        if (!opened_store) {
+            return "store open failed: " + opened_store.error().message;
+        }
+        auto shared_store = std::optional<liquid::store>{std::move(*opened_store)};
+        auto options = liquid::repository_options{.store = &*shared_store};
+        auto created =
+            liquid::runtime::block_on(liquid::repository::create("agent-repository", options));
+        if (!created) {
+            return "repository create failed: " + created.error().message;
+        }
+        auto shared = std::optional<liquid::repository>{std::move(*created)};
+        if (!liquid::runtime::block_on(shared->write("src/value.cpp", bytes("int value = 1;\n"))) ||
+            !liquid::runtime::block_on(shared->cut("fork point"))) {
+            return "could not cut the fork point";
+        }
+        const auto agent = current_actor();
+        auto authority = delegation(agent, {"src/**"});
+        if (!authority) {
+            return "delegation failed: " + authority.error().message;
+        }
+        auto forked = liquid::runtime::block_on(
+            shared->fork_session({.actor = agent, .delegation = *authority}));
+        if (!forked) {
+            return "fork failed: " + forked.error().message;
+        }
+        auto session = std::move(*forked);
+        forked_id = session.id();
+        if (!liquid::runtime::block_on(session.write("src/value.cpp", bytes("int value = 2;\n")))) {
+            return "session write failed";
+        }
+        {
+            auto guard = session_injector_guard{injector};
+            if (ending == session_ending::publish) {
+                static_cast<void>(liquid::runtime::block_on(
+                    session.publish({.message = "agent update", .atomic = true})));
+            } else {
+                static_cast<void>(liquid::runtime::block_on(session.discard()));
+            }
+            backend->set_frozen(true);
+            session = liquid::session{};
+            shared.reset();
+            shared_store.reset();
+        }
+        backend->set_frozen(false);
+    }
+    const auto survived = backend->crash(durability, seed);
+    const auto where = std::to_string(survived) + " unbarriered writes kept";
+
+    auto opened_store = liquid::runtime::block_on(liquid::store::open(root, store_options));
+    if (!opened_store) {
+        return where + ": store reopen failed: " + opened_store.error().message;
+    }
+    auto shared_store = std::optional<liquid::store>{std::move(*opened_store)};
+    auto options = liquid::repository_options{.store = &*shared_store};
+    auto reopened =
+        liquid::runtime::block_on(liquid::repository::open("agent-repository", options));
+    if (!reopened) {
+        return where + ": repository reopen failed: " + reopened.error().message;
+    }
+    auto value = liquid::runtime::block_on(reopened->read("src/value.cpp"));
+    if (!value) {
+        return where + ": the file is unreadable: " + value.error().message;
+    }
+    if (text(*value) != "int value = 1;\n" &&
+        !(ending == session_ending::publish && text(*value) == "int value = 2;\n")) {
+        return where + ": the file holds neither the fork point's value nor the session's";
+    }
+    auto back = liquid::runtime::block_on(reopened->open_session(forked_id));
+    if (back) {
+        auto discarded = liquid::runtime::block_on(back->discard());
+        if (!discarded) {
+            return where +
+                   ": the session came back and cannot be discarded: " + discarded.error().message;
+        }
+    } else if (back.error().code != liquid::errc::not_found) {
+        return where + ": reopening the session failed: " + back.error().message;
+    }
+    if (!liquid::runtime::block_on(reopened->write("src/after.cpp", bytes("int after;\n"))) ||
+        !liquid::runtime::block_on(reopened->cut("after the crash"))) {
+        return where + ": the repository does not accept a new change";
+    }
+    return std::nullopt;
+}
+
+TEST_P(SessionCrashDurability, CrashAtEveryFaultPointOfTheEnding) {
+    const auto [ending, durability] = GetParam();
+    const auto seeds = durability == liquid::sim::crash_durability::everything ? std::uint64_t{1}
+                                                                               : std::uint64_t{2};
+    collaboration_directory directory;
+    auto steps = std::uint64_t{};
+    {
+        auto counter = crash_at_step{0};
+        const auto failed = run_session_crash(directory.path() / "probe",
+                                              ending,
+                                              &counter,
+                                              std::make_shared<liquid::sim::memory_store_backend>(),
+                                              liquid::sim::crash_durability::everything,
+                                              0);
+        ASSERT_FALSE(failed) << "probe: " << *failed;
+        steps = counter.steps();
+    }
+    ASSERT_GT(steps, 0U);
+    for (auto target = std::uint64_t{1}; target <= steps; ++target) {
+        for (auto seed = std::uint64_t{}; seed != seeds; ++seed) {
+            auto backend = std::make_shared<liquid::sim::memory_store_backend>();
+            auto crash = crash_at_step{target};
+            const auto failed = run_session_crash(directory.path() / "actual",
+                                                  ending,
+                                                  &crash,
+                                                  backend,
+                                                  durability,
+                                                  seed * 7919U + target);
+            ASSERT_FALSE(failed) << "crash at fault point " << target << " of " << steps
+                                 << ", seed " << seed << ": " << *failed;
+        }
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Endings,
+    SessionCrashDurability,
+    testing::Combine(testing::Values(session_ending::publish, session_ending::discard),
+                     testing::Values(liquid::sim::crash_durability::everything,
+                                     liquid::sim::crash_durability::subset)),
+    [](const auto& parameter) -> std::string {
+        return std::string{std::get<0>(parameter.param) == session_ending::publish ? "Publish"
+                                                                                   : "Discard"} +
+               (std::get<1>(parameter.param) == liquid::sim::crash_durability::everything
+                    ? "Everything"
+                    : "Subset");
+    });
 
 } // namespace

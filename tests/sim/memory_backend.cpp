@@ -1,33 +1,80 @@
 #include "memory_backend.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <limits>
 #include <map>
 #include <mutex>
+#include <random>
 #include <utility>
 
 #include "faults.hpp"
 
 namespace liquid::sim {
 
+// One mutation since the last barrier, as it was issued, so a crash can keep any part of the log
+// the ordering contract allows (liquid #344).
+struct logged_mutation {
+    enum class kind : std::uint8_t { put, put_range, remove };
+    std::string key;
+    kind what{};
+    std::uint64_t offset{};
+    std::vector<std::byte> bytes;
+};
+
+namespace {
+
+// Writes bytes at offset, growing the object as a sparse write would.
+void write_range(std::vector<std::byte>& object,
+                 std::uint64_t offset,
+                 const std::vector<std::byte>& bytes) {
+    if (object.size() < offset) {
+        object.resize(static_cast<std::size_t>(offset));
+    }
+    const auto end = static_cast<std::size_t>(offset) + bytes.size();
+    if (object.size() < end) {
+        object.resize(end);
+    }
+    std::copy(bytes.begin(), bytes.end(), object.begin() + static_cast<std::size_t>(offset));
+}
+
+void replay(std::map<std::string, std::vector<std::byte>>& objects,
+            const logged_mutation& mutation) {
+    switch (mutation.what) {
+    case logged_mutation::kind::put:
+        objects.insert_or_assign(mutation.key, mutation.bytes);
+        return;
+    case logged_mutation::kind::put_range:
+        write_range(objects[mutation.key], mutation.offset, mutation.bytes);
+        return;
+    case logged_mutation::kind::remove:
+        objects.erase(mutation.key);
+        return;
+    }
+}
+
+} // namespace
+
 struct memory_store_backend::state {
     std::mutex mutex;
     std::map<std::string, std::vector<std::byte>> objects;
     // What each key held before its first mutation since the last barrier; nullopt when absent.
     std::map<std::string, std::optional<std::vector<std::byte>>> undo;
-    std::size_t mutations{};
+    // Every mutation since the last barrier, in issue order.
+    std::vector<logged_mutation> log;
 
     // Called under the mutex before a key changes.
-    void remember(const std::string& key) {
-        ++mutations;
-        if (undo.contains(key)) {
-            return;
+    void remember(logged_mutation mutation) {
+        if (!undo.contains(mutation.key)) {
+            const auto found = objects.find(mutation.key);
+            undo.emplace(mutation.key,
+                         found == objects.end()
+                             ? std::optional<std::vector<std::byte>>{}
+                             : std::optional<std::vector<std::byte>>{found->second});
         }
-        const auto found = objects.find(key);
-        undo.emplace(key,
-                     found == objects.end() ? std::optional<std::vector<std::byte>>{}
-                                            : std::optional<std::vector<std::byte>>{found->second});
+        log.push_back(std::move(mutation));
     }
     std::optional<error> failure;
     std::chrono::milliseconds latency{};
@@ -76,7 +123,30 @@ void memory_store_backend::set_frozen(bool frozen) noexcept {
 }
 
 void memory_store_backend::lose_unbarriered() {
+    static_cast<void>(crash(crash_durability::barriered, 0));
+}
+
+std::size_t memory_store_backend::crash(crash_durability durability, std::uint64_t seed) {
     auto lock = std::scoped_lock(state_->mutex);
+    auto& log = state_->log;
+    auto keep = std::vector<bool>(log.size(), durability == crash_durability::everything);
+    auto random = std::mt19937_64{seed};
+    if (durability == crash_durability::prefix) {
+        const auto kept = static_cast<std::size_t>(random() % (log.size() + 1));
+        std::fill(keep.begin(), keep.begin() + static_cast<std::ptrdiff_t>(kept), true);
+    } else if (durability == crash_durability::subset) {
+        // Each key keeps a prefix of its own mutations, cut independently of every other key.
+        auto by_key = std::map<std::string, std::vector<std::size_t>>{};
+        for (auto index = std::size_t{}; index != log.size(); ++index) {
+            by_key[log[index].key].push_back(index);
+        }
+        for (const auto& [key, positions] : by_key) {
+            const auto kept = static_cast<std::size_t>(random() % (positions.size() + 1));
+            for (auto index = std::size_t{}; index != kept; ++index) {
+                keep[positions[index]] = true;
+            }
+        }
+    }
     for (auto& [key, previous] : state_->undo) {
         if (previous) {
             state_->objects.insert_or_assign(key, std::move(*previous));
@@ -84,13 +154,21 @@ void memory_store_backend::lose_unbarriered() {
             state_->objects.erase(key);
         }
     }
+    auto survived = std::size_t{};
+    for (auto index = std::size_t{}; index != log.size(); ++index) {
+        if (keep[index]) {
+            replay(state_->objects, log[index]);
+            ++survived;
+        }
+    }
     state_->undo.clear();
-    state_->mutations = 0;
+    log.clear();
+    return survived;
 }
 
 std::size_t memory_store_backend::unbarriered() const {
     auto lock = std::scoped_lock(state_->mutex);
-    return state_->mutations;
+    return state_->log.size();
 }
 
 std::optional<error> memory_store_backend::take_mutation_failure(const std::string& key) {
@@ -117,7 +195,7 @@ runtime::task<void> memory_store_backend::put(std::string key, std::vector<std::
         {store_detail::fault_operation::write, store_detail::fault_phase::before, context});
     {
         auto lock = std::scoped_lock(state_->mutex);
-        state_->remember(key);
+        state_->remember({key, logged_mutation::kind::put, 0, bytes});
         state_->objects.insert_or_assign(std::move(key), std::move(bytes));
     }
     store_detail::visit_fault(
@@ -143,7 +221,7 @@ runtime::task<void> memory_store_backend::put_if_absent(std::string key,
             co_return std::unexpected(
                 error{errc::already_exists, "backend object already exists", key});
         }
-        state_->remember(key);
+        state_->remember({key, logged_mutation::kind::put, 0, bytes});
         state_->objects.emplace(key, std::move(bytes));
     }
     store_detail::visit_fault(
@@ -181,16 +259,8 @@ runtime::task<void> memory_store_backend::put_range(std::string key,
         {store_detail::fault_operation::write, store_detail::fault_phase::before, context});
     {
         auto lock = std::scoped_lock(state_->mutex);
-        state_->remember(key);
-        auto& object = state_->objects[key];
-        if (object.size() < offset) {
-            object.resize(static_cast<std::size_t>(offset));
-        }
-        const auto end = static_cast<std::size_t>(offset) + bytes.size();
-        if (object.size() < end) {
-            object.resize(end);
-        }
-        std::copy(bytes.begin(), bytes.end(), object.begin() + static_cast<std::size_t>(offset));
+        state_->remember({key, logged_mutation::kind::put_range, offset, bytes});
+        write_range(state_->objects[key], offset, bytes);
     }
     store_detail::visit_fault(
         {store_detail::fault_operation::write, store_detail::fault_phase::after, context});
@@ -235,7 +305,7 @@ runtime::task<void> memory_store_backend::remove(std::string key) {
         if (!state_->objects.contains(key)) {
             co_return std::unexpected(error{errc::not_found, "backend object was not found", key});
         }
-        state_->remember(key);
+        state_->remember({key, logged_mutation::kind::remove, 0, {}});
         state_->objects.erase(key);
     }
     store_detail::visit_fault(
@@ -274,7 +344,7 @@ runtime::task<void> memory_store_backend::barrier() {
         auto lock = std::scoped_lock(state_->mutex);
         if (!state_->frozen) {
             state_->undo.clear();
-            state_->mutations = 0;
+            state_->log.clear();
         }
     }
     co_return result<void>{};

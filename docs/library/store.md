@@ -38,7 +38,8 @@ store needs:
 - `remove(key)` deletes one complete object;
 - `list(prefix)` returns matching keys and sizes; and
 - `barrier()` completes the backend's configured durability level for all successful operations
-  before later publication; and
+  before later publication; what a crash may keep of the writes between two barriers is the
+  ordering contract below; and
 - `fenced(fence)` returns a view of the same objects whose every call carries an injected owner's
   fence. It is not pure virtual: the default is `errc::unsupported`, which only an open with
   `store_options::owner` reaches (see [Injected owners and fencing](#injected-owners-and-fencing)).
@@ -68,6 +69,62 @@ repository transfer suites (`store-write-once`) a second time over it, selected 
 `LIQUID_TEST_WRITE_ONCE_BACKEND=1`: disk stores sit behind it, and so does the transfer's
 remote-shaped destination, because lake transfers into Zetta. It hides the disk root, so those runs
 load index runs into memory as a remote store does.
+
+### Ordering between barriers
+
+`store_backend` states what a crash may keep (liquid #344; the contract is the comment on
+`barrier()` in `include/liquid/store.hpp`):
+
+- **Barriers cut the mutations into intervals.** When `barrier()` succeeds, every `put`,
+  `put_if_absent`, `put_range` and `remove` that succeeded before it is durable. A crash never keeps
+  a mutation issued after a barrier without everything issued before it.
+- **Within one interval, any subset.** A crash may keep any subset of the interval's mutations to
+  different keys, in any combination.
+- **One key's own mutations keep their order.** A crash keeps a prefix of each key's mutations: a
+  `put_range` never survives without the ranges before it, a later `put` is never undone by an earlier
+  one, and a `remove` followed by a `put` of the same key never leaves the removal last.
+- **Reads see everything that succeeded**, durable or not.
+
+Liquid relies on nothing stronger. Where its recovery depends on one key's write reaching the
+backend before another key's, a barrier stands between them. So a backend may send one interval's
+writes to different keys concurrently, or keep different keys in different logs, and still serve
+liquid. It must still apply one key's writes in issue order. Zetta's object storage refuses an
+append that is not at the object's end (liquid #332), so an append sent out of order fails rather
+than leaving a gap. Two puts of one key sent at once could land in either order, and a backend must
+not do that.
+
+**What Lake's workspace store gives today.** Lake's workspace store backend
+(`src/control/workspace_store.cpp` in oramasearch/lake, lake#527, lake#532, lake#535) gives more than
+the contract. It sends every mutation in liquid's issue order, one at a time, each answered before
+the next. A workspace Zetta's object bucket appends each write to one node's object log, and after
+any crash replays a prefix of that log: startup truncates it at the first torn frame (zetta's
+`src/core/data/object_log.hpp`, "DURABILITY"). Lake opens no workspace store on a bucket whose writes
+or barriers more than one node answered (lake#543), so the bucket keeps a prefix of liquid's whole
+issue order. Lake's backend makes liquid's `barrier()` a point in that order and sends no request for
+it. Lake's sync, once per store operation and before Lake answers, drains the held writes and sends
+one Zetta `:barrier` that fsyncs the bucket. A prefix of the issue order is what a backend keeping
+this contract would leave after a crash at some earlier point, so liquid recovers from it the same
+way, and Lake does not acknowledge an operation before its writes are durable.
+
+Allowing any subset would let Lake send an interval's writes concurrently again, which saved about 23
+of 80 round trips per one-file commit (lake#532). Doing so needs per-key order kept, and liquid's
+barriers turned into ordering points: everything before a barrier answered before anything after
+it is sent.
+
+**Where liquid relied on more, and was fixed.** The subset crash mode of the in-memory backend
+(`memory_store_backend::crash(crash_durability::subset, seed)`, see
+[simulation.md](simulation.md#ordering-between-barriers)) found four places that needed the order of
+two keys' writes in one interval. Each now has a barrier between them:
+
+| Where | The two writes | What a crash kept without the barrier |
+|---|---|---|
+| `chunk_index::rebuild` (`src/store/index.cpp`) | removing `index/MANIFEST`, then the old runs | the old manifest naming a removed run: the next open failed `errc::not_found` instead of rebuilding from the packs (`StoreCrashDurability`, seed 156) |
+| compaction (`src/store/compactor.cpp`) | the pending marker, then the replacement pack | the replacement without its marker: an orphan pack that recovery never removes (`StoreCompactionCrashDurability`) |
+| compaction, after the commit | removing the old pack, then the marker | the old, all-dead pack without its marker (`StoreCompactionCrashDurability`) |
+| `recover_pending_compactions` (`src/store/store_impl.cpp`) | removing the uncommitted replacement, then the marker | the replacement without its marker, after a crash during recovery (`StoreCompactionRecoveryCrash`) |
+
+Each costs one barrier per index rebuild, two per compacted pack and one per recovered marker. On
+Lake today a liquid barrier sends no request (lake#535), so they cost Lake no round trip.
 
 ## Layout and pack format
 
@@ -527,7 +584,11 @@ decompresses, recompresses, or recalculates its identity. The new locations are 
 newest index run. The replacement pack and run are only preparation; the atomic
 collection-manifest put is the commit point. That manifest replaces the old pack's partial bitmap
 with an all-dead bitmap. Only after that put does the index manifest publish the new run and does the collector
-remove the old pack and its pending marker.
+remove the old pack and its pending marker. A barrier makes the marker durable before the
+replacement's first byte, and another makes the old pack's removal durable before the marker's;
+recovery likewise removes the pack, barriers, then removes the marker, so a backend that keeps any
+subset of one interval's writes never leaves a pack without the marker that names it (liquid #344,
+[Ordering between barriers](#ordering-between-barriers)).
 
 Recovery reads a pending marker before opening the index. Before the collection manifest put,
 it removes the replacement pack; after it, it removes the old pack. A crash between the collection
