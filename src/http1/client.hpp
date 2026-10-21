@@ -3,7 +3,9 @@
 #pragma once
 
 #include <cstddef>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -15,7 +17,13 @@ namespace liquid::http1 {
 struct response {
     unsigned status{};
     std::vector<std::byte> body;
+    /// Every response header field in arrival order, names as received.
+    std::vector<std::pair<std::string, std::string>> headers;
 };
+
+/// The value of the first header field named `name` (compared case-insensitively), or empty.
+[[nodiscard]] auto header_value(std::span<const std::pair<std::string, std::string>> headers,
+                                std::string_view name) -> std::string_view;
 
 struct request_options {
     std::string url;

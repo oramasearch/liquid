@@ -24,8 +24,11 @@
 #include <future>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
+
+#include <mutex>
 #include <random>
 #include <span>
 #include <stdexcept>
@@ -44,6 +47,7 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
+#include "net/retry_after.hpp"
 #include "objects/records.hpp"
 #include "repository/store_access.hpp"
 #include "temporary_directory.hpp"
@@ -264,6 +268,27 @@ public:
         fail_chunk_read_.store(true);
     }
 
+    // Answer the next `count` requests of `route` (find-missing, chunk-upload, push, pull,
+    // chunk-read) with `status` and a canonical `unavailable` error body, plus a `Retry-After`
+    // header when `retry_after` is not empty, before serving that route normally again.
+    void refuse_next(std::string route, unsigned count, unsigned status, std::string retry_after) {
+        auto lock = std::scoped_lock{mutex_};
+        refusals_[std::move(route)] = refusal{count, status, std::move(retry_after)};
+    }
+
+    // How many requests of `route` arrived, refused ones included.
+    auto requests(const std::string& route) const -> unsigned {
+        auto lock = std::scoped_lock{mutex_};
+        const auto found = requests_.find(route);
+        return found == requests_.end() ? 0U : found->second;
+    }
+
+    auto pending_refusals(const std::string& route) const -> unsigned {
+        auto lock = std::scoped_lock{mutex_};
+        const auto found = refusals_.find(route);
+        return found == refusals_.end() ? 0U : found->second.remaining;
+    }
+
 private:
     void serve() {
         while (!stopping_.load()) {
@@ -311,6 +336,9 @@ private:
         const auto body_text = std::string_view{request}.substr(header_end + 4);
         const auto* first = reinterpret_cast<const std::byte*>(body_text.data());
         const auto body = std::span<const std::byte>{first, body_text.size()};
+        if (refused(connection, route(method, target))) {
+            return;
+        }
         if (!required_bearer_.empty()) {
             const auto authorization = "\r\nAuthorization: Bearer " + required_bearer_ + "\r\n";
             if (request.find(authorization) == std::string::npos) {
@@ -340,6 +368,52 @@ private:
         } else {
             respond(connection, 404, {});
         }
+    }
+
+    static auto route(std::string_view method, std::string_view target) -> std::string {
+        if (method == "POST" && target.ends_with("/sync/find-missing")) {
+            return "find-missing";
+        }
+        if (method == "POST" && target.ends_with("/sync/chunks")) {
+            return "chunk-upload";
+        }
+        if (method == "POST" && target.ends_with("/sync/push")) {
+            return "push";
+        }
+        if (method == "POST" && target.ends_with("/sync/pull")) {
+            return "pull";
+        }
+        if (method == "GET" && target.find("/sync/chunks/") != std::string_view::npos) {
+            return "chunk-read";
+        }
+        return "other";
+    }
+
+    auto refused(int connection, const std::string& name) -> bool {
+        auto status = 0U;
+        auto retry_after = std::string{};
+        {
+            auto lock = std::scoped_lock{mutex_};
+            ++requests_[name];
+            const auto found = refusals_.find(name);
+            if (found == refusals_.end() || found->second.remaining == 0) {
+                return false;
+            }
+            --found->second.remaining;
+            status = found->second.status;
+            retry_after = found->second.retry_after;
+        }
+        auto body = liquid::sync_server::encode_error(liquid::error{
+            liquid::errc::unavailable, "repository store is being moved", "store_unavailable"});
+        auto headers = std::string{};
+        if (!retry_after.empty()) {
+            headers = "Retry-After: " + retry_after + "\r\n";
+        }
+        respond(connection,
+                status,
+                body ? std::span<const std::byte>{*body} : std::span<const std::byte>{},
+                headers);
+        return true;
     }
 
     void find_missing(int connection, std::span<const std::byte> body) {
@@ -437,20 +511,33 @@ private:
                 body ? std::span<const std::byte>{*body} : std::span<const std::byte>{});
     }
 
-    void respond(int connection, unsigned status, std::span<const std::byte> body) {
+    void respond(int connection,
+                 unsigned status,
+                 std::span<const std::byte> body,
+                 std::string_view extra_headers = {}) {
         const auto reason = status == 200 ? "OK" : status == 400 ? "Bad Request" : "Not Found";
         auto response = "HTTP/1.1 " + std::to_string(status) + " " + reason + "\r\n";
         response += "Content-Type: application/vnd.liquid.sync-v1\r\n";
+        response += extra_headers;
         response += "Content-Length: " + std::to_string(body.size()) + "\r\n";
         response += "Connection: close\r\n\r\n";
         response.append(reinterpret_cast<const char*>(body.data()), body.size());
         static_cast<void>(send_all(connection, response));
     }
 
+    struct refusal {
+        unsigned remaining{};
+        unsigned status{};
+        std::string retry_after;
+    };
+
     int listener_{-1};
     std::uint16_t port_{};
     std::atomic_bool stopping_{};
     std::atomic_bool fail_chunk_read_{};
+    mutable std::mutex mutex_;
+    std::map<std::string, refusal> refusals_;
+    std::map<std::string, unsigned> requests_;
     std::thread thread_;
     liquid::sync_server* server_{};
     bool legacy_push_reply_{};
@@ -685,6 +772,214 @@ TEST(Sync, peer_bucket_returns_retry_report_and_leaves_repository_unchanged) {
     auto head = liquid::runtime::block_on(destination->head());
     EXPECT_FALSE(head);
     EXPECT_EQ(head.error().code, liquid::errc::not_found);
+}
+
+TEST(RetryAfter, ReadsDelaySecondsAndEveryHttpDateForm) {
+    using namespace std::chrono;
+    // 1994-11-06 08:49:37 UTC, the example instant RFC 9110 uses for all three date forms.
+    const auto instant = sys_days{year{1994} / November / 6} + hours{8} + minutes{49} + seconds{37};
+    const auto before = instant - seconds{5};
+    EXPECT_EQ(liquid::net_detail::parse_retry_after("0", before), milliseconds{0});
+    EXPECT_EQ(liquid::net_detail::parse_retry_after("1", before), milliseconds{1000});
+    EXPECT_EQ(liquid::net_detail::parse_retry_after(" 120 ", before), milliseconds{120000});
+    EXPECT_EQ(liquid::net_detail::parse_retry_after("Sun, 06 Nov 1994 08:49:37 GMT", before),
+              milliseconds{5000});
+    EXPECT_EQ(liquid::net_detail::parse_retry_after("Sunday, 06-Nov-94 08:49:37 GMT", before),
+              milliseconds{5000});
+    EXPECT_EQ(liquid::net_detail::parse_retry_after("Sun Nov  6 08:49:37 1994", before),
+              milliseconds{5000});
+    // A date that has passed asks for no wait.
+    EXPECT_EQ(
+        liquid::net_detail::parse_retry_after("Sun, 06 Nov 1994 08:49:37 GMT", instant + hours{1}),
+        milliseconds{0});
+    // An enormous delay is clamped rather than overflowing; it is still far past any budget.
+    const auto huge = liquid::net_detail::parse_retry_after("99999999999999999999999999", before);
+    ASSERT_TRUE(huge);
+    EXPECT_GT(*huge, hours{24 * 365});
+    for (const auto* malformed : {"",
+                                  "  ",
+                                  "-1",
+                                  "1.5",
+                                  "soon",
+                                  "Sun, 06 Nov 1994 08:49:37 UTC",
+                                  "Sun, 31 Feb 1994 08:49:37 GMT",
+                                  "Sun, 06 Nov 1994 25:49:37 GMT",
+                                  "Sun Nov 6 08:49:37 1994"}) {
+        EXPECT_FALSE(liquid::net_detail::parse_retry_after(malformed, before)) << malformed;
+    }
+}
+
+namespace {
+
+// A server repository behind the fake HTTP adapter, and a local source repository with one cut.
+struct retry_fixture {
+    temporary_directory source_path;
+    temporary_directory destination_path;
+    temporary_directory server_path;
+    liquid::store server_store;
+    liquid::repository server_repository;
+    liquid::repository source;
+    liquid::repository destination;
+    std::unique_ptr<liquid::sync_server> sync_server;
+    std::unique_ptr<sync_http_server> http;
+
+    retry_fixture()
+        : server_store(open_store(server_path.path() / "store")),
+          server_repository(create_repository("repository", server_store)),
+          source(create_local(source_path.path())),
+          destination(create_local(destination_path.path())) {
+        sync_server = std::make_unique<liquid::sync_server>(server_repository, server_store);
+        http = std::make_unique<sync_http_server>(*sync_server);
+        expect(liquid::runtime::block_on(source.write("one.txt", bytes("one"))));
+        expect(liquid::runtime::block_on(source.cut("first")));
+    }
+
+    static auto open_store(const std::filesystem::path& path) -> liquid::store {
+        auto opened = liquid::runtime::block_on(liquid::store::open(path));
+        expect(opened);
+        return std::move(*opened);
+    }
+
+    static auto create_repository(std::string name, liquid::store& store) -> liquid::repository {
+        auto options = liquid::repository_options{};
+        options.store = &store;
+        auto created = liquid::runtime::block_on(liquid::repository::create(name, options));
+        expect(created);
+        return std::move(*created);
+    }
+
+    static auto create_local(const std::filesystem::path& path) -> liquid::repository {
+        auto created = liquid::runtime::block_on(liquid::repository::create(path));
+        expect(created);
+        return std::move(*created);
+    }
+
+    template <class T> static void expect(const liquid::result<T>& value) {
+        if (!value) {
+            throw std::runtime_error(value.error().message + " " + value.error().context);
+        }
+    }
+};
+
+} // namespace
+
+TEST(Sync, RetriesEveryRequestRefused503WithRetryAfter) {
+    retry_fixture fixture;
+    auto& http = *fixture.http;
+    for (const auto* route : {"find-missing", "chunk-upload", "push"}) {
+        http.refuse_next(route, 1, 503, "0");
+    }
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto pushed = liquid::runtime::block_on(endpoint.push(fixture.source));
+    ASSERT_TRUE(pushed) << pushed.error().message << " " << pushed.error().context;
+    EXPECT_GT(pushed->sent.objects, 0U);
+    for (const auto* route : {"find-missing", "chunk-upload", "push"}) {
+        EXPECT_EQ(http.pending_refusals(route), 0U) << route;
+    }
+    EXPECT_EQ(http.requests("find-missing"), 2U);
+    EXPECT_EQ(http.requests("push"), 2U);
+    EXPECT_GE(http.requests("chunk-upload"), 2U);
+
+    for (const auto* route : {"pull", "chunk-read"}) {
+        http.refuse_next(route, 1, 503, "0");
+    }
+    auto pulled = liquid::runtime::block_on(endpoint.pull(fixture.destination));
+    ASSERT_TRUE(pulled) << pulled.error().message << " " << pulled.error().context;
+    EXPECT_EQ(http.requests("pull"), 2U);
+    EXPECT_EQ(http.pending_refusals("chunk-read"), 0U);
+    EXPECT_GE(http.requests("chunk-read"), 2U);
+    auto one = liquid::runtime::block_on(fixture.destination.read("one.txt"));
+    ASSERT_TRUE(one);
+    EXPECT_EQ(text(*one), "one");
+}
+
+TEST(Sync, RetryWaitsForRetryAfterSecondsAndHonoursAnHttpDate) {
+    retry_fixture fixture;
+    auto& http = *fixture.http;
+    auto endpoint = liquid::sync_endpoint{http.url()};
+
+    http.refuse_next("push", 1, 503, "1");
+    const auto started = std::chrono::steady_clock::now();
+    auto pushed = liquid::runtime::block_on(endpoint.push(fixture.source));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    ASSERT_TRUE(pushed) << pushed.error().message << " " << pushed.error().context;
+    EXPECT_EQ(http.requests("push"), 2U);
+    EXPECT_GE(elapsed, std::chrono::milliseconds{950});
+
+    // An HTTP-date that has already passed is a retry with no wait.
+    http.refuse_next("pull", 1, 503, "Sun, 06 Nov 1994 08:49:37 GMT");
+    auto pulled = liquid::runtime::block_on(endpoint.pull(fixture.destination));
+    ASSERT_TRUE(pulled) << pulled.error().message << " " << pulled.error().context;
+    EXPECT_EQ(http.requests("pull"), 2U);
+
+    // A 429 that carries Retry-After is retried the same way.
+    http.refuse_next("find-missing", 2, 429, "0");
+    ASSERT_TRUE(liquid::runtime::block_on(fixture.source.write("two.txt", bytes("two"))));
+    ASSERT_TRUE(liquid::runtime::block_on(fixture.source.cut("second")));
+    auto again = liquid::runtime::block_on(endpoint.push(fixture.source));
+    ASSERT_TRUE(again) << again.error().message << " " << again.error().context;
+    EXPECT_EQ(http.requests("find-missing"), 3U + 1U);
+    EXPECT_EQ(http.pending_refusals("find-missing"), 0U);
+}
+
+TEST(Sync, RefusalsWithoutRetryAfterOrOfOtherStatusesAreNotRetried) {
+    retry_fixture fixture;
+    auto& http = *fixture.http;
+    auto endpoint = liquid::sync_endpoint{http.url()};
+
+    http.refuse_next("find-missing", 1, 503, "");
+    auto bare = liquid::runtime::block_on(endpoint.push(fixture.source));
+    ASSERT_FALSE(bare);
+    EXPECT_EQ(bare.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 1U);
+
+    http.refuse_next("find-missing", 1, 500, "0");
+    auto server_error = liquid::runtime::block_on(endpoint.push(fixture.source));
+    ASSERT_FALSE(server_error);
+    EXPECT_EQ(server_error.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 2U);
+
+    http.refuse_next("find-missing", 1, 503, "whenever");
+    auto malformed = liquid::runtime::block_on(endpoint.push(fixture.source));
+    ASSERT_FALSE(malformed);
+    EXPECT_EQ(malformed.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 3U);
+}
+
+TEST(Sync, RetryStopsWhenAttemptsOrTheWaitBudgetAreSpent) {
+    retry_fixture fixture;
+    auto& http = *fixture.http;
+
+    auto options = liquid::sync_endpoint_options{};
+    options.retry_attempts = 3;
+    auto limited = liquid::sync_endpoint{http.url(), options};
+    http.refuse_next("find-missing", 100, 503, "0");
+    auto exhausted = liquid::runtime::block_on(limited.push(fixture.source));
+    ASSERT_FALSE(exhausted);
+    EXPECT_EQ(exhausted.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 3U);
+
+    // A wait longer than the remaining budget is not taken: the refusal is returned at once.
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    http.refuse_next("find-missing", 1, 503, "120");
+    const auto started = std::chrono::steady_clock::now();
+    auto too_long = liquid::runtime::block_on(endpoint.push(fixture.source));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    ASSERT_FALSE(too_long);
+    EXPECT_EQ(too_long.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 4U);
+    EXPECT_LT(elapsed, std::chrono::seconds{10});
+
+    // The budget is a total across retries: two 1 s waits do not fit in 1.5 s, so the second
+    // refusal is returned after one wait.
+    auto budget = liquid::sync_endpoint_options{};
+    budget.retry_budget = std::chrono::milliseconds{1500};
+    auto budgeted = liquid::sync_endpoint{http.url(), budget};
+    http.refuse_next("find-missing", 5, 503, "1");
+    auto spent = liquid::runtime::block_on(budgeted.push(fixture.source));
+    ASSERT_FALSE(spent);
+    EXPECT_EQ(spent.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 6U);
 }
 
 TEST(Sync, ChangeRefusalProducesAReferenceOutcome) {

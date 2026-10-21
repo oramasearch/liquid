@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -93,6 +94,12 @@ struct LIQUID_EXPORT sync_endpoint_options {
     journal_cursor cursor;
     std::size_t batch_items{256};
     bool atomic{};
+    /// The longest one sync request waits in total, across its retries, on a peer that answers
+    /// `503` or `429` with a `Retry-After` header. A requested wait that would pass this budget is
+    /// not taken: the request fails with the peer's error at once.
+    std::chrono::milliseconds retry_budget{std::chrono::seconds{30}};
+    /// The most times one sync request is sent, the first time included. `1` turns retrying off.
+    unsigned retry_attempts{8};
 };
 
 struct LIQUID_EXPORT sync_ref_update {

@@ -221,6 +221,33 @@ prints `flow_rejected scope=<scope> retry_after_ms=<value>` and exits unsuccessf
 uploads may already exist in the content-addressed store, but the repository document, directory
 documents, drips, changes, and refs remain unchanged.
 
+### Retrying a refusal that carries `Retry-After`
+
+A peer that is briefly unable to serve answers `503` (or `429` for a rate limit) with a
+`Retry-After` header. Lake does this with `Retry-After: 1` while a workspace store is handed over
+during a rollout, while another lake process holds the store's lease, and while a store is full
+(liquid #340). `sync_endpoint` sends such a request again after the wait the header asks for,
+read as delay-seconds or as an HTTP-date in any of the three forms RFC 9110 requires a recipient
+to accept (`net/retry_after.cpp`). It applies to every request the client makes: find-missing,
+chunk uploads and range reads, push and pull. Each is safe to repeat. Find-missing, pull and
+range reads change nothing; a chunk upload is content-addressed; and a push refused with `503` or
+`429` was not applied, because lake refuses the whole batch before import and liquid's flow
+control rejects it before import.
+
+The retries are bounded per request by two `sync_endpoint_options`:
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `retry_attempts` | 8 | The most times one request is sent, the first included. `1` turns retrying off. |
+| `retry_budget` | 30 s | The most one request waits in total. A wait that would pass it is not taken. |
+
+When either is spent, or the requested wait would pass the budget, the last refusal is returned
+exactly as before (`503` maps to `unavailable`, `429` to `busy` or the flow-rejection report). A
+`503` or `429` without `Retry-After`, a malformed `Retry-After`, and every other status are never
+retried. liquid's own `serve sync` sends no `Retry-After`, so its flow rejections still surface
+at once as `sync_report::retry_after_ms`. `http1::response` and `net_detail::http_response` carry
+every response header field, so the client reads `Retry-After` from the response it received.
+
 An interrupted request has no success response and is retried from the last acknowledged cursor.
 Servers do not advance that cursor until metadata import and required chunk publication both
 succeed. A successful reply acknowledges the batch even when it reports refusals; refs are exported
