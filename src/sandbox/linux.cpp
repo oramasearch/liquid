@@ -1,3 +1,4 @@
+#include "sandbox/override.hpp"
 #include "sandbox/sandbox.hpp"
 
 #if defined(__linux__)
@@ -57,7 +58,8 @@ auto create_file(const std::filesystem::path& path) -> result<void> {
 
 auto read_guard_path() -> result<std::filesystem::path> {
     auto candidates = std::vector<std::filesystem::path>{};
-    if (const auto* configured = std::getenv("LIQUID_READ_GUARD"))
+    if (const auto* configured = std::getenv("LIQUID_READ_GUARD");
+        configured && trusted_override(configured))
         candidates.emplace_back(configured);
     candidates.emplace_back(LIQUID_READ_GUARD_PATH);
     auto code = std::error_code{};
@@ -187,6 +189,9 @@ auto write_wrap_bootstrap(const wrap_launch_request& request, const std::filesys
            << quote(rooted("/liquid/trace").string()) << "\n";
     stream << "/usr/bin/mount --bind " << quote(request.plan.string()) << ' '
            << quote(rooted("/liquid/plan").string()) << "\n";
+    // The action may read the plan, never rewrite it (liquid#401).
+    stream << "/usr/bin/mount -o remount,bind,ro " << quote(rooted("/liquid/plan").string())
+           << "\n";
     stream << "/usr/bin/mount -t tmpfs tmpfs " << quote(rooted("/tmp").string()) << "\n";
     stream << "/usr/bin/mkdir -p " << quote(rooted("/tmp/home").string()) << "\n";
     stream << "/usr/bin/mount --rbind /proc " << quote(rooted("/proc").string()) << "\n";

@@ -617,6 +617,50 @@ writes a per-run plan keyed by executable, fixed-root working directory, and arg
 exits from the tool process constructor after the wrapper has materialised its outputs. This also
 handles drivers that invoke an absolute compiler path, which a `PATH` wrapper would miss.
 
+#### The wrap plan and what the hook trusts
+
+Because a planned hit skips the tool, the plan and its conditions decide whether new source can be
+answered with an old object. liquid#401 closed two ways to make that happen. The plan reader and the
+condition check are one C file, `src/sandbox/wrap_plan.c`, compiled into both the hook and libliquid,
+so the writer and the reader hash and parse the same way.
+
+The plan has two row kinds:
+
+```
+H\t<process key, hex>\t<exit status>
+C\t<process key, hex>\t<BLAKE3-256 of the input, 64 hex>\t<size>\t<relative path, hex>
+```
+
+- **Conditional inputs are revalidated with BLAKE3-256**, the hash liquid content-addresses with. A
+  `C` row names an input the cached action read that an earlier action in this run may have
+  rewritten; the hit stands only when the file's size and BLAKE3 digest both match. The rows used
+  64-bit FNV-1a until liquid#401, and FNV-1a collisions are cheap: the test
+  `WrapPlan.a_changed_input_with_the_same_fnv1a_value_no_longer_hits` carries two 16-byte inputs
+  with the same FNV-1a value, which under the old check served the stale object. A `C` row for the
+  key that does not parse, or carries any other digest form, is a miss.
+- **The plan is bound to the run that wrote it.** liquid writes the plan as a new 0600 file and
+  passes the BLAKE3-256 digest of its bytes in `LIQUID_WRAP_PLAN_DIGEST`. The hook reads the file
+  once (without following a final link, as a regular file), and uses it only when the bytes hash to
+  that digest; a missing or different digest means no hits, and the tool runs.
+- **The plan is read only from liquid's own location.** On Linux the hook reads only `/liquid/plan`,
+  which the sandbox bind-mounts and then remounts read-only, and reads conditional inputs only under
+  `/liquid/work`; `LIQUID_WRAP_PLAN` is not consulted. macOS has no mount namespace, so the hook
+  accepts `LIQUID_WRAP_PLAN` only when it is `<run>/plan` beside the input mount `<run>/mount`
+  (`LIQUID_WRAP_ROOT`), is owned by the effective user, and has no group or other permission. A plan
+  planted anywhere else is ignored.
+- **Override binaries.** `LIQUID_WRAP_HOOK` and `LIQUID_READ_GUARD` are honoured only when they name a
+  regular file owned by the effective user or root that no other user can write
+  (`src/sandbox/override.hpp`); otherwise the built-in locations are used.
+
+The process key itself is still 64-bit FNV-1a over executable, working directory and argv; moving it
+to BLAKE3 changes the persisted wrap state and is tracked in
+[liquid#449](https://github.com/oramasearch/liquid/issues/449). Code running inside an action
+can already write any output it likes, so the plan checks protect the cache from data an author
+controls (a conditional input) and from files planted outside the run, not from the action's own
+code. Verify with `tests/build/test_wrap_plan.cpp` (`WrapPlan.*` on every platform,
+`WrapHook.macos_hook_runs_the_tool_unless_a_bound_plan_beside_the_mount_matches` with the real hook
+on macOS).
+
 The first fixture set exposed two details now encoded in the implementation. Build drivers such as
 Ninja write bookkeeping files, so a writer is an inner action only when no output-writing descendant
 belongs below it; this leaves compiler, linker, and configure probes as the boundaries while the

@@ -11,6 +11,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "sandbox/wrap_plan.h"
+
 static int liquid_wrap_traced;
 
 static uint64_t monotonic_nanoseconds(void) {
@@ -97,102 +99,19 @@ static int is_configure_probe(const char* directory, const char* arguments, size
            bytes_contain(arguments, argument_size, "cmTC_");
 }
 
-static int hex_value(char value) {
-    if (value >= '0' && value <= '9') {
-        return value - '0';
-    }
-    if (value >= 'a' && value <= 'f') {
-        return value - 'a' + 10;
-    }
-    return -1;
-}
-
-static int conditional_input_matches(const char* encoded,
-                                     uint64_t expected_fingerprint,
-                                     uint64_t expected_size) {
-    char relative[4096];
-    const size_t encoded_size = strlen(encoded);
-    if (encoded_size == 0 || encoded_size % 2 != 0 || encoded_size / 2 >= sizeof(relative)) {
-        return 0;
-    }
-    for (size_t offset = 0; offset < encoded_size; offset += 2) {
-        const int high = hex_value(encoded[offset]);
-        const int low = hex_value(encoded[offset + 1]);
-        if (high < 0 || low < 0) {
-            return 0;
-        }
-        relative[offset / 2] = (char)((high << 4) | low);
-    }
-    relative[encoded_size / 2] = '\0';
-    const char* root = getenv("LIQUID_WRAP_ROOT");
-    if (root == NULL) {
-        root = "/liquid/work";
-    }
-    char path[8192];
-    const int path_size = snprintf(path, sizeof(path), "%s/%s", root, relative);
-    if (path_size <= 0 || (size_t)path_size >= sizeof(path)) {
-        return 0;
-    }
-    const int descriptor = open(path, O_RDONLY | O_CLOEXEC);
-    if (descriptor < 0) {
-        return 0;
-    }
-    char buffer[65536];
-    uint64_t fingerprint = UINT64_C(1469598103934665603);
-    uint64_t size = 0;
-    for (;;) {
-        const ssize_t count = read(descriptor, buffer, sizeof(buffer));
-        if (count < 0) {
-            close(descriptor);
-            return 0;
-        }
-        if (count == 0) {
-            break;
-        }
-        fingerprint = fnv_update(fingerprint, buffer, (size_t)count);
-        size += (uint64_t)count;
-    }
-    close(descriptor);
-    return fingerprint == expected_fingerprint && size == expected_size;
-}
-
+/* Only the plan liquid bind-mounts read-only at /liquid/plan is read, and only when its bytes
+ * hash to the digest liquid passed beside it (liquid#401); LIQUID_WRAP_PLAN is not consulted.
+ * Conditional inputs are read from the fixed mount, /liquid/work. */
 static int planned_hit(uint64_t key) {
-    const char* path = getenv("LIQUID_WRAP_PLAN");
-    FILE* input = fopen(path == NULL ? "/liquid/plan" : path, "r");
-    if (input == NULL) {
+    size_t size = 0;
+    char* plan =
+        liquid_wrap_plan_load("/liquid/plan", getenv(LIQUID_WRAP_PLAN_DIGEST_VARIABLE), 0, &size);
+    if (plan == NULL) {
         return -1;
     }
-    char line[16384];
-    int found = 0;
-    int status = -1;
-    while (fgets(line, sizeof(line), input) != NULL) {
-        unsigned long long candidate = 0;
-        int candidate_status = 0;
-        if (sscanf(line, "H\t%llx\t%d", &candidate, &candidate_status) == 2) {
-            if ((uint64_t)candidate == key) {
-                found = 1;
-                status = candidate_status;
-            }
-            continue;
-        }
-        unsigned long long expected_fingerprint = 0;
-        unsigned long long expected_size = 0;
-        char encoded[8192];
-        if (sscanf(line,
-                   "C\t%llx\t%llx\t%llu\t%8191s",
-                   &candidate,
-                   &expected_fingerprint,
-                   &expected_size,
-                   encoded) == 4 &&
-            (uint64_t)candidate == key &&
-            !conditional_input_matches(
-                encoded, (uint64_t)expected_fingerprint, (uint64_t)expected_size)) {
-            fclose(input);
-            return -1;
-        }
-    }
-    fclose(input);
-    return found ? status : -1;
+    const int status = liquid_wrap_plan_status(plan, size, key, "/liquid/work");
+    free(plan);
+    return status;
 }
 
 static long observed_pid(const char* path, long fallback) {
@@ -299,6 +218,8 @@ __attribute__((constructor)) static void liquid_wrap_enter(void) {
 #include <time.h>
 #include <unistd.h>
 
+#include "sandbox/wrap_plan.h"
+
 static int liquid_wrap_traced;
 
 static uint64_t monotonic_nanoseconds(void) {
@@ -376,105 +297,31 @@ static int is_configure_probe(const char* directory, const char* arguments, size
            bytes_contain(arguments, argument_size, "cmTC_");
 }
 
-static int hex_value(char value) {
-    if (value >= '0' && value <= '9') {
-        return value - '0';
-    }
-    if (value >= 'a' && value <= 'f') {
-        return value - 'a' + 10;
-    }
-    return -1;
-}
-
-static int conditional_input_matches(const char* encoded,
-                                     uint64_t expected_fingerprint,
-                                     uint64_t expected_size) {
-    char relative[4096];
-    const size_t encoded_size = strlen(encoded);
-    if (encoded_size == 0 || encoded_size % 2 != 0 || encoded_size / 2 >= sizeof(relative)) {
-        return 0;
-    }
-    for (size_t offset = 0; offset < encoded_size; offset += 2) {
-        const int high = hex_value(encoded[offset]);
-        const int low = hex_value(encoded[offset + 1]);
-        if (high < 0 || low < 0) {
-            return 0;
-        }
-        relative[offset / 2] = (char)((high << 4) | low);
-    }
-    relative[encoded_size / 2] = '\0';
-    const char* root = getenv("LIQUID_WRAP_ROOT");
-    if (root == NULL) {
-        return 0;
-    }
-    char path[8192];
-    const int path_size = snprintf(path, sizeof(path), "%s/%s", root, relative);
-    if (path_size <= 0 || (size_t)path_size >= sizeof(path)) {
-        return 0;
-    }
-    const int descriptor = open(path, O_RDONLY | O_CLOEXEC);
-    if (descriptor < 0) {
-        return 0;
-    }
-    char buffer[65536];
-    uint64_t fingerprint = UINT64_C(1469598103934665603);
-    uint64_t size = 0;
-    for (;;) {
-        const ssize_t count = read(descriptor, buffer, sizeof(buffer));
-        if (count < 0) {
-            close(descriptor);
-            return 0;
-        }
-        if (count == 0) {
-            break;
-        }
-        fingerprint = fnv_update(fingerprint, buffer, (size_t)count);
-        size += (uint64_t)count;
-    }
-    close(descriptor);
-    return fingerprint == expected_fingerprint && size == expected_size;
-}
-
+/* macOS has no mount namespace, so the plan is trusted only at liquid's own location, beside the
+ * input mount (<run>/plan next to <run>/mount), as a private file of this user, and only when its
+ * bytes hash to the digest liquid passed beside it (liquid#401). */
 static int planned_hit(uint64_t key) {
     const char* path = getenv("LIQUID_WRAP_PLAN");
-    if (path == NULL) {
+    const char* root = getenv("LIQUID_WRAP_ROOT");
+    if (path == NULL || root == NULL || root[0] != '/') {
         return -1;
     }
-    FILE* input = fopen(path, "r");
-    if (input == NULL) {
+    const char* slash = strrchr(root, '/');
+    char expected[8192];
+    const int expected_size =
+        snprintf(expected, sizeof(expected), "%.*s/plan", (int)(slash - root), root);
+    if (expected_size <= 0 || (size_t)expected_size >= sizeof(expected) ||
+        strcmp(path, expected) != 0) {
         return -1;
     }
-    char line[16384];
-    int found = 0;
-    int status = -1;
-    while (fgets(line, sizeof(line), input) != NULL) {
-        unsigned long long candidate = 0;
-        int candidate_status = 0;
-        if (sscanf(line, "H\t%llx\t%d", &candidate, &candidate_status) == 2) {
-            if ((uint64_t)candidate == key) {
-                found = 1;
-                status = candidate_status;
-            }
-            continue;
-        }
-        unsigned long long expected_fingerprint = 0;
-        unsigned long long expected_size = 0;
-        char encoded[8192];
-        if (sscanf(line,
-                   "C\t%llx\t%llx\t%llu\t%8191s",
-                   &candidate,
-                   &expected_fingerprint,
-                   &expected_size,
-                   encoded) == 4 &&
-            (uint64_t)candidate == key &&
-            !conditional_input_matches(
-                encoded, (uint64_t)expected_fingerprint, (uint64_t)expected_size)) {
-            fclose(input);
-            return -1;
-        }
+    size_t size = 0;
+    char* plan = liquid_wrap_plan_load(path, getenv(LIQUID_WRAP_PLAN_DIGEST_VARIABLE), 1, &size);
+    if (plan == NULL) {
+        return -1;
     }
-    fclose(input);
-    return found ? status : -1;
+    const int status = liquid_wrap_plan_status(plan, size, key, root);
+    free(plan);
+    return status;
 }
 
 __attribute__((constructor)) static void liquid_wrap_enter(void) {

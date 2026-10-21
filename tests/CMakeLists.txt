@@ -99,6 +99,7 @@ add_executable(liquid-tests
   build/test_abi.cpp
   build/test_symbols.cpp
   build/test_wrap.cpp
+  build/test_wrap_plan.cpp
   ${LIQUID_HTTP2_TEST_SOURCES}
 )
 if(BUILD_SHARED_LIBS)
@@ -111,13 +112,14 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/formats/tar/writer.cpp
     ${PROJECT_SOURCE_DIR}/src/formats/ostree/ostree.cpp
     ${PROJECT_SOURCE_DIR}/src/sandbox/environment.cpp
+    $<TARGET_OBJECTS:liquid_wrap_plan_objects>
     ${PROJECT_SOURCE_DIR}/src/projection/rules.cpp
     ${PROJECT_SOURCE_DIR}/src/store/references.cpp
     ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
   if(APPLE)
     target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
   endif()
-  target_link_libraries(liquid-tests PRIVATE libzstd_static ZLIB::ZLIB)
+  target_link_libraries(liquid-tests PRIVATE libzstd_static ZLIB::ZLIB liquid_blake3)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
 endif()
 if(UNIX)
@@ -175,6 +177,14 @@ target_link_libraries(liquid-http2-test-server PRIVATE
   $<COMPILE_ONLY:Boost::corosio_openssl>)
 target_include_directories(liquid-http2-test-server PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
+if(APPLE)
+  # The macOS wrap hook tests preload the real hook into this tool (liquid#401).
+  add_executable(liquid-wrap-probe build/wrap_probe.c)
+  add_dependencies(liquid-tests liquid-wrap-probe liquid-wrap-hook)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_WRAP_PROBE="$<TARGET_FILE:liquid-wrap-probe>"
+    LIQUID_TEST_WRAP_HOOK="$<TARGET_FILE:liquid-wrap-hook>")
+endif()
 add_executable(liquid-build-fixture build/fixture.c)
 if(UNIX AND NOT APPLE)
   target_link_options(liquid-build-fixture PRIVATE -static)

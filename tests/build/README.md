@@ -167,3 +167,9 @@ environment, and policy-bound candidate keys.
 zero-byte unused results, exact chunk-range hydration and cache reuse, on-demand materialisation,
 tri-state availability, and metadata-only consumption by a consecutive remote result. The Linux
 executor fixture marks one action eligible and verifies `/etc/hostname` is refused and reported.
+
+`test_wrap_plan.cpp` covers what the wrap hook trusts (liquid#401): two inputs with the same
+FNV-1a value no longer satisfy each other's conditional row, a condition in the old FNV-1a form is
+a miss, a plan is read only when its bytes hash to the digest liquid passed, and a shared or linked
+plan is refused. On macOS it preloads the real hook into `wrap_probe.c` and checks that the tool
+runs unless a bound, private plan beside the mount matches.
