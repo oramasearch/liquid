@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -16,6 +17,7 @@
 #include <string_view>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #ifndef _WIN32
 #include <cerrno>
@@ -1400,8 +1402,107 @@ auto socket_address(const std::filesystem::path& endpoint) -> result<sockaddr_un
     return output;
 }
 
+// The daemon's socket directory must belong to this user and be closed to everyone else, and the
+// directory holding it must not let another user swap it out (liquid#397).
+auto verify_private_directory(const std::filesystem::path& directory) -> result<void> {
+    struct stat info{};
+    if (::lstat(directory.c_str(), &info) != 0) {
+        const auto code = errno;
+        return std::unexpected(failure(code == ENOENT ? errc::unavailable : errc::io,
+                                       std::strerror(code),
+                                       directory.string()));
+    }
+    if (!S_ISDIR(info.st_mode) || info.st_uid != ::geteuid() || (info.st_mode & 077) != 0) {
+        return std::unexpected(failure(errc::unauthorized,
+                                       "daemon socket directory is not a private directory owned "
+                                       "by this user (it must be mode 0700)",
+                                       directory.string()));
+    }
+    struct stat parent{};
+    if (::stat(directory.parent_path().c_str(), &parent) != 0) {
+        return std::unexpected(
+            failure(errc::io, std::strerror(errno), directory.parent_path().string()));
+    }
+    const auto shared_writable = (parent.st_mode & (S_IWGRP | S_IWOTH)) != 0;
+    if ((parent.st_uid != ::geteuid() && parent.st_uid != 0) ||
+        (shared_writable && (parent.st_mode & S_ISVTX) == 0)) {
+        return std::unexpected(failure(errc::unauthorized,
+                                       "daemon socket directory sits in a directory another user "
+                                       "can replace it in",
+                                       directory.parent_path().string()));
+    }
+    return {};
+}
+
+auto ensure_private_directory(const std::filesystem::path& directory) -> result<void> {
+    if (::mkdir(directory.c_str(), 0700) != 0 && errno != EEXIST) {
+        return std::unexpected(failure(errc::io, std::strerror(errno), directory.string()));
+    }
+    return verify_private_directory(directory);
+}
+
+// The endpoint must be a socket this user created with no permission for anyone else. A
+// symbolic link, a regular file, or a socket another user could have planted is refused.
+auto verify_endpoint(const std::filesystem::path& endpoint) -> result<void> {
+    struct stat info{};
+    if (::lstat(endpoint.c_str(), &info) != 0) {
+        const auto code = errno;
+        return std::unexpected(failure(
+            code == ENOENT ? errc::unavailable : errc::io, std::strerror(code), endpoint.string()));
+    }
+    if (!S_ISSOCK(info.st_mode) || info.st_uid != ::geteuid() || (info.st_mode & 077) != 0) {
+        return std::unexpected(failure(errc::unauthorized,
+                                       "daemon endpoint is not a private socket owned by this user",
+                                       endpoint.string()));
+    }
+    return {};
+}
+
+// The user on the other end of a connected Unix socket, from the kernel's record of it.
+auto peer_user(int descriptor) -> result<uid_t> {
+#if defined(__linux__)
+    auto credentials = ucred{};
+    auto size = static_cast<socklen_t>(sizeof(credentials));
+    if (::getsockopt(descriptor, SOL_SOCKET, SO_PEERCRED, &credentials, &size) != 0) {
+        return std::unexpected(failure(errc::io, std::strerror(errno), "daemon peer credentials"));
+    }
+    return credentials.uid;
+#else
+    auto user = uid_t{};
+    auto group = gid_t{};
+    if (::getpeereid(descriptor, &user, &group) != 0) {
+        return std::unexpected(failure(errc::io, std::strerror(errno), "daemon peer credentials"));
+    }
+    return user;
+#endif
+}
+
+auto same_user_peer(int descriptor) -> bool {
+    const auto user = peer_user(descriptor);
+    return user && *user == ::geteuid();
+}
+
+// bind() creates the socket file with the process umask applied, so the socket is never
+// reachable by another user, not even between bind and a later chmod. umask is process-wide;
+// the mutex keeps two daemons in one process from restoring each other's value.
+auto bind_private(int listener, const sockaddr_un& address) -> int {
+    static std::mutex umask_mutex;
+    const auto lock = std::lock_guard{umask_mutex};
+    const auto previous = ::umask(077);
+    const auto bound =
+        ::bind(listener, reinterpret_cast<const sockaddr*>(&address), sizeof(address));
+    const auto saved = errno;
+    ::umask(previous);
+    errno = saved;
+    return bound;
+}
+
 auto open_listener(const std::filesystem::path& directory, const std::filesystem::path& endpoint)
     -> result<unix_handles> {
+    auto private_directory = ensure_private_directory(endpoint.parent_path());
+    if (!private_directory) {
+        return std::unexpected(private_directory.error());
+    }
     std::filesystem::create_directories(directory);
     const auto lock_path = directory / "lock";
     const auto lock_descriptor = ::open(lock_path.c_str(), O_CREAT | O_RDWR, 0600);
@@ -1418,26 +1519,32 @@ auto open_listener(const std::filesystem::path& directory, const std::filesystem
         close_descriptor(lock_descriptor);
         return std::unexpected(address.error());
     }
-    std::filesystem::remove(endpoint);
+    // The checkout lock is held, so a socket left at the path is a stale one from an earlier
+    // daemon of this checkout. Only that is removed; anything else at the path is refused.
+    auto stale = verify_endpoint(endpoint);
+    if (stale) {
+        std::filesystem::remove(endpoint);
+    } else if (stale.error().code != errc::unavailable) {
+        close_descriptor(lock_descriptor);
+        return std::unexpected(stale.error());
+    }
     const auto listener = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (listener < 0) {
         close_descriptor(lock_descriptor);
         return std::unexpected(failure(errc::io, std::strerror(errno), endpoint.string()));
     }
-    if (::bind(listener, reinterpret_cast<const sockaddr*>(&*address), sizeof(*address)) != 0 ||
-        ::listen(listener, 16) != 0) {
+    if (bind_private(listener, *address) != 0 || ::listen(listener, 16) != 0) {
         const auto message = std::string{std::strerror(errno)};
         close_descriptor(listener);
         close_descriptor(lock_descriptor);
         std::filesystem::remove(endpoint);
         return std::unexpected(failure(errc::io, message, endpoint.string()));
     }
-    if (::chmod(endpoint.c_str(), 0600) != 0) {
-        const auto message = std::string{std::strerror(errno)};
+    auto created = verify_endpoint(endpoint);
+    if (!created) {
         close_descriptor(listener);
         close_descriptor(lock_descriptor);
-        std::filesystem::remove(endpoint);
-        return std::unexpected(failure(errc::io, message, endpoint.string()));
+        return std::unexpected(created.error());
     }
     return unix_handles{lock_descriptor, listener};
 }
@@ -1458,6 +1565,11 @@ auto accept_request(int listener) -> result<std::optional<accepted_request>> {
     if (connection < 0) {
         return std::unexpected(failure(errc::io, std::strerror(errno), "daemon socket"));
     }
+    if (!same_user_peer(connection)) {
+        // Another user reached the socket: close the connection unread and keep serving.
+        close_descriptor(connection);
+        return std::optional<accepted_request>{};
+    }
     auto frame = read_frame(connection);
     if (!frame) {
         close_descriptor(connection);
@@ -1472,6 +1584,14 @@ auto request(const std::filesystem::path& endpoint, std::vector<std::byte> frame
     if (!address) {
         return std::unexpected(address.error());
     }
+    auto private_directory = verify_private_directory(endpoint.parent_path());
+    if (!private_directory) {
+        return std::unexpected(private_directory.error());
+    }
+    auto private_endpoint = verify_endpoint(endpoint);
+    if (!private_endpoint) {
+        return std::unexpected(private_endpoint.error());
+    }
     const auto descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (descriptor < 0) {
         return std::unexpected(failure(errc::io, std::strerror(errno), endpoint.string()));
@@ -1484,6 +1604,12 @@ auto request(const std::filesystem::path& endpoint, std::vector<std::byte> frame
             failure(code == ENOENT || code == ECONNREFUSED ? errc::unavailable : errc::io,
                     std::strerror(code),
                     endpoint.string()));
+    }
+    if (!same_user_peer(descriptor)) {
+        close_descriptor(descriptor);
+        return std::unexpected(failure(errc::unauthorized,
+                                       "the process serving the daemon socket is another user",
+                                       endpoint.string()));
     }
     auto written = write_all(descriptor, frame);
     if (!written) {
@@ -2117,8 +2243,49 @@ auto endpoint_path(const std::filesystem::path& checkout) -> result<std::filesys
         return std::unexpected(id.error());
     }
     const auto digest_text = to_string(*id);
-    return std::filesystem::temp_directory_path() /
-           ("liquid-daemon-" + digest_text.substr(digest_text.find(':') + 1, 24) + ".sock");
+    const auto name = digest_text.substr(digest_text.find(':') + 1, 24) + ".sock";
+#ifdef _WIN32
+    return std::filesystem::temp_directory_path() / name;
+#else
+    // One private directory per user (liquid#397), in the first per-user location that exists
+    // and leaves room for the socket name in sun_path: $XDG_RUNTIME_DIR, then on macOS the
+    // per-user temporary directory the system assigns (/var/folders/..., mode 0700), then the
+    // temporary directory. The uid in the name keeps users apart when the base is shared.
+    const auto directory_name = "liquid-" + std::to_string(::geteuid());
+    const auto fits = [&](const std::filesystem::path& base) {
+        return base.is_absolute() &&
+               (base / directory_name / name).native().size() < sizeof(sockaddr_un{}.sun_path);
+    };
+    auto bases = std::vector<std::filesystem::path>{};
+    if (const auto* runtime = std::getenv("XDG_RUNTIME_DIR"); runtime && *runtime) {
+        bases.emplace_back(runtime);
+    }
+#if defined(__APPLE__)
+    auto user_temporary = std::array<char, 1024>{};
+    const auto length =
+        ::confstr(_CS_DARWIN_USER_TEMP_DIR, user_temporary.data(), user_temporary.size());
+    if (length > 0 && length <= user_temporary.size()) {
+        bases.emplace_back(std::string{user_temporary.data()});
+    }
+#endif
+    auto code = std::error_code{};
+    auto temporary = std::filesystem::temp_directory_path(code);
+    if (!code) {
+        bases.push_back(std::filesystem::absolute(temporary, code));
+    }
+    bases.emplace_back("/tmp");
+    for (auto& base : bases) {
+        base = base.lexically_normal();
+        if (!base.empty() && base.filename().empty()) {
+            base = base.parent_path();
+        }
+        if (fits(base)) {
+            return base / directory_name / name;
+        }
+    }
+    return std::unexpected(failure(errc::invalid_argument,
+                                   "no per-user directory leaves room for the daemon socket path"));
+#endif
 }
 
 } // namespace

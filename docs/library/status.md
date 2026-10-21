@@ -357,7 +357,8 @@ attributed operation for whole-edit undo. The bundled tree-sitter frontend expos
 and `liquid edit` previews or applies through the checkout daemon ([`edit.md`](edit.md)).
 
 **Daemon lifecycle and fan-out** are implemented on macOS and Linux. The CLI starts one locked
-process per checkout on first daemon-backed use and attaches over framed canonical CBOR. The
+process per checkout on first daemon-backed use and attaches over framed canonical CBOR, on a
+socket in a private per-user directory that refuses other users by peer credentials (#397). The
 daemon owns capture, maps each drip to the changed graph inputs, processes build, search,
 collaborator, and lake hooks in order with durable per-target cursors, reports lag through
 `liquid status`, exits when idle, and persists its graph on shutdown. Resident graph values use a
