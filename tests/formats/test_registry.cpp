@@ -8,10 +8,13 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <zlib.h>
 
 #include "liquid/format.hpp"
 
@@ -51,10 +54,22 @@ auto file_entry(std::string path, std::vector<std::byte> bytes) -> liquid::forma
             .bytes = std::move(bytes)};
 }
 
+// What `parquet_page_fixture` declares about its data page and footer. The defaults describe the
+// payload honestly; a test overrides them to declare sizes or counts the payload does not have.
+struct parquet_fixture_options {
+    std::uint64_t values = 1;
+    // The decompressed size both pages declare.
+    std::optional<std::uint64_t> uncompressed;
+    std::uint8_t codec = 0;
+    // Thrift fields appended to FileMetaData after the row groups, starting at field 5.
+    std::vector<std::byte> footer_fields;
+};
+
 // A one-row, uncompressed INT32 column with a dictionary and a caller-controlled data page.
 auto parquet_page_fixture(std::span<const std::byte> payload,
                           std::uint8_t encoding,
-                          std::uint8_t repetition = 0) -> std::vector<std::byte> {
+                          std::uint8_t repetition = 0,
+                          const parquet_fixture_options& options = {}) -> std::vector<std::byte> {
     auto bytes = std::vector<std::byte>{};
     const auto append = [&](std::initializer_list<std::uint8_t> values) {
         for (const auto value : values) {
@@ -70,25 +85,60 @@ auto parquet_page_fixture(std::span<const std::byte> payload,
     };
     append({'P', 'A', 'R', '1'});
     // Dictionary page: one PLAIN integer, value zero.
-    append({0x15, 4, 0x15, 8, 0x15, 8, 0x4c, 0x15, 2, 0x15, 0, 0, 0, 0, 0, 0, 0});
+    append({0x15, 4, 0x15});
+    varint(options.uncompressed.value_or(4) * 2);
+    append({0x15, 8, 0x4c, 0x15, 2, 0x15, 0, 0, 0, 0, 0, 0, 0});
     const auto data_offset = bytes.size();
     append({0x15, 0, 0x15});
-    varint(payload.size() * 2);
+    varint(options.uncompressed.value_or(payload.size()) * 2);
     append({0x15});
     varint(payload.size() * 2);
-    append({0x2c, 0x15, 2, 0x15, static_cast<std::uint8_t>(encoding * 2), 0x15, 6, 0x15, 6, 0, 0});
+    append({0x2c, 0x15});
+    varint(options.values * 2);
+    append({0x15, static_cast<std::uint8_t>(encoding * 2), 0x15, 6, 0x15, 6, 0, 0});
     bytes.insert(bytes.end(), payload.begin(), payload.end());
     const auto footer_offset = bytes.size();
     // FileMetaData: version, schema (root + leaf), row count and one row group.
-    append({0x15, 2,    0x19, 0x2c, 0x48, 1,    'r',
-            0x15, 2,    0,    0x15, 2,    0x25, static_cast<std::uint8_t>(repetition * 2),
-            0x18, 1,    'x',  0,    0x16, 2,    0x19,
-            0x1c, 0x19, 0x1c, 0x3c, 0x15, 2,    0x29,
-            0x18, 1,    'x',  0x15, 0,    0x26});
+    append({0x15,
+            2,
+            0x19,
+            0x2c,
+            0x48,
+            1,
+            'r',
+            0x15,
+            2,
+            0,
+            0x15,
+            2,
+            0x25,
+            static_cast<std::uint8_t>(repetition * 2),
+            0x18,
+            1,
+            'x',
+            0,
+            0x16,
+            2,
+            0x19,
+            0x1c,
+            0x19,
+            0x1c,
+            0x3c,
+            0x15,
+            2,
+            0x29,
+            0x18,
+            1,
+            'x',
+            0x15,
+            static_cast<std::uint8_t>(options.codec * 2),
+            0x26});
     varint((payload.size() + 4) * 2);
     append({0x36});
     varint(data_offset * 2);
-    append({0x26, 8, 0, 0, 0x26, 2, 0, 0});
+    append({0x26, 8, 0, 0, 0x26, 2, 0});
+    bytes.insert(bytes.end(), options.footer_fields.begin(), options.footer_fields.end());
+    append({0});
     const auto footer_size = bytes.size() - footer_offset;
     for (auto index = 0U; index < 4; ++index) {
         append({static_cast<std::uint8_t>((footer_size >> (index * 8U)) & 0xffU)});
@@ -191,6 +241,42 @@ TEST(FormatRegistry, UnpacksPdfObjectsAndExtractedText) {
     const auto extracted_text = std::string_view{
         reinterpret_cast<const char*>(extracted->bytes.data()), extracted->bytes.size()};
     EXPECT_EQ(extracted_text, "hello\n");
+}
+
+TEST(FormatRegistry, ChargesPdfStreamsAgainstOneBudget) {
+    // Eight FlateDecode streams, each inflating to about 16 KB of shown text. Each fits a 64 KiB
+    // budget on its own; the text they leave behind does not.
+    const auto content = "(" + std::string(16'000, 'a') + ") Tj";
+    auto deflated = std::vector<Bytef>(compressBound(static_cast<uLong>(content.size())));
+    auto deflated_size = static_cast<uLongf>(deflated.size());
+    ASSERT_EQ(compress2(deflated.data(),
+                        &deflated_size,
+                        reinterpret_cast<const Bytef*>(content.data()),
+                        static_cast<uLong>(content.size()),
+                        Z_BEST_COMPRESSION),
+              Z_OK);
+    auto source_text = std::string{"%PDF-1.4\n"};
+    for (auto object = 1; object <= 8; ++object) {
+        source_text += std::to_string(object) + " 0 obj\n<< /Filter /FlateDecode >>\nstream\n";
+        source_text.append(reinterpret_cast<const char*>(deflated.data()), deflated_size);
+        source_text += "\nendstream\nendobj\n";
+    }
+    source_text += "%%EOF\n";
+    const auto source = std::vector<std::byte>{
+        reinterpret_cast<const std::byte*>(source_text.data()),
+        reinterpret_cast<const std::byte*>(source_text.data() + source_text.size())};
+    const auto* pdf = codec("pdf");
+    ASSERT_NE(pdf, nullptr);
+    auto over = pdf->unpack(source, liquid::format_limits{.byte_budget = 64 * 1024});
+    ASSERT_FALSE(over);
+    EXPECT_EQ(over.error().code, liquid::errc::unsupported);
+    auto within = pdf->unpack(source);
+    ASSERT_TRUE(within) << within.error().message;
+    for (auto object = 1; object <= 8; ++object) {
+        const auto* text = entry(*within, "text/" + std::to_string(object) + " 0");
+        ASSERT_NE(text, nullptr) << object;
+        EXPECT_EQ(text->bytes.size(), 16'001);
+    }
 }
 
 TEST(FormatRegistry, LoadsSharedObjectsAcrossTheCAbi) {
@@ -409,6 +495,126 @@ TEST(FormatRegistry, AcceptsParquetBoundedRunsAndRejectsTruncatedPayloads) {
             }
         }
     }
+}
+
+auto budget_reached(const liquid::format_tree& tree) -> bool {
+    return tree.truncated && std::ranges::any_of(tree.limits, [](const std::string& limit) {
+               return limit.starts_with("Parquet byte budget reached");
+           });
+}
+
+TEST(FormatRegistry, ChargesParquetDeclaredPageSizeBeforeAllocating) {
+    // A 16-byte page that declares 64 MiB once decompressed, under a 1 MiB budget.
+    const auto payload = std::vector<std::byte>(16, std::byte{0x5a});
+    for (const auto codec : {std::uint8_t{2}, std::uint8_t{6}}) {
+        SCOPED_TRACE(codec);
+        auto tree = liquid::format_registry::global().unpack(
+            parquet_page_fixture(
+                payload, 0, 0, {.uncompressed = std::uint64_t{64} << 20U, .codec = codec}),
+            "page.parquet",
+            liquid::format_limits{.byte_budget = std::uint64_t{1} << 20U});
+        ASSERT_TRUE(tree) << tree.error().message;
+        EXPECT_TRUE(budget_reached(*tree));
+        EXPECT_EQ(entry(*tree, "row-group=0/x"), nullptr);
+    }
+}
+
+TEST(FormatRegistry, ChargesParquetDeclaredValueCountBeforeDecoding) {
+    // A five-byte page declaring a million values: one RLE run of dictionary index 5, which the
+    // one-value dictionary does not have. The levels alone would take 16 MB.
+    constexpr auto values = std::uint64_t{1'000'000};
+    auto payload = parquet_run(values << 1U, 1);
+    payload.back() = std::byte{5};
+    payload.insert(payload.begin(), std::byte{1});
+    auto tree = liquid::format_registry::global().unpack(
+        parquet_page_fixture(payload, 8, 0, {.values = values}),
+        "count.parquet",
+        liquid::format_limits{.byte_budget = std::uint64_t{1} << 20U});
+    ASSERT_TRUE(tree) << tree.error().message;
+    EXPECT_TRUE(budget_reached(*tree));
+    EXPECT_EQ(entry(*tree, "row-group=0/x"), nullptr);
+}
+
+TEST(FormatRegistry, ChargesParquetFooterCollectionsBeforeReserving) {
+    const auto valid = [](std::uint8_t type, std::size_t count) {
+        // Field 5 of FileMetaData, a list (type 9) of i8 or a map (type 11) of i8 to i8.
+        auto fields = std::vector<std::byte>{static_cast<std::byte>(0x10U | type)};
+        if (type == 9) {
+            fields.push_back(std::byte{0xf3});
+        }
+        auto size = parquet_run(count);
+        fields.insert(fields.end(), size.begin(), size.end());
+        if (type == 11) {
+            fields.push_back(std::byte{0x33});
+        }
+        fields.resize(fields.size() + (type == 11 ? 2 : 1) * count, std::byte{1});
+        return fields;
+    };
+    const auto payload = parquet_run(2, 1);
+    for (const auto type : {std::uint8_t{9}, std::uint8_t{11}}) {
+        SCOPED_TRACE(type);
+        // 200,000 elements fit in the footer but not in a 1 MiB budget once each is a value.
+        auto over = liquid::format_registry::global().unpack(
+            parquet_page_fixture(payload, 3, 0, {.footer_fields = valid(type, 200'000)}),
+            "footer.parquet",
+            liquid::format_limits{.byte_budget = std::uint64_t{1} << 20U});
+        ASSERT_FALSE(over);
+        EXPECT_EQ(over.error().code, liquid::errc::unsupported);
+        EXPECT_TRUE(over.error().message.starts_with("Parquet byte budget reached"))
+            << over.error().message;
+        auto within = liquid::format_registry::global().unpack(
+            parquet_page_fixture(payload, 3, 0, {.footer_fields = valid(type, 1'000)}),
+            "footer.parquet");
+        ASSERT_TRUE(within) << within.error().message;
+        EXPECT_NE(entry(*within, "row-group=0/x"), nullptr);
+    }
+    // A map declaring 2^40 entries in a few bytes is rejected before anything is reserved.
+    auto map = std::vector<std::byte>{std::byte{0x1b}};
+    auto size = parquet_run(std::uint64_t{1} << 40U);
+    map.insert(map.end(), size.begin(), size.end());
+    map.push_back(std::byte{0x33});
+    auto lying = liquid::format_registry::global().unpack(
+        parquet_page_fixture(payload, 3, 0, {.footer_fields = map}), "map.parquet");
+    ASSERT_FALSE(lying);
+    EXPECT_EQ(lying.error().code, liquid::errc::corrupt);
+}
+
+TEST(FormatRegistry, ChargesParquetColumnsAgainstOneBudget) {
+    auto source = fixture("sample.parquet");
+    const auto* parquet = codec("parquet");
+    ASSERT_NE(parquet, nullptr);
+    auto whole = parquet->unpack(source);
+    ASSERT_TRUE(whole) << whole.error().message;
+    ASSERT_FALSE(whole->truncated);
+    auto total = std::uint64_t{};
+    auto largest = std::uint64_t{};
+    for (const auto& item : whole->entries) {
+        total += item.bytes.size();
+        largest = std::max<std::uint64_t>(largest, item.bytes.size());
+    }
+    ASSERT_GT(total, largest);
+    // The smallest budget for which `fits` holds; unpacking is monotonic in its budget.
+    const auto smallest = [&](auto fits) {
+        auto low = std::uint64_t{1};
+        auto high = std::uint64_t{256} << 20U;
+        while (low < high) {
+            const auto middle = low + (high - low) / 2;
+            if (fits(parquet->unpack(source, liquid::format_limits{.byte_budget = middle}))) {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        return low;
+    };
+    const auto opens = smallest([](const auto& tree) { return tree.has_value(); });
+    const auto complete = smallest([](const auto& tree) { return tree && !tree->truncated; });
+    // Each column's bytes are charged on top of everything before it, so the budget that decodes
+    // the whole file exceeds the one that only reads its footer by at least every column.
+    EXPECT_GE(complete - opens, total);
+    auto short_by_one = parquet->unpack(source, liquid::format_limits{.byte_budget = complete - 1});
+    ASSERT_TRUE(short_by_one) << short_by_one.error().message;
+    EXPECT_TRUE(budget_reached(*short_by_one));
 }
 
 TEST(FormatRegistry, UnpacksSqliteSchemaAndRows) {
