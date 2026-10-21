@@ -248,6 +248,21 @@ software private key are never logged; `signer` wipes its secret material on des
 Hardware `.key` records contain only the public credential descriptor needed to find the token key
 again.
 
+Creating the local identity is atomic
+([#349](https://github.com/oramasearch/liquid/issues/349)). `local_signer` reads and creates it
+under an exclusive lock on `identity/.lock` (`flock`, `LockFileEx` on Windows), which excludes other
+threads of the process as well as other processes and is dropped by the operating system if its
+holder dies. The new identity's document is signed before the lock is taken, so the locked section
+has no suspension point. Every file is written to a temporary file unique to its writer, flushed
+with `fsync`, then renamed into place. `.wrapping.key` is created with `link`, which never replaces
+a key that is there: a writer that loses reads the winner's key. `<fingerprint>.pub` is written
+last, so a reader that finds it finds a complete identity. Concurrent first uses therefore all end
+with one identity that every later call can open; the losers discard the key they made. The tests
+`Identity.ConcurrentFirstUsesInThreadsCreateOneReadableIdentity` (8 threads, 20 rounds) and
+`Identity.ConcurrentFirstUsesInProcessesCreateOneReadableIdentity` (8 `liquid identity show`
+processes, 10 rounds) check it. Rotation does not take the lock; it writes its files the same
+atomic way.
+
 `verify(actor, artifact_type, canonical_body, signature)` is synchronous. It returns `true` for a
 valid signature by a key in the named identity's stored chain, `false` for an unsigned record,
 `errc::unauthorized` for invalid signed data, and the unknown-signer error (also

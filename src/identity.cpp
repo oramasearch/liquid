@@ -13,6 +13,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <random>
 #include <set>
 #include <sstream>
 #include <utility>
@@ -21,7 +22,11 @@
 #if defined(_WIN32)
 #include <windows.h>
 #else
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #include "crypto/crypto.hpp"
@@ -367,28 +372,232 @@ auto read_bytes(const std::filesystem::path& path) -> result<std::vector<std::by
     return output;
 }
 
+// Files under the identity directory are never written in place: a reader, a crash or a second
+// first use must never see a partly written key (liquid#349). Each write goes to a temporary file
+// unique to this writer, is flushed to disk, and only then is moved into place.
+auto temporary_sibling(const std::filesystem::path& path) -> std::filesystem::path {
+    thread_local auto engine = std::mt19937_64{std::random_device{}()};
+#if defined(_WIN32)
+    const auto process = static_cast<unsigned long>(GetCurrentProcessId());
+#else
+    const auto process = static_cast<long>(::getpid());
+#endif
+    return path.string() + "." + std::to_string(process) + "." + std::to_string(engine()) + ".tmp";
+}
+
+#if defined(_WIN32)
+auto write_temporary(const std::filesystem::path& temporary, std::span<const std::byte> value)
+    -> result<void> {
+    const auto file = CreateFileW(
+        temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return std::unexpected(
+            identity_error(errc::io, "cannot write identity file", temporary.string()));
+    }
+    auto written = DWORD{};
+    const auto ok =
+        WriteFile(file, value.data(), static_cast<DWORD>(value.size()), &written, nullptr) &&
+        written == value.size() && FlushFileBuffers(file);
+    CloseHandle(file);
+    if (!ok) {
+        DeleteFileW(temporary.c_str());
+        return std::unexpected(
+            identity_error(errc::io, "cannot write identity file", temporary.string()));
+    }
+    return {};
+}
+#else
+auto sync_directory(const std::filesystem::path& directory) -> void {
+    const auto descriptor = ::open(directory.c_str(), O_RDONLY | O_CLOEXEC);
+    if (descriptor < 0) {
+        return;
+    }
+    static_cast<void>(::fsync(descriptor));
+    static_cast<void>(::close(descriptor));
+}
+
+auto write_temporary(const std::filesystem::path& temporary, std::span<const std::byte> value)
+    -> result<void> {
+    const auto descriptor =
+        ::open(temporary.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0600);
+    if (descriptor < 0) {
+        return std::unexpected(identity_error(errc::io, std::strerror(errno), temporary.string()));
+    }
+    auto remaining = value;
+    while (!remaining.empty()) {
+        const auto written = ::write(descriptor, remaining.data(), remaining.size());
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        if (written <= 0) {
+            const auto message = std::string{std::strerror(errno)};
+            static_cast<void>(::close(descriptor));
+            static_cast<void>(::unlink(temporary.c_str()));
+            return std::unexpected(identity_error(errc::io, message, temporary.string()));
+        }
+        remaining = remaining.subspan(static_cast<std::size_t>(written));
+    }
+    if (::fsync(descriptor) != 0) {
+        const auto message = std::string{std::strerror(errno)};
+        static_cast<void>(::close(descriptor));
+        static_cast<void>(::unlink(temporary.c_str()));
+        return std::unexpected(identity_error(errc::io, message, temporary.string()));
+    }
+    if (::close(descriptor) != 0) {
+        const auto message = std::string{std::strerror(errno)};
+        static_cast<void>(::unlink(temporary.c_str()));
+        return std::unexpected(identity_error(errc::io, message, temporary.string()));
+    }
+    return {};
+}
+#endif
+
+// Writes `value` to `path`, replacing any earlier file, owner-only. A reader sees the old file or
+// the whole new one, never a prefix.
 auto write_private(const std::filesystem::path& path, std::span<const std::byte> value)
     -> result<void> {
-    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
-    if (!output) {
+    const auto temporary = temporary_sibling(path);
+    auto written = write_temporary(temporary, value);
+    if (!written) {
+        return written;
+    }
+#if defined(_WIN32)
+    if (!MoveFileExW(
+            temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(temporary.c_str());
         return std::unexpected(
             identity_error(errc::io, "cannot write identity file", path.string()));
     }
-    output.write(reinterpret_cast<const char*>(value.data()),
-                 static_cast<std::streamsize>(value.size()));
-    output.flush();
-    if (!output) {
-        return std::unexpected(
-            identity_error(errc::io, "cannot write identity file", path.string()));
+#else
+    if (::rename(temporary.c_str(), path.c_str()) != 0) {
+        const auto message = std::string{std::strerror(errno)};
+        static_cast<void>(::unlink(temporary.c_str()));
+        return std::unexpected(identity_error(errc::io, message, path.string()));
     }
-#if !defined(_WIN32)
-    std::filesystem::permissions(path,
-                                 std::filesystem::perms::owner_read |
-                                     std::filesystem::perms::owner_write,
-                                 std::filesystem::perm_options::replace);
+    sync_directory(path.parent_path());
 #endif
     return {};
 }
+
+enum class exclusive_write { created, exists };
+
+// Creates `path` holding `value` only if no file is there yet, owner-only, and never replaces one:
+// the file appears whole or not at all. `exists` means another writer got there first; the caller
+// reads theirs.
+auto create_private(const std::filesystem::path& path, std::span<const std::byte> value)
+    -> result<exclusive_write> {
+    const auto temporary = temporary_sibling(path);
+    auto written = write_temporary(temporary, value);
+    if (!written) {
+        return std::unexpected(written.error());
+    }
+#if defined(_WIN32)
+    if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH)) {
+        const auto code = GetLastError();
+        DeleteFileW(temporary.c_str());
+        if (code == ERROR_ALREADY_EXISTS || code == ERROR_FILE_EXISTS) {
+            return exclusive_write::exists;
+        }
+        return std::unexpected(
+            identity_error(errc::io, "cannot write identity file", path.string()));
+    }
+    return exclusive_write::created;
+#else
+    const auto linked = ::link(temporary.c_str(), path.c_str());
+    const auto code = errno;
+    static_cast<void>(::unlink(temporary.c_str()));
+    if (linked != 0) {
+        if (code == EEXIST) {
+            return exclusive_write::exists;
+        }
+        return std::unexpected(identity_error(errc::io, std::strerror(code), path.string()));
+    }
+    sync_directory(path.parent_path());
+    return exclusive_write::created;
+#endif
+}
+
+// An exclusive lock on `<identity directory>/.lock`, held while the local identity is read or
+// created, so that concurrent first uses in threads or processes create one identity between them
+// (liquid#349). It is an advisory `flock` (`LockFileEx` on Windows) on a descriptor of its own, so
+// it excludes other threads of this process as well as other processes, and the operating system
+// drops it if the holder dies. The section it guards has no suspension point, so holding it never
+// blocks a coroutine that the holder is waiting on.
+class identity_lock {
+public:
+    static auto acquire(const std::filesystem::path& directory) -> result<identity_lock> {
+        const auto path = directory / ".lock";
+#if defined(_WIN32)
+        const auto file = CreateFileW(path.c_str(),
+                                      GENERIC_READ | GENERIC_WRITE,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                      nullptr,
+                                      OPEN_ALWAYS,
+                                      FILE_ATTRIBUTE_NORMAL,
+                                      nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            return std::unexpected(
+                identity_error(errc::io, "cannot open identity lock", path.string()));
+        }
+        auto overlapped = OVERLAPPED{};
+        if (!LockFileEx(file, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &overlapped)) {
+            CloseHandle(file);
+            return std::unexpected(
+                identity_error(errc::io, "cannot lock identity directory", path.string()));
+        }
+        return identity_lock{file};
+#else
+        const auto descriptor = ::open(path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+        if (descriptor < 0) {
+            return std::unexpected(identity_error(errc::io, std::strerror(errno), path.string()));
+        }
+        while (::flock(descriptor, LOCK_EX) != 0) {
+            const auto code = errno;
+            if (code == EINTR) {
+                continue;
+            }
+            static_cast<void>(::close(descriptor));
+            return std::unexpected(identity_error(errc::io, std::strerror(code), path.string()));
+        }
+        return identity_lock{descriptor};
+#endif
+    }
+
+    identity_lock(identity_lock&& other) noexcept
+        : handle_(std::exchange(other.handle_, no_handle)) {}
+    identity_lock& operator=(identity_lock&&) = delete;
+    identity_lock(const identity_lock&) = delete;
+    identity_lock& operator=(const identity_lock&) = delete;
+    ~identity_lock() {
+        release();
+    }
+
+    void release() noexcept {
+        if (handle_ == no_handle) {
+            return;
+        }
+#if defined(_WIN32)
+        auto overlapped = OVERLAPPED{};
+        UnlockFileEx(handle_, 0, MAXDWORD, MAXDWORD, &overlapped);
+        CloseHandle(handle_);
+#else
+        static_cast<void>(::flock(handle_, LOCK_UN));
+        static_cast<void>(::close(handle_));
+#endif
+        handle_ = no_handle;
+    }
+
+private:
+#if defined(_WIN32)
+    using native_handle = HANDLE;
+    static inline const native_handle no_handle = INVALID_HANDLE_VALUE;
+#else
+    using native_handle = int;
+    static constexpr native_handle no_handle = -1;
+#endif
+    explicit identity_lock(native_handle handle) noexcept : handle_(handle) {}
+    native_handle handle_;
+};
 
 auto signing_key_identifier(const actor& value) -> std::string {
     const auto& fingerprint =
@@ -507,29 +716,42 @@ auto load_stored_documents(const actor& subject) -> result<std::vector<stored_do
     return output;
 }
 
+auto read_wrapping_key(const std::filesystem::path& path) -> result<std::array<std::byte, 32>> {
+    auto saved = read_bytes(path);
+    if (!saved || saved->size() != 32) {
+        if (saved) {
+            crypto_wipe(saved->data(), saved->size());
+        }
+        return std::unexpected(identity_error(
+            errc::unauthorized, "invalid local identity key provider", path.string()));
+    }
+    auto output = std::array<std::byte, 32>{};
+    std::ranges::copy(*saved, output.begin());
+    crypto_wipe(saved->data(), saved->size());
+    return output;
+}
+
+// Reads the local wrapping key, creating it if there is none. Creation never replaces a key that is
+// already there: if another writer creates one first, theirs is read and used (liquid#349).
 auto identity_wrapping_key(const std::filesystem::path& directory)
     -> result<std::array<std::byte, 32>> {
     const auto path = directory / ".wrapping.key";
     if (std::filesystem::exists(path)) {
-        auto saved = read_bytes(path);
-        if (!saved || saved->size() != 32) {
-            return std::unexpected(identity_error(
-                errc::unauthorized, "invalid local identity key provider", path.string()));
-        }
-        auto output = std::array<std::byte, 32>{};
-        std::ranges::copy(*saved, output.begin());
-        crypto_wipe(saved->data(), saved->size());
-        return output;
+        return read_wrapping_key(path);
     }
     auto output = std::array<std::byte, 32>{};
     auto random = crypto_detail::random_bytes(output);
     if (!random) {
         return std::unexpected(random.error());
     }
-    auto written = write_private(path, output);
-    if (!written) {
+    auto created = create_private(path, output);
+    if (!created) {
         crypto_wipe(output.data(), output.size());
-        return std::unexpected(written.error());
+        return std::unexpected(created.error());
+    }
+    if (*created == exclusive_write::exists) {
+        crypto_wipe(output.data(), output.size());
+        return read_wrapping_key(path);
     }
     return output;
 }
@@ -1320,163 +1542,228 @@ result<std::vector<identity_document>> decode_identity_chain(std::span<const std
     return output;
 }
 
-runtime::task<signer> identity_detail::local_signer() {
-    const auto directory = liquid_home() / "identity";
-    std::error_code code;
-    std::filesystem::create_directories(directory, code);
-    if (code) {
-        co_return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
-    }
+namespace {
+
+struct local_identity {
+    actor identity;
+    identity_document document;
+    std::string label;
+    std::unique_ptr<identity_detail::key_backend> backend;
+};
+
+// Reads the local identity, if one has been created. The `.pub` file is written last when an
+// identity is created, so its presence means every other file is already in place.
+auto load_local_identity(const std::filesystem::path& directory)
+    -> result<std::optional<local_identity>> {
     auto public_key = std::vector<std::byte>{};
     auto fingerprint = std::string{};
+    std::error_code code;
     for (const auto& entry : std::filesystem::directory_iterator(directory, code)) {
-        if (code) {
-            co_return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
-        }
         if (entry.path().extension() == ".pub") {
             public_key = read_bytes(entry.path()).value_or(std::vector<std::byte>{});
             fingerprint = entry.path().stem().string();
             break;
         }
     }
-    auto label = std::string{"liquid-device"};
-    auto created_at = identity_detail::now();
-    actor identity;
-    identity_document current_document;
-    auto backend = std::unique_ptr<identity_detail::key_backend>{};
-    if (!public_key.empty() && !fingerprint.empty()) {
-        auto provisional =
-            actor{"taap:1:ed25519:" + fingerprint, "ed25519", fingerprint, public_key, {}, {}};
-        auto stored = load_stored_documents(provisional);
-        if (!stored) {
-            co_return std::unexpected(stored.error());
-        }
-        auto documents = std::vector<identity_document>{};
-        documents.reserve(stored->size());
-        for (const auto& document : *stored) {
-            documents.push_back(document.document);
-        }
-        auto verified = verify_chain(documents);
-        if (!verified) {
-            co_return std::unexpected(verified.error());
-        }
-        identity = stored->back().document.subject;
-        label = stored->back().document.key_label;
-        current_document = stored->back().document;
-        if (identity.public_key != public_key) {
-            co_return std::unexpected(
-                identity_error(errc::corrupt,
-                               "current identity document does not match public key",
-                               identity.taap_id));
-        }
-        auto saved = read_bytes(directory / (fingerprint + ".key"));
-        if (!saved) {
-            co_return std::unexpected(saved.error());
-        }
-        if (identity.custody.empty() || identity.custody == "software") {
-            auto wrapping_key = identity_wrapping_key(directory);
-            if (!wrapping_key) {
-                crypto_wipe(saved->data(), saved->size());
-                co_return std::unexpected(wrapping_key.error());
-            }
-            auto opened = crypto_detail::open(*wrapping_key, {}, *saved);
-            crypto_wipe(wrapping_key->data(), wrapping_key->size());
-            crypto_wipe(saved->data(), saved->size());
-            if (!opened) {
-                co_return std::unexpected(
-                    identity_error(errc::unauthorized, "cannot unwrap local identity"));
-            }
-            auto made = identity_detail::make_software_backend(*opened);
-            crypto_wipe(opened->data(), opened->size());
-            if (!made) {
-                co_return std::unexpected(made.error());
-            }
-            backend = std::move(*made);
-        } else {
-            auto made = identity_detail::open_hardware_backend(identity.custody, *saved);
-            crypto_wipe(saved->data(), saved->size());
-            if (!made) {
-                co_return std::unexpected(made.error());
-            }
-            backend = std::move(*made);
-        }
-    } else {
-        auto made = identity_detail::make_software_backend();
-        if (!made) {
-            co_return std::unexpected(made.error());
-        }
-        backend = std::move(*made);
-        auto derived = identity_detail::identifier(
-            backend->public_key(), created_at, label, backend->algorithm(), backend->custody());
-        if (!derived) {
-            co_return std::unexpected(derived.error());
-        }
-        identity = std::move(*derived);
-        auto private_material = backend->descriptor();
+    if (code) {
+        return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
+    }
+    if (public_key.empty() || fingerprint.empty()) {
+        return std::optional<local_identity>{};
+    }
+    auto provisional =
+        actor{"taap:1:ed25519:" + fingerprint, "ed25519", fingerprint, public_key, {}, {}};
+    auto stored = load_stored_documents(provisional);
+    if (!stored) {
+        return std::unexpected(stored.error());
+    }
+    auto documents = std::vector<identity_document>{};
+    documents.reserve(stored->size());
+    for (const auto& document : *stored) {
+        documents.push_back(document.document);
+    }
+    auto verified = verify_chain(documents);
+    if (!verified) {
+        return std::unexpected(verified.error());
+    }
+    auto output = local_identity{};
+    output.identity = stored->back().document.subject;
+    output.label = stored->back().document.key_label;
+    output.document = stored->back().document;
+    if (output.identity.public_key != public_key) {
+        return std::unexpected(identity_error(errc::corrupt,
+                                              "current identity document does not match public key",
+                                              output.identity.taap_id));
+    }
+    auto saved = read_bytes(directory / (fingerprint + ".key"));
+    if (!saved) {
+        return std::unexpected(saved.error());
+    }
+    if (output.identity.custody.empty() || output.identity.custody == "software") {
         auto wrapping_key = identity_wrapping_key(directory);
         if (!wrapping_key) {
-            crypto_wipe(private_material.data(), private_material.size());
-            co_return std::unexpected(wrapping_key.error());
+            crypto_wipe(saved->data(), saved->size());
+            return std::unexpected(wrapping_key.error());
         }
-        auto sealed = crypto_detail::seal(*wrapping_key, {}, private_material);
+        auto opened = crypto_detail::open(*wrapping_key, {}, *saved);
         crypto_wipe(wrapping_key->data(), wrapping_key->size());
-        crypto_wipe(private_material.data(), private_material.size());
-        if (!sealed) {
-            co_return std::unexpected(sealed.error());
+        crypto_wipe(saved->data(), saved->size());
+        if (!opened) {
+            return std::unexpected(
+                identity_error(errc::unauthorized, "cannot unwrap local identity"));
         }
-        auto written = write_private(directory / (identity.fingerprint + ".key"), *sealed);
-        crypto_wipe(sealed->data(), sealed->size());
-        if (!written) {
-            co_return std::unexpected(written.error());
+        auto made = identity_detail::make_software_backend(*opened);
+        crypto_wipe(opened->data(), opened->size());
+        if (!made) {
+            return std::unexpected(made.error());
         }
-        written = write_private(directory / (identity.fingerprint + ".pub"), identity.public_key);
-        if (!written) {
-            co_return std::unexpected(written.error());
+        output.backend = std::move(*made);
+    } else {
+        auto made = identity_detail::open_hardware_backend(output.identity.custody, *saved);
+        crypto_wipe(saved->data(), saved->size());
+        if (!made) {
+            return std::unexpected(made.error());
         }
-        identity_document document{identity, label, created_at, created_at, std::nullopt, {}, {}};
-        auto body = identity_detail::canonical_document(document, false);
-        if (!body) {
-            co_return std::unexpected(body.error());
-        }
-        auto signed_bytes =
-            co_await backend->sign(identity_detail::signing_input("identity_document", *body));
-        if (!signed_bytes) {
-            co_return std::unexpected(signed_bytes.error());
-        }
-        document.signatures.push_back({std::move(signed_bytes->algorithm),
-                                       signing_key_identifier(identity),
-                                       label,
-                                       "identity_document",
-                                       identity_detail::now(),
-                                       std::move(signed_bytes->bytes),
-                                       std::move(signed_bytes->authenticator_data),
-                                       std::move(signed_bytes->client_data_hash)});
-        auto full_document = identity_detail::canonical_document(document, true);
-        if (!full_document) {
-            co_return std::unexpected(full_document.error());
-        }
-        std::filesystem::create_directories(document_directory(identity), code);
-        if (code) {
-            co_return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
-        }
-        written = write_private(document_path(document_directory(identity), 0), *full_document);
-        if (!written) {
-            co_return std::unexpected(written.error());
-        }
-        written =
-            write_private(directory / (identity.fingerprint + ".identity.cbor"), *full_document);
-        if (!written) {
-            co_return std::unexpected(written.error());
-        }
-        current_document = std::move(document);
+        output.backend = std::move(*made);
     }
-    signer output;
-    output.impl_ = std::make_unique<signer::impl>();
-    output.impl_->identity = std::move(identity);
-    output.impl_->document = std::move(current_document);
-    output.impl_->label = std::move(label);
-    output.impl_->backend = std::move(backend);
-    co_return output;
+    return std::optional<local_identity>{std::move(output)};
+}
+
+auto load_local_identity_locked(const std::filesystem::path& directory)
+    -> result<std::optional<local_identity>> {
+    auto lock = identity_lock::acquire(directory);
+    if (!lock) {
+        return std::unexpected(lock.error());
+    }
+    return load_local_identity(directory);
+}
+
+// Writes a newly made identity into the directory. Called with the identity lock held, after
+// checking that no identity is there. The private key is sealed with the directory's wrapping key
+// (an existing one is reused, never replaced), and the `.pub` file goes last, so a reader that
+// finds it finds a complete identity.
+auto store_local_identity(const std::filesystem::path& directory,
+                          const actor& identity,
+                          std::span<const std::byte> private_material,
+                          std::span<const std::byte> full_document) -> result<void> {
+    auto wrapping_key = identity_wrapping_key(directory);
+    if (!wrapping_key) {
+        return std::unexpected(wrapping_key.error());
+    }
+    auto sealed = crypto_detail::seal(*wrapping_key, {}, private_material);
+    crypto_wipe(wrapping_key->data(), wrapping_key->size());
+    if (!sealed) {
+        return std::unexpected(sealed.error());
+    }
+    auto written = write_private(directory / (identity.fingerprint + ".key"), *sealed);
+    crypto_wipe(sealed->data(), sealed->size());
+    if (!written) {
+        return written;
+    }
+    std::error_code code;
+    std::filesystem::create_directories(document_directory(identity), code);
+    if (code) {
+        return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
+    }
+    written = write_private(document_path(document_directory(identity), 0), full_document);
+    if (!written) {
+        return written;
+    }
+    written = write_private(directory / (identity.fingerprint + ".identity.cbor"), full_document);
+    if (!written) {
+        return written;
+    }
+    return write_private(directory / (identity.fingerprint + ".pub"), identity.public_key);
+}
+
+} // namespace
+
+// Opens the local identity, creating it on first use. Concurrent first uses, in threads or in
+// separate processes, all end with the same identity (liquid#349): the identity is read and created
+// under the directory's lock, and a caller that finds one already created uses it and discards the
+// key it made. The new identity's document is signed before the lock is taken, because signing may
+// suspend.
+runtime::task<signer> identity_detail::local_signer() {
+    const auto make_signer = [](local_identity value) -> signer {
+        signer output;
+        output.impl_ = std::make_unique<signer::impl>();
+        output.impl_->identity = std::move(value.identity);
+        output.impl_->document = std::move(value.document);
+        output.impl_->label = std::move(value.label);
+        output.impl_->backend = std::move(value.backend);
+        return output;
+    };
+    const auto directory = liquid_home() / "identity";
+    std::error_code code;
+    std::filesystem::create_directories(directory, code);
+    if (code) {
+        co_return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
+    }
+    auto existing = load_local_identity_locked(directory);
+    if (!existing) {
+        co_return std::unexpected(existing.error());
+    }
+    if (*existing) {
+        co_return make_signer(std::move(**existing));
+    }
+
+    auto label = std::string{"liquid-device"};
+    auto created_at = identity_detail::now();
+    auto made = identity_detail::make_software_backend();
+    if (!made) {
+        co_return std::unexpected(made.error());
+    }
+    auto backend = std::move(*made);
+    auto derived = identity_detail::identifier(
+        backend->public_key(), created_at, label, backend->algorithm(), backend->custody());
+    if (!derived) {
+        co_return std::unexpected(derived.error());
+    }
+    auto identity = std::move(*derived);
+    identity_document document{identity, label, created_at, created_at, std::nullopt, {}, {}};
+    auto body = identity_detail::canonical_document(document, false);
+    if (!body) {
+        co_return std::unexpected(body.error());
+    }
+    auto signed_bytes =
+        co_await backend->sign(identity_detail::signing_input("identity_document", *body));
+    if (!signed_bytes) {
+        co_return std::unexpected(signed_bytes.error());
+    }
+    document.signatures.push_back({std::move(signed_bytes->algorithm),
+                                   signing_key_identifier(identity),
+                                   label,
+                                   "identity_document",
+                                   identity_detail::now(),
+                                   std::move(signed_bytes->bytes),
+                                   std::move(signed_bytes->authenticator_data),
+                                   std::move(signed_bytes->client_data_hash)});
+    auto full_document = identity_detail::canonical_document(document, true);
+    if (!full_document) {
+        co_return std::unexpected(full_document.error());
+    }
+
+    auto lock = identity_lock::acquire(directory);
+    if (!lock) {
+        co_return std::unexpected(lock.error());
+    }
+    existing = load_local_identity(directory);
+    if (!existing) {
+        co_return std::unexpected(existing.error());
+    }
+    if (*existing) {
+        lock->release();
+        co_return make_signer(std::move(**existing));
+    }
+    auto private_material = backend->descriptor();
+    auto stored = store_local_identity(directory, identity, private_material, *full_document);
+    crypto_wipe(private_material.data(), private_material.size());
+    lock->release();
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    co_return make_signer(
+        {std::move(identity), std::move(document), std::move(label), std::move(backend)});
 }
 
 struct passphrase_provider::impl {
