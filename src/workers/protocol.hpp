@@ -27,17 +27,26 @@ struct submit_request {
     bool remote_eligible{};
 };
 
+// Every worker request is signed by the worker's TAAP key (see `workers/auth.hpp`). `nonce` is
+// fresh per request, `issued_at_ms` is Unix milliseconds, and `signature` is the canonical TAAP
+// signature over the request encoded with an empty `signature`.
 struct worker_request {
     std::string instance;
     std::string worker;
     platform platform;
     action_size_class size_class{action_size_class::long_action};
+    std::string nonce;
+    std::uint64_t issued_at_ms{};
+    std::vector<std::byte> signature;
 };
 
+// Signed by the scheduler's TAAP key over the response encoded with an empty `signature`. It
+// names the worker it answers and echoes that worker's request nonce, so a lease cannot be
+// replayed to another request or another worker.
 struct lease_response {
     bool assigned{};
     std::string operation;
-    std::uint64_t token{};
+    std::string token;
     std::uint64_t retry{};
     reapi::Digest action_digest;
     reapi::DigestFunctionValue digest_function{reapi::DigestFunctionValue::blake3};
@@ -46,20 +55,29 @@ struct lease_response {
     execution_schedule schedule;
     digest native_action;
     bool remote_eligible{};
+    std::string worker;
+    std::string nonce;
+    std::vector<std::byte> signature;
 };
 
 struct heartbeat_request {
     std::string operation;
     std::string worker;
-    std::uint64_t token{};
+    std::string token;
+    std::string nonce;
+    std::uint64_t issued_at_ms{};
+    std::vector<std::byte> signature;
 };
 
 struct complete_request {
     std::string operation;
     std::string worker;
-    std::uint64_t token{};
+    std::string token;
     std::vector<std::byte> result;
     std::string failure;
+    std::string nonce;
+    std::uint64_t issued_at_ms{};
+    std::vector<std::byte> signature;
 };
 
 struct acknowledgement {

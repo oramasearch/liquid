@@ -23,6 +23,7 @@
 
 #include "http2/connection.hpp"
 #include "http2/grpc.hpp"
+#include "identity/taap.hpp"
 #include "liquid/store.hpp"
 #include "liquid/workers.hpp"
 #include "objects/records.hpp"
@@ -31,6 +32,7 @@
 #include "repository/store_access.hpp"
 #include "sandbox/environment.hpp"
 #include "store/pack.hpp"
+#include "workers/auth.hpp"
 #include "workers/control.hpp"
 #include "workers/protocol.hpp"
 #include "workers/scheduler.hpp"
@@ -67,14 +69,17 @@ struct server_state {
     server_state(store objects,
                  std::filesystem::path action_cache,
                  std::string instance,
-                 std::shared_ptr<workers::scheduler> executions = {})
+                 std::shared_ptr<workers::scheduler> executions = {},
+                 std::shared_ptr<signer> lease_signer = {})
         : objects(std::move(objects)), action_cache(std::move(action_cache)),
-          instance(std::move(instance)), executions(std::move(executions)) {}
+          instance(std::move(instance)), executions(std::move(executions)),
+          lease_signer(std::move(lease_signer)) {}
 
     store objects;
     std::filesystem::path action_cache;
     std::string instance;
     std::shared_ptr<workers::scheduler> executions;
+    std::shared_ptr<signer> lease_signer;
     std::mutex mutex;
     std::map<std::string, std::vector<std::byte>> partial_writes;
 };
@@ -1123,6 +1128,23 @@ runtime::task<void> handle_lease(http2::connection& connection,
     if (!leased) {
         co_return co_await send_failure(connection, stream, leased.error());
     }
+    if (!state.lease_signer) {
+        co_return co_await send_failure(
+            connection, stream, server_error(errc::unauthorized, "scheduler has no lease signer"));
+    }
+    auto body = workers::signing_body(*leased);
+    if (!body) {
+        co_return co_await send_failure(connection, stream, body.error());
+    }
+    auto signed_lease =
+        co_await state.lease_signer->sign(std::string{workers::lease_purpose}, std::move(*body));
+    auto signature = signed_lease
+                         ? identity_detail::canonical_signature(*signed_lease)
+                         : result<std::vector<std::byte>>{std::unexpected(signed_lease.error())};
+    if (!signature) {
+        co_return co_await send_failure(connection, stream, signature.error());
+    }
+    leased->signature = std::move(*signature);
     co_return co_await send_worker_message(connection, stream, *leased);
 }
 
@@ -1138,8 +1160,11 @@ runtime::task<void> handle_heartbeat(http2::connection& connection,
             request ? server_error(errc::unsupported, "worker scheduling is disabled")
                     : request.error());
     }
-    co_return co_await send_worker_message(
-        connection, stream, state.executions->heartbeat(*request));
+    auto acknowledged = state.executions->heartbeat(*request);
+    if (!acknowledged) {
+        co_return co_await send_failure(connection, stream, acknowledged.error());
+    }
+    co_return co_await send_worker_message(connection, stream, *acknowledged);
 }
 
 runtime::task<void> handle_complete(http2::connection& connection,
@@ -1155,14 +1180,21 @@ runtime::task<void> handle_complete(http2::connection& connection,
                     : request.error());
     }
     if (!request->failure.empty()) {
-        co_return co_await send_worker_message(
-            connection, stream, state.executions->fail(*request));
+        auto failed = state.executions->fail(*request);
+        if (!failed) {
+            co_return co_await send_failure(connection, stream, failed.error());
+        }
+        co_return co_await send_worker_message(connection, stream, *failed);
     }
     auto result = reapi::decode_message<reapi::ActionResult>(request->result);
     if (!result) {
         co_return co_await send_failure(connection, stream, result.error());
     }
-    auto accepted = state.executions->complete(*request, *result);
+    auto completed = state.executions->complete(*request, *result);
+    if (!completed) {
+        co_return co_await send_failure(connection, stream, completed.error());
+    }
+    const auto& accepted = *completed;
     if (accepted.accepted) {
         auto action = state.executions->action_digest(request->operation);
         auto encoded = reapi::encode(*result);
@@ -1339,7 +1371,8 @@ runtime::task<void> session(std::shared_ptr<server_state> state,
 } // namespace
 
 runtime::task<void> serve_reapi_impl(reapi_serve_options options,
-                                     std::shared_ptr<workers::scheduler> executions) {
+                                     std::shared_ptr<workers::scheduler> executions,
+                                     std::shared_ptr<signer> lease_signer) {
     auto endpoint = boost::corosio::endpoint{};
     if (const auto code = boost::corosio::parse_endpoint(options.listen, endpoint)) {
         co_return std::unexpected(
@@ -1362,7 +1395,8 @@ runtime::task<void> serve_reapi_impl(reapi_serve_options options,
     auto state = std::make_shared<server_state>(std::move(*opened),
                                                 std::move(action_cache),
                                                 std::move(options.instance_name),
-                                                std::move(executions));
+                                                std::move(executions),
+                                                std::move(lease_signer));
     const auto executor = co_await boost::capy::this_coro::executor;
     auto acceptor = boost::corosio::tcp_acceptor{executor.context(), endpoint};
     for (;;) {
@@ -1386,7 +1420,7 @@ runtime::task<void> serve_reapi_impl(reapi_serve_options options,
 }
 
 runtime::task<void> serve_reapi(reapi_serve_options options) {
-    co_return co_await serve_reapi_impl(std::move(options), {});
+    co_return co_await serve_reapi_impl(std::move(options), {}, {});
 }
 
 runtime::task<void> serve_scheduler(scheduler_options options) {
@@ -1394,7 +1428,27 @@ runtime::task<void> serve_scheduler(scheduler_options options) {
         co_return std::unexpected(
             server_error(errc::invalid_argument, "scheduler lease duration must be positive"));
     }
-    auto executions = std::make_shared<workers::scheduler>(options.lease_duration);
+    if (options.trusted_workers.empty()) {
+        co_return std::unexpected(server_error(
+            errc::invalid_argument,
+            "scheduler has no trusted workers",
+            "pass each worker's `liquid identity show --document` with --trust-worker"));
+    }
+    auto trusted = std::vector<actor>{};
+    for (const auto& document : options.trusted_workers) {
+        auto key = workers::pinned_key(document);
+        if (!key) {
+            co_return std::unexpected(key.error());
+        }
+        trusted.push_back(std::move(*key));
+    }
+    auto identity = co_await identity_detail::local_signer();
+    if (!identity) {
+        co_return std::unexpected(identity.error());
+    }
+    auto lease_signer = std::make_shared<signer>(std::move(*identity));
+    auto executions =
+        std::make_shared<workers::scheduler>(options.lease_duration, std::move(trusted));
     runtime::spawn(
         workers::serve_control(
             std::move(options.control_listen),
@@ -1427,7 +1481,8 @@ runtime::task<void> serve_scheduler(scheduler_options options) {
     auto reapi_options = reapi_serve_options{.store_directory = std::move(options.store_directory),
                                              .listen = std::move(options.listen),
                                              .instance_name = std::move(options.instance_name)};
-    co_return co_await serve_reapi_impl(std::move(reapi_options), std::move(executions));
+    co_return co_await serve_reapi_impl(
+        std::move(reapi_options), std::move(executions), std::move(lease_signer));
 }
 
 } // namespace liquid

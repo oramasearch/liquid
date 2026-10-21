@@ -1,10 +1,12 @@
 #include "workers/scheduler.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 #include "identity/taap.hpp"
 #include "objects/records.hpp"
+#include "workers/auth.hpp"
 
 namespace liquid::workers {
 namespace {
@@ -30,7 +32,48 @@ auto execute_response(const reapi::ActionResult& value) -> result<reapi::Any> {
 
 } // namespace
 
-scheduler::scheduler(std::chrono::milliseconds lease_duration) : lease_duration_(lease_duration) {}
+scheduler::scheduler(std::chrono::milliseconds lease_duration, std::vector<actor> trusted_workers)
+    : lease_duration_(lease_duration) {
+    for (auto& worker : trusted_workers) {
+        auto name = worker.taap_id;
+        trusted_workers_.insert_or_assign(std::move(name), std::move(worker));
+    }
+}
+
+auto scheduler::authenticate_locked(std::string_view worker,
+                                    std::string_view purpose,
+                                    std::span<const std::byte> body,
+                                    std::span<const std::byte> signature,
+                                    std::string_view nonce,
+                                    std::uint64_t issued_at_ms) -> result<const actor*> {
+    const auto found = trusted_workers_.find(worker);
+    if (found == trusted_workers_.end()) {
+        return std::unexpected(
+            scheduler_error(errc::unauthorized, "worker is not trusted", std::string{worker}));
+    }
+    auto verified = verify_pinned(found->second, purpose, body, signature);
+    if (!verified) {
+        return std::unexpected(verified.error());
+    }
+    const auto now = std::chrono::system_clock::now();
+    const auto issued = std::chrono::system_clock::time_point{
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::chrono::milliseconds{static_cast<std::int64_t>(
+                std::min<std::uint64_t>(issued_at_ms, std::numeric_limits<std::int64_t>::max()))})};
+    if (issued_at_ms == 0 || issued > now + max_clock_skew || issued < now - max_clock_skew) {
+        return std::unexpected(scheduler_error(errc::unauthorized,
+                                               "worker request is outside the clock-skew window",
+                                               std::string{worker}));
+    }
+    std::erase_if(seen_nonces_,
+                  [&](const auto& item) { return item.second < now - max_clock_skew * 2; });
+    if (nonce.size() < 32 ||
+        !seen_nonces_.emplace(std::string{worker} + "/" + std::string{nonce}, now).second) {
+        return std::unexpected(scheduler_error(
+            errc::unauthorized, "worker request nonce was replayed", std::string{worker}));
+    }
+    return &found->second;
+}
 
 auto scheduler::fits(action_size_class worker, action_size_class action) -> bool {
     const auto normalized =
@@ -44,7 +87,7 @@ void scheduler::expire_locked(std::chrono::steady_clock::time_point now) {
             continue;
         }
         entry->worker.clear();
-        entry->token = 0;
+        entry->token.clear();
         if (entry->retry == 0) {
             entry->retry = 1;
             entry->state = stage::queued;
@@ -119,6 +162,19 @@ auto scheduler::submit(reapi::Digest action_digest,
 
 auto scheduler::lease(const worker_request& request) -> result<lease_response> {
     auto lock = std::scoped_lock{mutex_};
+    auto body = signing_body(request);
+    if (!body) {
+        return std::unexpected(body.error());
+    }
+    auto trusted = authenticate_locked(request.worker,
+                                       lease_request_purpose,
+                                       *body,
+                                       request.signature,
+                                       request.nonce,
+                                       request.issued_at_ms);
+    if (!trusted) {
+        return std::unexpected(trusted.error());
+    }
     const auto now = std::chrono::steady_clock::now();
     expire_locked(now);
     workers_.insert_or_assign(request.worker, now);
@@ -136,11 +192,15 @@ auto scheduler::lease(const worker_request& request) -> result<lease_response> {
         }
     }
     if (!selected) {
-        return lease_response{};
+        return lease_response{.worker = request.worker, .nonce = request.nonce};
+    }
+    auto token = random_token();
+    if (!token) {
+        return std::unexpected(token.error());
     }
     selected->state = stage::leased;
     selected->worker = request.worker;
-    selected->token = next_token_++;
+    selected->token = std::move(*token);
     selected->lease_expires = now + lease_duration_;
     return lease_response{.assigned = true,
                           .operation = selected->name,
@@ -152,38 +212,67 @@ auto scheduler::lease(const worker_request& request) -> result<lease_response> {
                           .command = selected->command,
                           .schedule = selected->schedule,
                           .native_action = selected->native_action,
-                          .remote_eligible = selected->decoded.input.remote_eligible};
+                          .remote_eligible = selected->decoded.input.remote_eligible,
+                          .worker = request.worker,
+                          .nonce = request.nonce};
 }
 
-auto scheduler::heartbeat(const heartbeat_request& request) -> acknowledgement {
+auto scheduler::heartbeat(const heartbeat_request& request) -> result<acknowledgement> {
     auto lock = std::scoped_lock{mutex_};
+    auto body = signing_body(request);
+    if (!body) {
+        return std::unexpected(body.error());
+    }
+    auto trusted = authenticate_locked(request.worker,
+                                       heartbeat_purpose,
+                                       *body,
+                                       request.signature,
+                                       request.nonce,
+                                       request.issued_at_ms);
+    if (!trusted) {
+        return std::unexpected(trusted.error());
+    }
     const auto now = std::chrono::steady_clock::now();
     expire_locked(now);
     workers_.insert_or_assign(request.worker, now);
     const auto found = by_name_.find(request.operation);
     if (found == by_name_.end() || found->second->state != stage::leased ||
         found->second->token != request.token || found->second->worker != request.worker) {
-        return {.message = "lease is no longer active"};
+        return acknowledgement{.message = "lease is no longer active"};
     }
     found->second->lease_expires = now + lease_duration_;
-    return {.accepted = true};
+    return acknowledgement{.accepted = true};
 }
 
 auto scheduler::complete(const complete_request& request, reapi::ActionResult wire_result)
-    -> acknowledgement {
+    -> result<acknowledgement> {
     auto lock = std::scoped_lock{mutex_};
+    auto body = signing_body(request);
+    if (!body) {
+        return std::unexpected(body.error());
+    }
+    auto trusted = authenticate_locked(request.worker,
+                                       complete_purpose,
+                                       *body,
+                                       request.signature,
+                                       request.nonce,
+                                       request.issued_at_ms);
+    if (!trusted) {
+        return std::unexpected(trusted.error());
+    }
+    const auto& worker_key = **trusted;
     expire_locked(std::chrono::steady_clock::now());
     const auto found = by_name_.find(request.operation);
     if (found == by_name_.end()) {
-        return {.message = "operation is unknown"};
+        return acknowledgement{.message = "operation is unknown"};
     }
     auto& entry = *found->second;
     if (entry.state == stage::completed) {
-        return {.accepted = true, .message = "result was already accepted"};
+        return acknowledgement{.accepted = true, .message = "result was already accepted"};
     }
     if (entry.state != stage::leased || entry.token != request.token ||
         entry.worker != request.worker) {
-        return {.message = "lease is no longer active"};
+        return acknowledgement{.message = "lease is no longer active"};
     }
     auto action_bytes =
         objects::encode(objects::action_record{entry.decoded.input, entry.decoded.sandbox});
@@ -202,46 +291,67 @@ auto scheduler::complete(const complete_request& request, reapi::ActionResult wi
                   std::unexpected(scheduler_error(errc::corrupt, "worker result has no schedule"))};
     if (!native || native->worker != request.worker || native->producer.taap_id != request.worker ||
         !expected_schedule || !actual_schedule || *actual_schedule != *expected_schedule) {
-        return {.message =
-                    native ? "worker result does not match its lease" : native.error().message};
+        return acknowledgement{.message = native ? "worker result does not match its lease"
+                                                 : native.error().message};
     }
-    auto signature = identity_detail::parse_signature(native->sig);
-    auto body = objects::encode_result_body(*native);
-    auto verified = signature && body ? verify(native->producer, "result", *body, *signature)
-                                      : result<bool>{false};
-    if (!verified || !*verified) {
-        return {.message =
-                    verified ? "worker result signature is invalid" : verified.error().message};
+    // The result is bound to the worker that holds the lease: it must be signed by that worker's
+    // pinned key, not by whatever key the result names.
+    if (native->producer.algorithm != worker_key.algorithm ||
+        native->producer.public_key != worker_key.public_key) {
+        return std::unexpected(scheduler_error(errc::unauthorized,
+                                               "worker result is not signed by the leased worker",
+                                               request.worker));
+    }
+    auto result_body = objects::encode_result_body(*native);
+    if (!result_body) {
+        return std::unexpected(result_body.error());
+    }
+    auto verified = verify_pinned(worker_key, "result", *result_body, native->sig);
+    if (!verified) {
+        return std::unexpected(verified.error());
     }
     entry.result = std::move(wire_result);
     entry.state = stage::completed;
     entry.lease_expires = {};
-    return {.accepted = true};
+    return acknowledgement{.accepted = true};
 }
 
-auto scheduler::fail(const complete_request& request) -> acknowledgement {
+auto scheduler::fail(const complete_request& request) -> result<acknowledgement> {
     auto lock = std::scoped_lock{mutex_};
+    auto body = signing_body(request);
+    if (!body) {
+        return std::unexpected(body.error());
+    }
+    auto trusted = authenticate_locked(request.worker,
+                                       complete_purpose,
+                                       *body,
+                                       request.signature,
+                                       request.nonce,
+                                       request.issued_at_ms);
+    if (!trusted) {
+        return std::unexpected(trusted.error());
+    }
     expire_locked(std::chrono::steady_clock::now());
     const auto found = by_name_.find(request.operation);
     if (found == by_name_.end()) {
-        return {.message = "operation is unknown"};
+        return acknowledgement{.message = "operation is unknown"};
     }
     auto& entry = *found->second;
     if (entry.state != stage::leased || entry.token != request.token ||
         entry.worker != request.worker) {
-        return {.message = "lease is no longer active"};
+        return acknowledgement{.message = "lease is no longer active"};
     }
     entry.worker.clear();
-    entry.token = 0;
+    entry.token.clear();
     if (entry.retry == 0) {
         entry.retry = 1;
         entry.state = stage::queued;
         ++requeued_;
-        return {.accepted = true, .message = "action requeued"};
+        return acknowledgement{.accepted = true, .message = "action requeued"};
     }
     entry.state = stage::failed;
     entry.failure = request.failure.empty() ? "worker execution failed" : request.failure;
-    return {.accepted = true, .message = "action failed after the single requeue"};
+    return acknowledgement{.accepted = true, .message = "action failed after the single requeue"};
 }
 
 auto scheduler::operation(std::string_view name) -> result<reapi::Operation> {

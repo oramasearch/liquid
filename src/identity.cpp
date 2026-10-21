@@ -957,6 +957,13 @@ result<bool> verify(const actor& by,
         identity_error(errc::unauthorized, "signing key is not in the identity chain", by.taap_id));
 }
 
+auto identity_detail::verify_with_pinned_key(const actor& pinned,
+                                             std::string_view artifact_type,
+                                             std::span<const std::byte> canonical_body,
+                                             const signature& signed_value) -> result<bool> {
+    return verify_with_key(pinned, artifact_type, canonical_body, signed_value);
+}
+
 result<bool> verify_document(const identity_document& document) {
     if (!valid_subject(document) || document.signatures.empty()) {
         return std::unexpected(identity_error(errc::unauthorized, "invalid identity document"));

@@ -5,18 +5,19 @@
 ## Synopsis
 
 ```text
-liquid worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <class>] [--poll-ms <count>]
+liquid worker --scheduler <address> --trust-scheduler <path> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <class>] [--poll-ms <count>]
 ```
 
 ## Description
 
-Poll a liquid scheduler and execute leased build actions in the Phase 2 sandbox.
+Poll a trusted liquid scheduler and execute its signed leases in the Phase 2 sandbox.
 
 ## Options
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
 | `--scheduler` | `<address>` | Select the scheduler endpoint. | none |
+| `--trust-scheduler` | `<path>` | Trust this scheduler identity document. | none |
 | `--control-listen` | `<address>` | Select the control listener. | 127.0.0.1:8081 |
 | `--root` | `<path>` | Select the worker state directory. | platform cache |
 | `--instance` | `<name>` | Select the scheduler instance. | empty |
@@ -30,7 +31,7 @@ available on Linux with FUSE
 ## Examples
 
 ```sh
-liquid worker --scheduler 127.0.0.1:50051
+liquid worker --scheduler 127.0.0.1:50051 --trust-scheduler /etc/liquid/scheduler
 ```
 
 ## Exit status

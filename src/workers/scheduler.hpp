@@ -6,9 +6,12 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "liquid/identity.hpp"
 #include "reapi/conversion.hpp"
 #include "reapi/messages.hpp"
 #include "workers/protocol.hpp"
@@ -17,7 +20,11 @@ namespace liquid::workers {
 
 class scheduler {
 public:
-    explicit scheduler(std::chrono::milliseconds lease_duration);
+    // `trusted_workers` are the keys of the only workers this scheduler leases to and accepts
+    // results from, each bound to its TAAP identifier by a verified identity document
+    // (`workers::pinned_key`). Every Lease, Heartbeat and Complete must be signed by the key of the
+    // worker it names; anything else is refused with `errc::unauthorized`.
+    scheduler(std::chrono::milliseconds lease_duration, std::vector<actor> trusted_workers);
 
     [[nodiscard]] auto submit(reapi::Digest action_digest,
                               reapi::DigestFunctionValue digest_function,
@@ -27,10 +34,10 @@ public:
                               digest native_action,
                               execution_schedule schedule) -> result<reapi::Operation>;
     [[nodiscard]] auto lease(const worker_request& request) -> result<lease_response>;
-    [[nodiscard]] auto heartbeat(const heartbeat_request& request) -> acknowledgement;
-    [[nodiscard]] auto complete(const complete_request& request, reapi::ActionResult result)
-        -> acknowledgement;
-    [[nodiscard]] auto fail(const complete_request& request) -> acknowledgement;
+    [[nodiscard]] auto heartbeat(const heartbeat_request& request) -> result<acknowledgement>;
+    [[nodiscard]] auto complete(const complete_request& request, reapi::ActionResult wire_result)
+        -> result<acknowledgement>;
+    [[nodiscard]] auto fail(const complete_request& request) -> result<acknowledgement>;
     [[nodiscard]] auto operation(std::string_view name) -> result<reapi::Operation>;
     [[nodiscard]] auto action_digest(std::string_view name) -> result<reapi::Digest>;
     [[nodiscard]] auto cancel(std::string_view name) -> result<void>;
@@ -51,7 +58,7 @@ private:
         execution_schedule schedule;
         stage state{stage::queued};
         std::string worker;
-        std::uint64_t token{};
+        std::string token;
         std::uint64_t retry{};
         std::chrono::steady_clock::time_point lease_expires{};
         std::optional<reapi::ActionResult> result;
@@ -61,6 +68,12 @@ private:
     [[nodiscard]] auto operation_message(const operation_entry& entry) const
         -> result<reapi::Operation>;
     void expire_locked(std::chrono::steady_clock::time_point now);
+    [[nodiscard]] auto authenticate_locked(std::string_view worker,
+                                           std::string_view purpose,
+                                           std::span<const std::byte> body,
+                                           std::span<const std::byte> signature,
+                                           std::string_view nonce,
+                                           std::uint64_t issued_at_ms) -> result<const actor*>;
     [[nodiscard]] static auto fits(action_size_class worker, action_size_class action) -> bool;
 
     std::chrono::milliseconds lease_duration_;
@@ -68,8 +81,9 @@ private:
     std::map<std::string, std::shared_ptr<operation_entry>> by_action_;
     std::map<std::string, std::shared_ptr<operation_entry>> by_name_;
     std::map<std::string, std::chrono::steady_clock::time_point> workers_;
+    std::map<std::string, actor, std::less<>> trusted_workers_;
+    std::map<std::string, std::chrono::system_clock::time_point> seen_nonces_;
     std::uint64_t next_operation_{1};
-    std::uint64_t next_token_{1};
     std::uint64_t requeued_{};
 };
 

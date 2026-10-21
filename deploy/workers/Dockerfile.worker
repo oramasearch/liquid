@@ -7,8 +7,11 @@ COPY ${LIQUID_BINARY} /usr/local/bin/liquid
 COPY ${LIQUID_READ_GUARD} /usr/local/libexec/liquid/liquid-read-guard
 
 ENV LIQUID_READ_GUARD=/usr/local/libexec/liquid/liquid-read-guard
+# The worker signs its requests and results with the identity in LIQUID_HOME and executes only
+# leases signed by the scheduler identity document mounted at /etc/liquid/scheduler (liquid #416).
+ENV LIQUID_HOME=/var/lib/liquid-identity
 
-VOLUME ["/var/lib/liquid-worker"]
+VOLUME ["/var/lib/liquid-worker", "/var/lib/liquid-identity"]
 EXPOSE 8081
 ENTRYPOINT ["/usr/local/bin/liquid", "worker"]
-CMD ["--scheduler", "127.0.0.1:50051", "--control-listen", "0.0.0.0:8081", "--root", "/var/lib/liquid-worker"]
+CMD ["--scheduler", "127.0.0.1:50051", "--trust-scheduler", "/etc/liquid/scheduler", "--control-listen", "0.0.0.0:8081", "--root", "/var/lib/liquid-worker"]

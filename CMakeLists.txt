@@ -598,6 +598,7 @@ add_library(libliquid
   src/reapi/remote_client.cpp
   src/reapi/server.cpp
   src/serve/http.cpp
+  src/workers/auth.cpp
   src/workers/protocol.cpp
   src/workers/control.cpp
   src/workers/scheduler.cpp

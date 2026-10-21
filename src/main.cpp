@@ -435,6 +435,10 @@ constexpr auto flags_build = std::to_array<flag>({
 });
 constexpr auto flags_scheduler = std::to_array<flag>({
     {"--listen", "<address>", "Select the REAPI and worker listener.", "none"},
+    {"--trust-worker",
+     "<path>",
+     "Trust a worker identity document, or a directory of them; repeatable.",
+     "none"},
     {"--control-listen", "<address>", "Select the control listener.", "127.0.0.1:8080"},
     {"--store", "<path>", "Select the scheduler store directory.", "platform cache"},
     {"--instance", "<name>", "Select the scheduler instance.", "empty"},
@@ -442,6 +446,7 @@ constexpr auto flags_scheduler = std::to_array<flag>({
 });
 constexpr auto flags_worker = std::to_array<flag>({
     {"--scheduler", "<address>", "Select the scheduler endpoint.", "none"},
+    {"--trust-scheduler", "<path>", "Trust this scheduler identity document.", "none"},
     {"--control-listen", "<address>", "Select the control listener.", "127.0.0.1:8081"},
     {"--root", "<path>", "Select the worker state directory.", "platform cache"},
     {"--instance", "<name>", "Select the scheduler instance.", "empty"},
@@ -1264,24 +1269,24 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::facts},
     {"scheduler",
-     "scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance "
-     "<name>] [--lease-ms <count>]",
+     "scheduler --listen <address> --trust-worker <path> [--control-listen <address>] [--store "
+     "<path>] [--instance <name>] [--lease-ms <count>]",
      "run the remote-execution scheduler and CAS",
      "available",
      flags_scheduler,
-     "Serve CAS, ActionCache, Execution, and the liquid worker lease queue.",
-     "liquid scheduler --listen 0.0.0.0:50051",
+     "Serve CAS, ActionCache, Execution, and a signed worker lease queue for trusted workers.",
+     "liquid scheduler --listen 0.0.0.0:50051 --trust-worker /etc/liquid/workers",
      network_exit,
      argument_policy::ordinary,
      liquid_cli::scheduler},
     {"worker",
-     "worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance "
-     "<name>] [--size-class <class>] [--poll-ms <count>]",
+     "worker --scheduler <address> --trust-scheduler <path> [--control-listen <address>] [--root "
+     "<path>] [--instance <name>] [--size-class <class>] [--poll-ms <count>]",
      "run a remote-execution worker",
      "available on Linux with FUSE",
      flags_worker,
-     "Poll a liquid scheduler and execute leased build actions in the Phase 2 sandbox.",
-     "liquid worker --scheduler 127.0.0.1:50051",
+     "Poll a trusted liquid scheduler and execute its signed leases in the Phase 2 sandbox.",
+     "liquid worker --scheduler 127.0.0.1:50051 --trust-scheduler /etc/liquid/scheduler",
      network_exit,
      argument_policy::ordinary,
      liquid_cli::worker},

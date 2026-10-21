@@ -96,13 +96,19 @@ auto encode(const worker_request& value) -> result<std::vector<std::byte>> {
     output.string(3, value.platform.os);
     output.string(4, value.platform.arch);
     output.varint(5, static_cast<std::uint64_t>(value.size_class));
+    output.string(6, value.nonce);
+    output.varint(7, value.issued_at_ms);
+    output.bytes(8, value.signature);
     return std::move(output).take();
 }
 
 auto encode(const lease_response& value) -> result<std::vector<std::byte>> {
     auto output = protobuf::writer{};
     output.boolean(1, value.assigned);
+    output.string(12, value.worker);
+    output.string(13, value.nonce);
     if (!value.assigned) {
+        output.bytes(14, value.signature);
         return std::move(output).take();
     }
     auto digest = encoded_digest(value.action_digest);
@@ -111,7 +117,7 @@ auto encode(const lease_response& value) -> result<std::vector<std::byte>> {
         return std::unexpected(!digest ? digest.error() : schedule.error());
     }
     output.string(2, value.operation);
-    output.varint(3, value.token);
+    output.string(3, value.token);
     output.varint(4, value.retry);
     output.message(5, *digest);
     output.varint(6, static_cast<std::uint64_t>(value.digest_function));
@@ -120,6 +126,7 @@ auto encode(const lease_response& value) -> result<std::vector<std::byte>> {
     output.bytes(9, *schedule);
     output.string(10, to_string(value.native_action));
     output.boolean(11, value.remote_eligible);
+    output.bytes(14, value.signature);
     return std::move(output).take();
 }
 
@@ -127,7 +134,10 @@ auto encode(const heartbeat_request& value) -> result<std::vector<std::byte>> {
     auto output = protobuf::writer{};
     output.string(1, value.operation);
     output.string(2, value.worker);
-    output.varint(3, value.token);
+    output.string(3, value.token);
+    output.string(4, value.nonce);
+    output.varint(5, value.issued_at_ms);
+    output.bytes(6, value.signature);
     return std::move(output).take();
 }
 
@@ -135,9 +145,12 @@ auto encode(const complete_request& value) -> result<std::vector<std::byte>> {
     auto output = protobuf::writer{};
     output.string(1, value.operation);
     output.string(2, value.worker);
-    output.varint(3, value.token);
+    output.string(3, value.token);
     output.bytes(4, value.result);
     output.string(5, value.failure);
+    output.string(6, value.nonce);
+    output.varint(7, value.issued_at_ms);
+    output.bytes(8, value.signature);
     return std::move(output).take();
 }
 
@@ -229,6 +242,24 @@ template <typename Message> auto decode(std::span<const std::byte> input) -> res
                                                      : value.error());
                     }
                     output.size_class = static_cast<action_size_class>(*value);
+                } else if (field.number == 6) {
+                    auto value = required_string(field, "Lease.nonce");
+                    if (!value) {
+                        return std::unexpected(value.error());
+                    }
+                    output.nonce = std::move(*value);
+                } else if (field.number == 7) {
+                    auto value = required_integer(field, "Lease.issued_at_ms");
+                    if (!value) {
+                        return std::unexpected(value.error());
+                    }
+                    output.issued_at_ms = *value;
+                } else if (field.number == 8) {
+                    auto value = required_bytes(field, "Lease.signature");
+                    if (!value) {
+                        return std::unexpected(value.error());
+                    }
+                    output.signature = std::move(*value);
                 }
             } else if constexpr (std::is_same_v<Message, lease_response>) {
                 if (field.number == 1) {
@@ -237,18 +268,29 @@ template <typename Message> auto decode(std::span<const std::byte> input) -> res
                         return std::unexpected(value.error());
                     }
                     output.assigned = *value != 0;
-                } else if (field.number == 2) {
-                    auto value = required_string(field, "Lease.operation");
+                } else if (field.number == 2 || field.number == 3 || field.number == 12 ||
+                           field.number == 13) {
+                    auto value = required_string(field, "Lease.string");
                     if (!value) {
                         return std::unexpected(value.error());
                     }
-                    output.operation = std::move(*value);
-                } else if (field.number == 3 || field.number == 4) {
-                    auto value = required_integer(field, "Lease.integer");
+                    auto* target = field.number == 2    ? &output.operation
+                                   : field.number == 3  ? &output.token
+                                   : field.number == 12 ? &output.worker
+                                                        : &output.nonce;
+                    *target = std::move(*value);
+                } else if (field.number == 4) {
+                    auto value = required_integer(field, "Lease.retry");
                     if (!value) {
                         return std::unexpected(value.error());
                     }
-                    (field.number == 3 ? output.token : output.retry) = *value;
+                    output.retry = *value;
+                } else if (field.number == 14) {
+                    auto value = required_bytes(field, "Lease.signature");
+                    if (!value) {
+                        return std::unexpected(value.error());
+                    }
+                    output.signature = std::move(*value);
                 } else if (field.number == 5) {
                     auto bytes = protobuf::require_bytes(field, "Lease.action_digest");
                     auto value = bytes ? decoded_digest(*bytes)
@@ -292,41 +334,54 @@ template <typename Message> auto decode(std::span<const std::byte> input) -> res
                     output.remote_eligible = *value != 0;
                 }
             } else if constexpr (std::is_same_v<Message, heartbeat_request>) {
-                if (field.number == 1 || field.number == 2) {
+                if (field.number >= 1 && field.number <= 4) {
                     auto value = required_string(field, "Heartbeat.string");
                     if (!value) {
                         return std::unexpected(value.error());
                     }
-                    (field.number == 1 ? output.operation : output.worker) = std::move(*value);
-                } else if (field.number == 3) {
-                    auto value = required_integer(field, "Heartbeat.token");
+                    auto* target = field.number == 1   ? &output.operation
+                                   : field.number == 2 ? &output.worker
+                                   : field.number == 3 ? &output.token
+                                                       : &output.nonce;
+                    *target = std::move(*value);
+                } else if (field.number == 5) {
+                    auto value = required_integer(field, "Heartbeat.issued_at_ms");
                     if (!value) {
                         return std::unexpected(value.error());
                     }
-                    output.token = *value;
+                    output.issued_at_ms = *value;
+                } else if (field.number == 6) {
+                    auto value = required_bytes(field, "Heartbeat.signature");
+                    if (!value) {
+                        return std::unexpected(value.error());
+                    }
+                    output.signature = std::move(*value);
                 }
             } else if constexpr (std::is_same_v<Message, complete_request>) {
-                if (field.number == 1 || field.number == 2 || field.number == 5) {
+                if (field.number == 1 || field.number == 2 || field.number == 3 ||
+                    field.number == 5 || field.number == 6) {
                     auto value = required_string(field, "Complete.string");
                     if (!value) {
                         return std::unexpected(value.error());
                     }
                     auto* target = field.number == 1   ? &output.operation
                                    : field.number == 2 ? &output.worker
-                                                       : &output.failure;
+                                   : field.number == 3 ? &output.token
+                                   : field.number == 5 ? &output.failure
+                                                       : &output.nonce;
                     *target = std::move(*value);
-                } else if (field.number == 3) {
-                    auto value = required_integer(field, "Complete.token");
+                } else if (field.number == 7) {
+                    auto value = required_integer(field, "Complete.issued_at_ms");
                     if (!value) {
                         return std::unexpected(value.error());
                     }
-                    output.token = *value;
-                } else if (field.number == 4) {
-                    auto value = required_bytes(field, "Complete.result");
+                    output.issued_at_ms = *value;
+                } else if (field.number == 4 || field.number == 8) {
+                    auto value = required_bytes(field, "Complete.bytes");
                     if (!value) {
                         return std::unexpected(value.error());
                     }
-                    output.result = std::move(*value);
+                    (field.number == 4 ? output.result : output.signature) = std::move(*value);
                 }
             } else if constexpr (std::is_same_v<Message, acknowledgement>) {
                 if (field.number == 1) {
