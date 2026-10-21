@@ -6,6 +6,7 @@
 #include <netinet/in.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -39,16 +40,21 @@
 #include <vector>
 
 #include "build/repository_access.hpp"
+
+#include "drive/source.hpp"
 #include "encoding/cbor.hpp"
 #include "liquid/attestation.hpp"
 #include "liquid/drive.hpp"
 #include "liquid/identity.hpp"
+
+#include "liquid/hash.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
 #include "net/retry_after.hpp"
 #include "objects/records.hpp"
+#include "repository/drive_access.hpp"
 #include "repository/store_access.hpp"
 #include "temporary_directory.hpp"
 #include "vfs/repository_access.hpp"
@@ -2123,6 +2129,122 @@ TEST(Drive, refused_reference_preserves_reason_and_unadvanced_base) {
     ASSERT_EQ(status->references.size(), 1U);
     EXPECT_EQ(status->references.front().reason, "drive write policy refused the change");
     EXPECT_FALSE(status->trees.base);
+}
+
+TEST(Drive, symlink_targets_never_enter_the_synced_repository) {
+    temporary_directory folder;
+    temporary_directory outside;
+    temporary_directory server_path;
+    const auto secret = std::string{"dummy host credential LSR-029"};
+    write_drive_file(outside.path() / "secret.txt", secret);
+    write_drive_file(folder.path() / "regular.txt", "ordinary content");
+    std::filesystem::create_symlink(outside.path() / "secret.txt", folder.path() / "absolute.txt");
+    std::filesystem::create_symlink(
+        (outside.path() / "secret.txt").lexically_relative(folder.path()),
+        folder.path() / "relative.txt");
+    std::filesystem::create_symlink("regular.txt", folder.path() / "internal.txt");
+    std::filesystem::create_symlink("missing.txt", folder.path() / "dangling.txt");
+    std::filesystem::create_directory_symlink(outside.path(), folder.path() / "directory");
+    auto remote = liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(remote);
+    auto server = liquid::sync_server{*remote};
+    sync_http_server http{server};
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client);
+    auto first = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(first) << first.error().message;
+    for (const auto* path :
+         {"absolute.txt", "relative.txt", "internal.txt", "dangling.txt", "directory/secret.txt"}) {
+        EXPECT_FALSE(liquid::runtime::block_on(remote->read(path))) << path;
+    }
+    auto ordinary = liquid::runtime::block_on(remote->read("regular.txt"));
+    ASSERT_TRUE(ordinary);
+    EXPECT_EQ(text(*ordinary), "ordinary content");
+
+    // A later full walk must apply the same rule to an already synchronized name.
+    std::filesystem::remove(folder.path() / "regular.txt");
+    std::filesystem::create_symlink(outside.path() / "secret.txt", folder.path() / "regular.txt");
+    auto later = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(later) << later.error().message;
+    auto retained = liquid::runtime::block_on(remote->read("regular.txt"));
+    ASSERT_TRUE(retained);
+    EXPECT_EQ(text(*retained), "ordinary content");
+    auto secret_id = liquid::hash(liquid::algorithm::blake3, bytes(secret));
+    ASSERT_TRUE(secret_id);
+    auto present = liquid::runtime::block_on(
+        liquid::repository_detail::drive_access::objects(*remote).contains(*secret_id));
+    ASSERT_TRUE(present);
+    EXPECT_FALSE(*present);
+}
+
+TEST(Drive, staging_refuses_links_and_invalid_sources_even_without_the_walk) {
+    temporary_directory folder;
+    temporary_directory outside;
+    temporary_directory repository_path;
+    write_drive_file(folder.path() / "nested/file.txt", "safe");
+    write_drive_file(outside.path() / "file.txt", "dummy host credential");
+    auto repository = liquid::runtime::block_on(liquid::repository::create(repository_path.path()));
+    ASSERT_TRUE(repository);
+    auto stage = [&](const std::filesystem::path& relative) {
+        return liquid::runtime::block_on(liquid::repository_detail::drive_access::stage(
+            *repository, folder.path(), relative, "file.txt", 0100644));
+    };
+    ASSERT_TRUE(stage("nested/file.txt"));
+    std::filesystem::remove(folder.path() / "nested/file.txt");
+    std::filesystem::create_symlink(outside.path() / "file.txt", folder.path() / "nested/file.txt");
+    EXPECT_FALSE(stage("nested/file.txt"));
+    std::filesystem::remove_all(folder.path() / "nested");
+    std::filesystem::create_directory_symlink(outside.path(), folder.path() / "nested");
+    EXPECT_FALSE(stage("nested/file.txt"));
+    EXPECT_FALSE(stage(outside.path() / "file.txt"));
+    EXPECT_FALSE(stage("../file.txt"));
+    EXPECT_FALSE(stage("nested/../file.txt"));
+    EXPECT_FALSE(stage(std::string{"file.txt\0ignored", 16}));
+    EXPECT_FALSE(stage(""));
+    EXPECT_FALSE(stage("nested"));
+    ASSERT_EQ(::mkfifo((folder.path() / "pipe").c_str(), 0600), 0);
+    EXPECT_FALSE(stage("pipe"));
+}
+
+TEST(Drive, pinned_source_survives_file_and_parent_replacement) {
+    temporary_directory folder;
+    temporary_directory outside;
+    write_drive_file(folder.path() / "nested/file.txt", "original safe bytes");
+    write_drive_file(outside.path() / "file.txt", "dummy host credential");
+    auto source = liquid::drive_detail::source_file::open(folder.path(), "nested/file.txt");
+    ASSERT_TRUE(source);
+    auto read_source = [&] {
+        auto input = std::ifstream{source->path(), std::ios::binary};
+        input.seekg(0);
+        return std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    };
+    std::filesystem::remove(folder.path() / "nested/file.txt");
+    std::filesystem::create_symlink(outside.path() / "file.txt", folder.path() / "nested/file.txt");
+    EXPECT_EQ(read_source(), "original safe bytes");
+    std::filesystem::rename(folder.path() / "nested", folder.path() / "renamed");
+    std::filesystem::create_directory_symlink(outside.path(), folder.path() / "nested");
+    EXPECT_EQ(read_source(), "original safe bytes");
+
+    class observed_write_through final : public liquid::blob_write_through {
+    public:
+        std::string received;
+        liquid::runtime::task<void> put(liquid::digest,
+                                        std::span<const std::byte> contents,
+                                        std::span<const liquid::digest>,
+                                        std::span<const std::uint64_t>) override {
+            received = text(contents);
+            co_return liquid::result<void>{};
+        }
+    };
+    auto hook = std::make_shared<observed_write_through>();
+    temporary_directory store_path;
+    auto store =
+        liquid::runtime::block_on(liquid::store::open(store_path.path(), {.write_through = hook}));
+    ASSERT_TRUE(store);
+    auto content = liquid::runtime::block_on(store->put_file(source->path()));
+    ASSERT_TRUE(content) << content.error().message;
+    EXPECT_EQ(hook->received, "original safe bytes");
 }
 
 TEST(Drive, fresh_folder_joins_an_existing_remote_repository) {

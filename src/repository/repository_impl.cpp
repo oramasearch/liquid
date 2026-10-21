@@ -36,6 +36,7 @@
 #include "build/repository_access.hpp"
 #include "crdt/document.hpp"
 #include "data/repository_access.hpp"
+#include "drive/source.hpp"
 #include "edit_codec.hpp"
 #include "encoding/cbor.hpp"
 #include "encryption/leaf.hpp"
@@ -11707,12 +11708,26 @@ runtime::task<digest> repository_detail::drive_access::snapshot(repository& sour
     co_return co_await source.impl_->snapshot(source.impl_->current.root, {}, false);
 }
 
-runtime::task<repository_detail::staged_drive_file> repository_detail::drive_access::stage(
-    repository& destination, std::filesystem::path source, std::string name, std::uint32_t mode) {
+runtime::task<repository_detail::staged_drive_file>
+repository_detail::drive_access::stage(repository& destination,
+                                       std::filesystem::path folder,
+                                       std::filesystem::path relative,
+                                       std::string name,
+                                       std::uint32_t mode) {
     if (!destination.impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
-    auto content = co_await destination.impl_->objects.put_file(std::move(source));
+    auto opened =
+        co_await runtime::offload([folder = std::move(folder), relative = std::move(relative)] {
+            return drive_detail::source_file::open(folder, relative);
+        });
+    if (!opened) {
+        co_return std::unexpected(opened.error());
+    }
+    if (!*opened) {
+        co_return std::unexpected(opened->error());
+    }
+    auto content = co_await destination.impl_->objects.put_file((**opened).path());
     if (!content) {
         co_return std::unexpected(content.error());
     }
