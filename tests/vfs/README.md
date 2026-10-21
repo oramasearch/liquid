@@ -22,7 +22,9 @@ code changes for this harness.
 The nine cases cover recorded-tree observation, attributed capture, file mutations, xattrs,
 synthetic times, read-only refusal, and concurrent range hydration with persistent cache reuse.
 Required backend execution fails on unavailability; optional availability returns CTest skip code
-77. The direct baseline and deliberate wrong-size failure are recorded in the
+77. A required `libfuse` run on a Linux host where `/dev/fuse` cannot be opened (a container without
+the device) also returns 77 before any case runs, printing the reason
+([#362](https://github.com/oramasearch/liquid/issues/362)). The direct baseline and deliberate wrong-size failure are recorded in the
 [proof record](../../docs/library/vfs-conformance-proof.md). Linux libfuse calibration remains
 owed against #299; see the [run and extension guide](../../docs/library/vfs.md#backend-conformance-301).
 

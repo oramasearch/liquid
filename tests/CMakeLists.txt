@@ -208,6 +208,10 @@ if(UNIX AND NOT APPLE)
   target_link_options(liquid-build-fixture PRIVATE -static)
 endif()
 add_dependencies(liquid-tests liquid-build-fixture)
+# Says whether this host can attempt a FUSE mount at run time; CLI tests that mount skip
+# through it (tests/cli/require-fuse.cmake, liquid#362).
+add_executable(liquid-fuse-probe fuse_probe.cpp)
+target_compile_features(liquid-fuse-probe PRIVATE cxx_std_26)
 add_executable(liquid-secret-fixture-generator EXCLUDE_FROM_ALL secret_fixture.cpp)
 target_include_directories(liquid-secret-fixture-generator PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(liquid-secret-fixture-generator PRIVATE liquid::liquid)
@@ -395,18 +399,30 @@ if(LIQUID_BUILD_CLI)
     FIXTURES_REQUIRED symbols_cli
     FIXTURES_SETUP symbols_cli_initialized
     WORKING_DIRECTORY ${LIQUID_SYMBOLS_CLI_REPOSITORY})
+  # `liquid wrap` mounts FUSE when liquid is built with it; a host without a usable
+  # /dev/fuse skips these two instead of failing them (liquid#362).
+  set(LIQUID_SYMBOLS_CLI_FUSE_PROBE)
+  if(LIQUID_FUSE_TARGET)
+    set(LIQUID_SYMBOLS_CLI_FUSE_PROBE -DLIQUID_FUSE_PROBE=$<TARGET_FILE:liquid-fuse-probe>)
+  endif()
   add_test(NAME symbols-cli-build
-    COMMAND $<TARGET_FILE:liquid-cli> wrap ${CMAKE_CXX_COMPILER} -std=c++20 -c functions.cpp -o functions.o)
+    COMMAND ${CMAKE_COMMAND} -DLIQUID_TEST_NAME=symbols-cli-build ${LIQUID_SYMBOLS_CLI_FUSE_PROBE}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/require-fuse.cmake --
+      $<TARGET_FILE:liquid-cli> wrap ${CMAKE_CXX_COMPILER} -std=c++20 -c functions.cpp -o functions.o)
   set_tests_properties(symbols-cli-build PROPERTIES
     FIXTURES_REQUIRED symbols_cli_initialized
     FIXTURES_SETUP symbols_cli_build
-    WORKING_DIRECTORY ${LIQUID_SYMBOLS_CLI_REPOSITORY})
+    WORKING_DIRECTORY ${LIQUID_SYMBOLS_CLI_REPOSITORY}
+    SKIP_REGULAR_EXPRESSION "^-- symbols-cli-build skipped: ")
   add_test(NAME symbols-cli
-    COMMAND $<TARGET_FILE:liquid-cli> symbols value.hpp)
+    COMMAND ${CMAKE_COMMAND} -DLIQUID_TEST_NAME=symbols-cli ${LIQUID_SYMBOLS_CLI_FUSE_PROBE}
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/require-fuse.cmake --
+      $<TARGET_FILE:liquid-cli> symbols value.hpp)
   set_tests_properties(symbols-cli PROPERTIES
     FIXTURES_REQUIRED symbols_cli_build
     WORKING_DIRECTORY ${LIQUID_SYMBOLS_CLI_REPOSITORY}
-    PASS_REGULAR_EXPRESSION "origin=compiler")
+    PASS_REGULAR_EXPRESSION "origin=compiler"
+    SKIP_REGULAR_EXPRESSION "^-- symbols-cli skipped: ")
   endif()
   if(LIQUID_BUILD_FRONTENDS)
     add_test(NAME symbols-cli-python
@@ -593,7 +609,9 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_LOG_URL_WORK=${CMAKE_CURRENT_BINARY_DIR}/log-url-work
       ${LIQUID_LOG_URL_SANDBOX_ARGS}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/log-url.cmake)
-  set_tests_properties(cli-log-url PROPERTIES TIMEOUT 120)
+  set_tests_properties(cli-log-url PROPERTIES
+    TIMEOUT 120
+    SKIP_REGULAR_EXPRESSION "^-- cli-log-url skipped: ")
 
   add_test(NAME cli-transparency-configuration
     COMMAND ${CMAKE_COMMAND}
@@ -769,7 +787,8 @@ if(LIQUID_BUILD_CLI)
     set_tests_properties(cli-offline PROPERTIES
       LABELS "liquid-cli;liquid-offline"
       RUN_SERIAL TRUE
-      TIMEOUT 1200)
+      TIMEOUT 1200
+      SKIP_REGULAR_EXPRESSION "^-- cli-offline skipped: ")
   endif()
 endif()
 
@@ -835,6 +854,11 @@ foreach(backend IN LISTS LIQUID_VFS_CONFORMANCE_BACKENDS)
   set_tests_properties(vfs-conformance-${backend} PROPERTIES
     LABELS "vfs;conformance" RUN_SERIAL TRUE TIMEOUT 300 SKIP_RETURN_CODE 77)
 endforeach()
+
+add_test(NAME cmake-script-policies
+  COMMAND ${CMAKE_COMMAND}
+    -DLIQUID_TESTS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/script-policies.cmake)
 
 add_executable(liquid-capture-measure EXCLUDE_FROM_ALL capture_measure.cpp)
 target_include_directories(liquid-capture-measure PRIVATE ${PROJECT_SOURCE_DIR}/src)

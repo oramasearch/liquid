@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: MIT
 
+# Run with cmake -P: set the project's policies, so IN_LIST is an operator on CMake 3.x too (#364).
+cmake_minimum_required(VERSION 3.28)
+
 if(NOT DEFINED LIQUID_CLI)
   message(FATAL_ERROR "LIQUID_CLI is required")
 endif()

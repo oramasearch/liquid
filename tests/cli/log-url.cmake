@@ -7,6 +7,8 @@ foreach(required IN ITEMS LIQUID_CLI LIQUID_API_TESTS LIQUID_LOG_URL_WORK)
 endforeach()
 
 if(DEFINED LIQUID_OFFLINE_RUNNER AND NOT LIQUID_LOG_URL_CHILD)
+  # Start from an empty sandbox, as cli-offline does: an earlier run leaves its input link.
+  file(REMOVE_RECURSE "${LIQUID_LOG_URL_WORK}/sandbox")
   execute_process(
     COMMAND "${LIQUID_OFFLINE_RUNNER}"
       "${LIQUID_LOG_URL_WORK}/sandbox" "${LIQUID_SOURCE_ROOT}" --
@@ -19,6 +21,12 @@ if(DEFINED LIQUID_OFFLINE_RUNNER AND NOT LIQUID_LOG_URL_CHILD)
     RESULT_VARIABLE sandbox_result
     OUTPUT_VARIABLE sandbox_output
     ERROR_VARIABLE sandbox_error)
+  if(sandbox_result STREQUAL "77")
+    # No namespaces for the offline runner here (liquid#363): reported as a skip.
+    string(STRIP "${sandbox_output}${sandbox_error}" skip_reason)
+    message(STATUS "cli-log-url skipped: ${skip_reason}")
+    return()
+  endif()
   if(NOT sandbox_result STREQUAL "0")
     message(FATAL_ERROR
       "log URL regression failed with networking denied (${sandbox_result}):\n${sandbox_output}${sandbox_error}")

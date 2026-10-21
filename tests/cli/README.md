@@ -33,7 +33,21 @@ built command to accept it past argument parsing.
 which invokes the same macOS or Linux sandbox launcher used by build wrapping with networking
 denied. It first pins exit 69 and the exact diagnostic for push, pull, remote execution, and the
 remote cache; any unclassified network use then fails inside the sandbox. The outer test carries
-the `liquid-offline` label for local and hosted selection.
+the `liquid-offline` label for local and hosted selection. On Linux the runner first runs
+`unshare --user --map-root-user --mount --net /bin/true`; a host that refuses those namespaces (an
+unprivileged container) makes it print `liquid-offline-runner: skipped: <reason>` and exit 77, and
+`offline.cmake` and `log-url.cmake` report the test as skipped with that reason
+([#363](https://github.com/oramasearch/liquid/issues/363)). Where the namespaces are allowed the
+suite runs in full. An input link left by an earlier run is reused, and `log-url.cmake` starts from
+an empty sandbox directory.
+
+`require-fuse.cmake` runs `symbols-cli-build` and `symbols-cli`, whose `liquid wrap` mounts FUSE in
+a FUSE build. It asks `liquid-fuse-probe` (`tests/fuse_probe.cpp`) first and reports a skip with the
+probe's reason when `/dev/fuse` cannot be opened
+([#362](https://github.com/oramasearch/liquid/issues/362)). `script-policies.cmake`
+(`cmake-script-policies`) fails when a CMake script under `tests/` uses `IN_LIST` without setting
+its policies, which breaks `cmake -P` on CMake 3.x
+([#364](https://github.com/oramasearch/liquid/issues/364)).
 The help/documentation comparison also pins the `scheduler`, `worker`, `diff`, and `docs` command
 names.
 `install.cmake` installs two trees into isolated generations, lists them, rolls back, and verifies

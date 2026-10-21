@@ -13,6 +13,7 @@
 #include <string_view>
 #include <utility>
 
+#include "../fuse_probe.hpp"
 #include "../support/forge_double.hpp"
 #include "../temporary_directory.hpp"
 #include "build/repository_access.hpp"
@@ -470,6 +471,7 @@ TEST(ConfigurationSources, declared_content_already_in_store_skips_download) {
 
 #if LIQUID_BUILD_HAS_FUSE
 TEST(ConfigurationGenerators, shell_output_lowers_with_verified_result_origin) {
+    LIQUID_TEST_REQUIRE_FUSE();
     auto fixture = configuration_action_fixture{"liquid-configuration-generator"};
     const auto root = liquid::to_string(fixture.root);
     const auto text = std::string{"generate = build {\n"} +
@@ -493,6 +495,7 @@ TEST(ConfigurationGenerators, shell_output_lowers_with_verified_result_origin) {
 }
 
 TEST(ConfigurationTargets, configured_target_executes_through_the_action_path) {
+    LIQUID_TEST_REQUIRE_FUSE();
     auto fixture = configuration_action_fixture{"liquid-configuration-target"};
     const auto certificate = environment_guard{"SSL_CERT_FILE", LIQUID_TLS_CERTIFICATE};
     auto server = liquid::test::forge_double{
