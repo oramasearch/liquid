@@ -459,21 +459,42 @@ auto hpack_encoder::encode(std::span<const header_field> fields) -> result<std::
     return output;
 }
 
-hpack_decoder::hpack_decoder(std::size_t table_size) : max_size_(table_size) {}
+auto header_list_size(std::span<const header_field> fields) -> std::size_t {
+    auto total = std::size_t{};
+    for (const auto& field : fields) {
+        total += entry_size(field);
+    }
+    return total;
+}
+
+hpack_decoder::hpack_decoder(std::size_t table_size) : max_size_(table_size), limit_(table_size) {}
 
 void hpack_decoder::set_max_table_size(std::size_t size) {
-    max_size_ = size;
-    resize_entries(dynamic_, size_, max_size_);
+    limit_ = size;
+    if (max_size_ > limit_) {
+        max_size_ = limit_;
+        resize_entries(dynamic_, size_, max_size_);
+    }
 }
 
 void hpack_decoder::insert(header_field field) {
     insert_entry(dynamic_, size_, max_size_, std::move(field));
 }
 
-auto hpack_decoder::decode(std::span<const std::byte> block) -> result<std::vector<header_field>> {
+auto hpack_decoder::decode(std::span<const std::byte> block, std::size_t max_list_size)
+    -> result<std::vector<header_field>> {
     auto output = std::vector<header_field>{};
     auto offset = std::size_t{};
     auto allow_size_update = true;
+    auto list_size = std::size_t{};
+    const auto admit = [&](const header_field& field) -> bool {
+        const auto added = entry_size(field);
+        if (added > max_list_size - list_size) {
+            return false;
+        }
+        list_size += added;
+        return true;
+    };
     while (offset < block.size()) {
         const auto first = byte_value(block[offset]);
         if ((first & 0x80U) != 0) {
@@ -484,6 +505,9 @@ auto hpack_decoder::decode(std::span<const std::byte> block) -> result<std::vect
             auto field = field_at(dynamic_, *index);
             if (!field) {
                 return std::unexpected(field.error());
+            }
+            if (!admit(*field)) {
+                return std::unexpected(fail("header list exceeds SETTINGS_MAX_HEADER_LIST_SIZE"));
             }
             output.push_back(std::move(*field));
             allow_size_update = false;
@@ -497,7 +521,7 @@ auto hpack_decoder::decode(std::span<const std::byte> block) -> result<std::vect
             if (!size) {
                 return std::unexpected(size.error());
             }
-            if (*size > max_size_) {
+            if (*size > limit_) {
                 return std::unexpected(fail("dynamic table size exceeds configured maximum"));
             }
             max_size_ = *size;
@@ -530,6 +554,9 @@ auto hpack_decoder::decode(std::span<const std::byte> block) -> result<std::vect
             return std::unexpected(value.error());
         }
         auto field = header_field{std::move(name), std::move(*value), never_indexed};
+        if (!admit(field)) {
+            return std::unexpected(fail("header list exceeds SETTINGS_MAX_HEADER_LIST_SIZE"));
+        }
         output.push_back(field);
         if (incremental) {
             insert(std::move(field));

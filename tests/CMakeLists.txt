@@ -24,6 +24,7 @@ add_executable(liquid-tests
   test_hash.cpp
   test_hot_update.cpp
   http2/test_codecs.cpp
+  http2/test_limits.cpp
   test_identity.cpp
   test_install.cpp
   test_hardware_keys.cpp
@@ -174,6 +175,21 @@ target_link_libraries(liquid-http2-test-server PRIVATE
   $<COMPILE_ONLY:Boost::corosio>
   $<COMPILE_ONLY:Boost::corosio_openssl>)
 target_include_directories(liquid-http2-test-server PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+# libFuzzer harness for the HTTP/2 connection (liquid#412). Opt-in, Clang only: it compiles the
+# HTTP/2 sources with the fuzzer, address and undefined-behaviour sanitizers.
+if(LIQUID_BUILD_FUZZERS)
+  add_executable(liquid-fuzz-http2
+    http2/fuzz_connection.cpp
+    ${LIQUID_HTTP2_TEST_SOURCES})
+  target_link_libraries(liquid-fuzz-http2 PRIVATE
+    liquid::liquid
+    $<COMPILE_ONLY:Boost::corosio>
+    $<COMPILE_ONLY:Boost::corosio_openssl>)
+  target_include_directories(liquid-fuzz-http2 PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_options(liquid-fuzz-http2 PRIVATE -fsanitize=fuzzer,address,undefined)
+  target_link_options(liquid-fuzz-http2 PRIVATE -fsanitize=fuzzer,address,undefined)
+endif()
 
 add_executable(liquid-build-fixture build/fixture.c)
 if(UNIX AND NOT APPLE)
