@@ -480,13 +480,19 @@ runtime::task<void> sync_server::handle_chunks(std::span<const std::byte> reques
         co_return std::unexpected(
             server_error(errc::invalid_argument, "sync server repository and store do not match"));
     }
-    auto frames = sync_detail::decode_pack_frames(request);
+    auto frames = sync_detail::parse_pack_frames(request);
     if (!frames) {
         co_return std::unexpected(frames.error());
     }
-    for (auto& [id, contents] : *frames) {
+    // Decode and store one frame at a time so at most one decoded frame is held in memory.
+    for (const auto& frame : *frames) {
+        const auto& id = frame.id;
+        auto contents = sync_detail::decode_pack_frame(frame);
+        if (!contents) {
+            co_return std::unexpected(contents.error());
+        }
         auto stored = co_await repository_detail::store_access::put_verified(
-            *impl_->objects, id, std::move(contents));
+            *impl_->objects, id, std::move(*contents));
         if (!stored) {
             co_return std::unexpected(stored.error());
         }

@@ -56,6 +56,8 @@
 #include "objects/records.hpp"
 #include "repository/drive_access.hpp"
 #include "repository/store_access.hpp"
+#include "repository/sync_access.hpp"
+#include "sync/codec.hpp"
 #include "temporary_directory.hpp"
 #include "vfs/repository_access.hpp"
 
@@ -1743,6 +1745,47 @@ TEST(Sync, author_identity_chain_travels_with_its_drips) {
         return item.kind == liquid::sync_item_kind::identity &&
                item.author.taap_id == author.taap_id;
     }));
+}
+
+auto repeated_frames(std::span<const std::byte> frame, std::size_t copies)
+    -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>{};
+    for (auto copy = std::size_t{}; copy < copies; ++copy) {
+        output.insert(output.end(), frame.begin(), frame.end());
+    }
+    return output;
+}
+
+// liquid#435: every frame of a chunk upload, repeats included, is charged against the request's
+// decoded-size budget before anything is decompressed, so one small compressed frame repeated
+// cannot make the server materialise unbounded memory.
+TEST(Sync, chunk_upload_charges_repeated_frames_against_the_decoded_budget) {
+    temporary_directory path;
+    auto repository = liquid::runtime::block_on(liquid::repository::create(path.path()));
+    ASSERT_TRUE(repository);
+    auto& objects = liquid::repository_detail::sync_access::objects(*repository);
+    auto server = liquid::sync_server{*repository};
+
+    // 16 MiB of zeros compresses to a few hundred bytes: the frame is valid and verifiable.
+    const auto contents = std::vector<std::byte>(16U * 1024U * 1024U);
+    auto id = liquid::hash(liquid::algorithm::blake3, contents);
+    ASSERT_TRUE(id);
+    auto frame = liquid::sync_detail::encode_pack_frame(*id, contents);
+    ASSERT_TRUE(frame);
+    ASSERT_LT(frame->size(), 4096U);
+
+    auto refused = liquid::runtime::block_on(server.handle_chunks(repeated_frames(*frame, 5)));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
+    auto present = liquid::runtime::block_on(objects.contains(*id));
+    ASSERT_TRUE(present);
+    EXPECT_FALSE(*present);
+
+    auto accepted = liquid::runtime::block_on(server.handle_chunks(repeated_frames(*frame, 4)));
+    ASSERT_TRUE(accepted) << (accepted ? "" : accepted.error().message);
+    present = liquid::runtime::block_on(objects.contains(*id));
+    ASSERT_TRUE(present);
+    EXPECT_TRUE(*present);
 }
 
 auto write_drive_file(const std::filesystem::path& path, std::string_view value) -> void {

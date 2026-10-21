@@ -20,7 +20,8 @@ requesting any content chunk.
 checks repository/store pairing, derives old/new ref updates and fast-forward state from the change
 graph, associates new reachability with change callbacks, accumulates named verdicts, imports the
 accepted ref set, applies the optional atomic rule, exports pull pages, answers missing-object
-queries and logical range reads, verifies pack uploads, applies per-author flow limits before
+queries and logical range reads, verifies pack uploads one frame at a time after charging every
+frame against the request's 64 MiB decoded-size budget, applies per-author flow limits before
 metadata import, and encodes canonical error bodies including retry scope and delay.
 
 `endpoint.cpp` adapts sync bodies to the shared private Corosio HTTP/1.1 client in `src/net/`. It
