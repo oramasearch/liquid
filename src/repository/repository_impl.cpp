@@ -40,6 +40,7 @@
 #include "formats/dotenv.hpp"
 #include "formats/json.hpp"
 #include "identity/taap.hpp"
+#include "objects/entry_name.hpp"
 #include "objects/records.hpp"
 #include "repository/diff.hpp"
 #include "repository/drive_access.hpp"
@@ -2093,6 +2094,10 @@ auto split_path(std::string_view path) -> result<std::vector<std::string>> {
         if (part.empty() || part == "." || part == "..")
             return std::unexpected(
                 failure(errc::invalid_argument, "invalid path component", std::string{path}));
+        if (const auto problem = objects::entry_name_problem(part))
+            return std::unexpected(failure(errc::invalid_argument,
+                                           std::string{*problem},
+                                           objects::printable_entry_name(path)));
         result.emplace_back(part);
         if (end == std::string_view::npos)
             break;
@@ -11551,6 +11556,20 @@ auto repository_detail::search_access::index_path(repository& source)
 void repository_detail::testing::reset_directory_loads(repository& value) {
     if (value.impl_)
         value.impl_->directory_load_count = 0;
+}
+
+auto repository_detail::testing::rename_working_entry(repository& value,
+                                                      const std::string& from,
+                                                      std::string to) -> bool {
+    if (!value.impl_)
+        return false;
+    auto& entries = value.impl_->current.root.entries;
+    auto found = entries.find(from);
+    if (found == entries.end())
+        return false;
+    auto entry = std::move(found->second);
+    entries.erase(found);
+    return entries.emplace(std::move(to), std::move(entry)).second;
 }
 
 auto repository_detail::shared_state_prefix(const std::filesystem::path& identifier)

@@ -109,6 +109,140 @@ TEST(Install, embedded_intent_is_applied_inside_the_generation) {
 }
 
 #ifndef _WIN32
+auto write_intent(const std::filesystem::path& tree,
+                  std::string_view name,
+                  const liquid::install_intent& intent) -> void {
+    auto encoded = liquid::encode_install_intent(intent);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    write_bytes(tree / "usr/share/liquid/intents" / (std::string{name} + ".cbor"), *encoded);
+}
+
+auto host_directory(const std::filesystem::path& workspace) -> std::filesystem::path {
+    const auto host = std::filesystem::weakly_canonical(workspace / "host");
+    auto code = std::error_code{};
+    std::filesystem::create_directories(host, code);
+    EXPECT_FALSE(code) << code.message();
+    return host;
+}
+
+// liquid #385: an intent links `/etc` to a host directory and a second intent declares a
+// directory and a user below `/etc`. Neither may change the host directory.
+TEST(Install, intent_symlink_cannot_redirect_a_later_intent_outside_the_root) {
+    const auto workspace = liquid::test::fixture_path("liquid-install-intent-escape");
+    const auto tree = workspace / "tree";
+    const auto root = workspace / "root";
+    const auto host = host_directory(workspace);
+    write_text(tree / "usr/bin/agent", "agent");
+    write_intent(tree, "a-link", liquid::install_intent{.symlinks = {{"/etc", host}}});
+    write_intent(tree,
+                 "b-contents",
+                 liquid::install_intent{.users = {{"intruder", true, "/home/intruder"}},
+                                        .groups = {{"intruder", true}},
+                                        .directories = {{"/etc/cron.d", 0777, "root"}}});
+
+    auto installed = liquid::runtime::block_on(liquid::installation::install(tree, root));
+    EXPECT_FALSE(installed);
+    EXPECT_FALSE(std::filesystem::exists(host / "cron.d"));
+    EXPECT_FALSE(std::filesystem::exists(host / "passwd"));
+    EXPECT_FALSE(std::filesystem::exists(host / "group"));
+    EXPECT_TRUE(std::filesystem::is_empty(host));
+    EXPECT_FALSE(std::filesystem::exists(root / "current"));
+}
+
+TEST(Install, one_intent_cannot_link_out_and_then_write_through_the_link) {
+    const auto workspace = liquid::test::fixture_path("liquid-install-intent-self-escape");
+    const auto tree = workspace / "tree";
+    const auto root = workspace / "root";
+    const auto host = host_directory(workspace);
+    write_text(tree / "usr/bin/agent", "agent");
+    write_intent(tree,
+                 "agent",
+                 liquid::install_intent{.directories = {{"/var/spool/cron.d", 0777, "root"}},
+                                        .symlinks = {{"/var/spool", host}}});
+
+    auto installed = liquid::runtime::block_on(liquid::installation::install(tree, root));
+    EXPECT_FALSE(installed);
+    EXPECT_TRUE(std::filesystem::is_empty(host));
+}
+
+TEST(Install, source_symlink_cannot_redirect_intent_users_outside_the_root) {
+    const auto workspace = liquid::test::fixture_path("liquid-install-source-link-escape");
+    const auto tree = workspace / "tree";
+    const auto root = workspace / "root";
+    const auto host = host_directory(workspace);
+    write_text(tree / "usr/bin/agent", "agent");
+    auto code = std::error_code{};
+    std::filesystem::create_symlink(host, tree / "etc", code);
+    ASSERT_FALSE(code) << code.message();
+    write_intent(
+        tree, "agent", liquid::install_intent{.users = {{"intruder", true, "/home/intruder"}}});
+
+    auto installed = liquid::runtime::block_on(liquid::installation::install(tree, root));
+    EXPECT_FALSE(installed);
+    EXPECT_TRUE(std::filesystem::is_empty(host));
+}
+
+TEST(Install, source_symlink_to_a_host_file_is_never_written_through) {
+    const auto workspace = liquid::test::fixture_path("liquid-install-source-file-escape");
+    const auto tree = workspace / "tree";
+    const auto root = workspace / "root";
+    const auto host = host_directory(workspace);
+    write_text(host / "passwd", "root:x:0:0::/root:/bin/sh\n");
+    write_text(tree / "usr/bin/agent", "agent");
+    auto code = std::error_code{};
+    std::filesystem::create_directories(tree / "etc", code);
+    std::filesystem::create_symlink(host / "passwd", tree / "etc/passwd", code);
+    ASSERT_FALSE(code) << code.message();
+    write_intent(
+        tree, "agent", liquid::install_intent{.users = {{"intruder", true, "/home/intruder"}}});
+
+    auto installed = liquid::runtime::block_on(liquid::installation::install(tree, root));
+    EXPECT_FALSE(installed);
+    EXPECT_EQ(read_text(host / "passwd"), "root:x:0:0::/root:/bin/sh\n");
+}
+
+TEST(Install, source_symlink_with_a_relative_target_above_the_root_is_refused) {
+    const auto workspace = liquid::test::fixture_path("liquid-install-relative-escape");
+    const auto tree = workspace / "tree";
+    const auto root = workspace / "root";
+    write_text(tree / "usr/bin/agent", "agent");
+    auto code = std::error_code{};
+    std::filesystem::create_symlink(
+        "../../../../../../../../../../../../etc", tree / "usr/etc", code);
+    ASSERT_FALSE(code) << code.message();
+
+    auto installed = liquid::runtime::block_on(liquid::installation::install(tree, root));
+    ASSERT_FALSE(installed);
+    EXPECT_EQ(installed.error().code, liquid::errc::corrupt);
+}
+
+TEST(Install, symlinks_that_stay_inside_the_generation_still_install) {
+    const auto workspace = liquid::test::fixture_path("liquid-install-inner-links");
+    const auto tree = workspace / "tree";
+    const auto root = workspace / "root";
+    write_text(tree / "usr/bin/agent", "agent");
+    auto code = std::error_code{};
+    std::filesystem::create_symlink("agent", tree / "usr/bin/agent-link", code);
+    std::filesystem::create_symlink("../bin/agent", tree / "usr/bin/agent-up", code);
+    std::filesystem::create_symlink("/usr/bin/agent", tree / "usr/bin/agent-absolute", code);
+    ASSERT_FALSE(code) << code.message();
+    write_intent(tree,
+                 "agent",
+                 liquid::install_intent{.users = {{"liquid_agent", true, "/var/lib/agent"}},
+                                        .directories = {{"/var/lib/agent", 0750, "liquid_agent"}},
+                                        .symlinks = {{"/etc/agent", "/var/lib/agent"}}});
+
+    auto installed = liquid::runtime::block_on(liquid::installation::install(tree, root));
+    ASSERT_TRUE(installed) << installed.error().message << " " << installed.error().context;
+    EXPECT_EQ(read_text(root / "current/usr/bin/agent-link"), "agent");
+    EXPECT_EQ(read_text(root / "current/usr/bin/agent-up"), "agent");
+    EXPECT_EQ(std::filesystem::read_symlink(root / "current/usr/bin/agent-absolute"),
+              "/usr/bin/agent");
+    EXPECT_EQ(std::filesystem::read_symlink(root / "current/etc/agent"), "/var/lib/agent");
+    EXPECT_TRUE(std::filesystem::is_directory(root / "current/var/lib/agent"));
+    EXPECT_NE(read_text(root / "current/etc/passwd").find("liquid_agent:x:"), std::string::npos);
+}
+
 auto run_crashing_install(const std::filesystem::path& source,
                           const std::filesystem::path& root,
                           std::uint64_t step) -> int {

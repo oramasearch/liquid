@@ -142,7 +142,10 @@ adoption, persisted remote configuration, full plain-checkout materialization, a
 output ([`drive.md`](drive.md), [`../cli/README.md`](../cli/README.md)).
 
 **VFS.** Full materialisation writes a plain directory; lazy mounts use libfuse3 on Linux and
-optional macFUSE on macOS ([`vfs.md`](vfs.md)).
+optional macFUSE on macOS ([`vfs.md`](vfs.md)). Tree entry names are validated at decode, encode,
+repository writes, Git import and both materialisers, and materialisation creates entries
+exclusively without following symbolic links (liquid #386,
+[`object-model.md`](object-model.md#records-in-the-store)).
 
 **Transparency and trust.** Repository metadata retains verified Lake transparency checkpoints:
 the public client verifies signed witness-quorum checkpoints, all entry and parent hash tiles,
@@ -425,6 +428,8 @@ Apple notarisation proof ([`projection.md`](projection.md#unsigned-projection-an
 Debian, RPM, and Alpine lifecycle scripts. Their digests bind to projection and SBOM records;
 ownership checks detect conflicting paths, explicit replacements derive package relationships,
 and install/list/rollback use atomic projected-tree generations with interruption recovery.
+Staging never follows a symbolic link out of the generation, and intent links are created after
+every intent's directories, users and groups (liquid #385).
 Digest-pinned base and overlay trees also produce OSTree commits and bootc OCI layouts, with
 separate commit and image digests. Projection is distinct from the Phase 7 boot workflow
 ([`projection.md`](projection.md)).

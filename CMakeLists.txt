@@ -560,6 +560,7 @@ add_library(libliquid
   src/identity/keys/keys.cpp
   src/identity/keys/hid.cpp
   src/identity/taap.cpp
+  src/fs/contained.cpp
   src/install/faults.cpp
   src/install/install.cpp
   src/install/records.cpp
@@ -571,6 +572,7 @@ add_library(libliquid
   src/net/http_client.cpp
   src/crypto/signature.cpp
   src/object.cpp
+  src/objects/entry_name.cpp
   src/objects/records.cpp
   src/protobuf/wire.cpp
   src/projection/helm.cpp
