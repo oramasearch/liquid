@@ -76,6 +76,9 @@ the exported Capy headers and the private Boost component targets, is in
 | `LIQUID_BUILD_BENCH` | `OFF` | Add the optional `bench/chunk-index/chunk-index-bench` target and fetch its RocksDB and LMDB dependencies ([`../library/chunk-index-benchmark.md`](../library/chunk-index-benchmark.md)). |
 | `LIQUID_SELF_HOST` | `OFF` | Configure the network-free `liquid wrap` build step ([`../library/self-host.md`](../library/self-host.md)). |
 | `LIQUID_USE_SYSTEM_COMPILER` | unset | Skip the automatic Clang selection. |
+| `LIQUID_HARDEN` | `ON` | Stack protector, stack clash and control-flow protection where the target supports them, standard library assertions, PIE, full RELRO on Linux, and `_FORTIFY_SOURCE=3` in optimised configurations ([`hardening.md`](hardening.md)). |
+| `LIQUID_SANITIZE` | empty | Sanitizers for every C and C++ target, dependencies included, for example `address;undefined` ([`hardening.md`](hardening.md)). |
+| `LIQUID_FUZZ` | `OFF` | Build the libFuzzer harnesses in `fuzz/` and their seed corpus; implies `address;undefined` ([`hardening.md`](hardening.md)). |
 
 ## Documentation checks
 

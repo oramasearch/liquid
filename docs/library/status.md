@@ -569,6 +569,16 @@ conflict; an opt-in Linux subset exercises configured builds and relocation
 Liquid #84 adds an operator-control-plane deployment client with digest-pinned interim OCI images,
 named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
 
+## Build hardening, sanitizers and fuzzing
+
+Liquid #407 hardens every build by default (stack protector, stack clash and control-flow
+protection where supported, standard library assertions, PIE, full RELRO on Linux, and
+`_FORTIFY_SOURCE=3` in optimised builds), adds `-DLIQUID_SANITIZE=<list>` covering the C sources
+and every dependency, and adds eleven libFuzzer harnesses under `fuzz/` for the sync framing,
+object records, drips, CBOR, identity documents, HTTP/1, HTTP/2, the manifest and lock records,
+Git objects and protobuf. Their first runs found five defects, fixed in the same change
+(#457 to #461). How to run them and the recorded runs: [`../build/hardening.md`](../build/hardening.md).
+
 ## Known limits in one place
 
 - The action-result memory cache tier remains separate work.
@@ -590,3 +600,7 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
   outside the projection implementation.
 - Tier B source projection is Debian-only; other distribution source-policy formats are deferred.
 - liquid is released under the MIT licence.
+- Fuzz harnesses have short recorded runs only; the 24 CPU-hour runs are
+  [#464](https://github.com/oramasearch/liquid/issues/464), harnesses for the remaining parsers
+  [#463](https://github.com/oramasearch/liquid/issues/463), and the tree-sitter-swift scanner's
+  out-of-bounds read under AddressSanitizer [#462](https://github.com/oramasearch/liquid/issues/462).

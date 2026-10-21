@@ -87,7 +87,17 @@ docs/releases/
     one page per tagged release: what it includes, what it does not, known issues
 third_party/appimage-runtimes/
     vendored, hash-pinned AppImage type 2 runtime inputs and their upstream licence
+fuzz/
+    libFuzzer harnesses for every parser of untrusted bytes, built with -DLIQUID_FUZZ=ON
+tools/hardening/
+    the Linux BuildKit lane for sanitizer and fuzzing runs (no CI runs them)
 ```
+
+**Parsers of untrusted bytes get a harness.** A new decoder of bytes that arrive from a peer, a
+server, a store or a file someone else wrote gets a harness in `fuzz/` (and seeds in
+`fuzz/seeds.cpp`) in the same change. Release builds are hardened by default (`LIQUID_HARDEN`);
+the flags, the sanitizer configuration and how to run the fuzzers are in
+[`docs/build/hardening.md`](docs/build/hardening.md) (liquid #407).
 
 ### `sources.md` is evidence
 
