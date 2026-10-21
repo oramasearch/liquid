@@ -149,7 +149,7 @@ A chain reaches a verifier in one of three ways:
 
 | Path | How |
 |---|---|
-| **Sync** | Every exported drip and change author's stored chain travels as an `identity` frame ahead of the records it signs ([sync.md](sync.md#metadata-stream)). The receiver verifies it, stores it with `trust_identity_chain`, and only then checks the signatures. A sender relays every chain it holds, so a chain reaches a third machine. An author whose chain the sender does not hold is sent without one, and the receiver refuses that author's records as an unknown signer. |
+| **Sync** | Every exported drip and change author's stored chain travels as an `identity` frame ahead of the records it signs ([sync.md](sync.md#metadata-stream)). The receiver verifies it, stores it with `trust_identity_chain`, and only then checks the signatures. A sender relays every chain it holds, so a chain reaches a third machine; the repository also keeps each author's chain in its metadata, so a restarted process with a new home still sends it. An author whose chain the sender does not hold is sent without one, and the receiver refuses that author's records as an unknown signer. |
 | **By hand** | `liquid identity show --chain` prints the whole chain as unpadded base64url; `liquid identity trust <chain>` (or `-` for standard input) verifies and stores it on another machine. This is how a release verifier, an admission server, a worker scheduler, or a build-policy checker learns the identities it should accept. |
 | **With the request** | A service that receives a chain with each request, such as lake's TAAP sign-in, passes it to `verify(actor, chain, ...)` or `attestation_verification_options::issuer_chain`. |
 

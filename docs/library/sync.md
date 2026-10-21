@@ -118,8 +118,11 @@ after the end frame, or a stream without an end frame.
 | 7 | identity | `{author, body}`; `body` is an author's identity document chain (`encode_identity_chain`) |
 | 255 | end | empty |
 
-Identity frames come first: one per distinct drip and change author whose chain the sender holds
-(its own, and every chain it has received). Drips retain journal order. A change follows the drips
+Identity frames come first: one per distinct drip and change author whose chain the sender holds.
+The sender takes the longer of the chain in its identity store and the one the repository keeps in
+its metadata under `liquid.identity-chain.<taap_id>`: a repository records its local signer's chain
+when that key first signs a drip there, and every chain it imports, so it can still send them after
+the process's home is gone (a new container has a new home). Drips retain journal order. A change follows the drips
 it cuts. Directory messages use the
 existing checked CRDT receive path, are emitted only for directories reachable from the current
 working root, are received into blank documents, and merge into the receiver's reachable candidate

@@ -1202,7 +1202,11 @@ TEST(Sync, author_identity_chain_travels_with_its_drips) {
     auto head = liquid::runtime::block_on(destination->head());
     ASSERT_TRUE(head) << head.error().message;
 
-    // The receiver now relays the author's chain to the next machine.
+    // The receiver relays the author's chain to the next machine, even from a new process home
+    // (a restarted container): the repository keeps every author's chain with its records.
+    temporary_directory restarted_home;
+    scoped_liquid_home::select(restarted_home.path());
+    EXPECT_FALSE(liquid::load_identity_chain(author.taap_id));
     auto relayed = export_all(*destination);
     ASSERT_TRUE(relayed) << relayed.error().message;
     EXPECT_TRUE(std::ranges::any_of(*relayed, [&](const liquid::sync_item& item) {

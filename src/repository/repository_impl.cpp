@@ -3170,11 +3170,38 @@ auto import_synced_drip(repository_document& candidate,
     return {};
 }
 
+// The repository keeps every author's identity chain in its own metadata, so it can send the
+// chain with that author's records after the process's identity store is gone (a new container
+// has a new home). A chain is self-verifying from its identifier, so the receiver re-verifies it.
+constexpr std::string_view identity_chain_metadata_prefix = "liquid.identity-chain.";
+
+auto identity_chain_metadata_key(std::string_view taap_id) -> std::string {
+    return std::string{identity_chain_metadata_prefix} + std::string{taap_id};
+}
+
+// Keeps the longer of the stored and offered encoded chains for `taap_id` in `metadata`.
+auto remember_identity_chain(std::map<std::string, std::vector<std::byte>>& metadata,
+                             std::string_view taap_id,
+                             std::span<const identity_document> chain) -> void {
+    auto encoded = encode_identity_chain(chain);
+    if (!encoded) {
+        return;
+    }
+    auto& slot = metadata[identity_chain_metadata_key(taap_id)];
+    if (!slot.empty()) {
+        auto stored = decode_identity_chain(slot);
+        if (stored && stored->size() >= chain.size()) {
+            return;
+        }
+    }
+    slot = std::move(*encoded);
+}
+
 // An author's identity chain arrives ahead of the drips and changes it attributes. It is
 // verified and stored, so the signature checks that follow can bind the author's name to a key
 // (liquid#383). A rotation not signed by the key it replaces is refused here; only an out-of-band
 // `liquid identity trust --accept-compromise-rotation` accepts one.
-auto import_synced_identity(const sync_item& item) -> result<void> {
+auto import_synced_identity(repository_document& candidate, const sync_item& item) -> result<void> {
     auto chain = decode_identity_chain(item.body);
     if (!chain) {
         return std::unexpected(chain.error());
@@ -3187,6 +3214,8 @@ auto import_synced_identity(const sync_item& item) -> result<void> {
     if (!trusted) {
         return std::unexpected(trusted.error());
     }
+    auto stored = load_identity_chain(item.author.taap_id);
+    remember_identity_chain(candidate.metadata, item.author.taap_id, stored ? *stored : *chain);
     return {};
 }
 
@@ -3777,7 +3806,7 @@ runtime::task<void> import_sync_item(sync_import_state& state, const sync_item& 
         co_return std::unexpected(
             failure(errc::corrupt, "presence reached the persistent sync importer"));
     case sync_item_kind::identity:
-        co_return import_synced_identity(item);
+        co_return import_synced_identity(state.candidate, item);
     }
     co_return std::unexpected(failure(errc::corrupt, "unknown sync item kind"));
 }
@@ -4484,6 +4513,8 @@ struct repository::impl {
     std::optional<retained_lease> cache_root_lease;
     std::map<node_id, retained_lease> directory_leases;
     signer signing_key;
+    // The signing key whose identity chain was last recorded in `current.metadata`.
+    std::string recorded_chain_key;
     std::shared_ptr<keyring> keys;
     cache_report cache_statistics;
     std::shared_ptr<flow_detail::controller> flow_limits;
@@ -4971,6 +5002,21 @@ struct repository::impl {
         }
         co_return co_await remove_state(state, "LIQUID_JOURNAL");
     }
+    // Records the local signer's identity chain with the repository the first time each key
+    // signs here (liquid#383), so the chain can travel with these drips later. A signer without a
+    // stored chain records nothing; receivers then refuse its drips as an unknown signer.
+    void record_signer_chain() {
+        const auto identity = signing_key.identity();
+        if (identity.taap_id.empty() || recorded_chain_key == identity.key_fingerprint) {
+            return;
+        }
+        auto chain = load_identity_chain(identity.taap_id);
+        if (!chain) {
+            return;
+        }
+        remember_identity_chain(current.metadata, identity.taap_id, *chain);
+        recorded_chain_key = identity.key_fingerprint;
+    }
     runtime::task<void> checkpoint_or_journal() {
         if (defer_persistence) {
             co_return result<void>{};
@@ -5050,6 +5096,7 @@ struct repository::impl {
         }
         current.drips.push_back(
             {signing_key.identity(), std::move(*body), std::move(*encoded_signature)});
+        record_signer_chain();
         journal_bytes += current.drips.back().body.size();
         journal_bytes += current.drips.back().signature.size();
         co_return result<void>{};
@@ -5092,6 +5139,7 @@ struct repository::impl {
         }
         current.drips.push_back(
             {signing_key.identity(), std::move(*body), std::move(*encoded_signature)});
+        record_signer_chain();
         journal_bytes += current.drips.back().body.size();
         journal_bytes += current.drips.back().signature.size();
         co_return result<void>{};
@@ -5119,6 +5167,7 @@ struct repository::impl {
         }
         current.drips.push_back(
             {signing_key.identity(), std::move(*body), std::move(*encoded_signature)});
+        record_signer_chain();
         co_return result<void>{};
     }
     void record_operation(op_id id,
@@ -9970,11 +10019,19 @@ runtime::task<sync_export> repository::export_drips(journal_cursor cursor,
     auto identities = std::vector<sync_item>{};
     for (const auto& author : authors) {
         auto chain = load_identity_chain(author.taap_id);
-        if (!chain) {
-            if (is_unknown_signer(chain.error())) {
-                continue;
-            }
+        if (!chain && !is_unknown_signer(chain.error())) {
             co_return std::unexpected(chain.error());
+        }
+        const auto recorded =
+            impl_->current.metadata.find(identity_chain_metadata_key(author.taap_id));
+        if (recorded != impl_->current.metadata.end()) {
+            auto kept = decode_identity_chain(recorded->second);
+            if (kept && (!chain || kept->size() > chain->size())) {
+                chain = std::move(*kept);
+            }
+        }
+        if (!chain) {
+            continue;
         }
         auto body = encode_identity_chain(*chain);
         if (!body) {
