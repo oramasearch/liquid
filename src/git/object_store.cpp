@@ -93,30 +93,6 @@ auto object_bytes(object_kind kind, std::span<const std::byte> payload) -> std::
     return output;
 }
 
-auto parse_object(std::span<const std::byte> bytes, const sha1& id) -> result<object> {
-    const auto zero = std::ranges::find(bytes, std::byte{});
-    if (zero == bytes.end())
-        return std::unexpected(
-            failure(errc::corrupt, "Git object header is missing", sha1_hex(id)));
-    const auto header = std::string_view{reinterpret_cast<const char*>(bytes.data()),
-                                         static_cast<std::size_t>(zero - bytes.begin())};
-    const auto separator = header.find(' ');
-    if (separator == std::string_view::npos)
-        return std::unexpected(
-            failure(errc::corrupt, "Git object header is malformed", sha1_hex(id)));
-    const auto kind = parse_kind(header.substr(0, separator));
-    std::uint64_t size{};
-    const auto [end, code] =
-        std::from_chars(header.data() + separator + 1, header.data() + header.size(), size);
-    if (!kind || code != std::errc{} || end != header.data() + header.size() ||
-        size != static_cast<std::uint64_t>(bytes.end() - zero - 1))
-        return std::unexpected(
-            failure(errc::corrupt, "Git object header is invalid", sha1_hex(id)));
-    if (sha1_hash(bytes) != id)
-        return std::unexpected(failure(errc::corrupt, "Git object SHA-1 mismatch", sha1_hex(id)));
-    return object{*kind, id, {zero + 1, bytes.end()}};
-}
-
 auto trim(std::string value) -> std::string {
     while (!value.empty() && (value.back() == '\n' || value.back() == '\r'))
         value.pop_back();
@@ -429,8 +405,12 @@ auto apply_delta(std::span<const std::byte> base,
     std::size_t offset{};
     const auto source_size = delta_size(delta, offset);
     const auto result_size = delta_size(delta, offset);
+    // Each instruction byte yields at most 0x10000 bytes (a copy), so a declared result larger than
+    // that cannot be produced and is refused before it is charged to the budget (liquid #407).
+    constexpr auto largest_copy = std::uint64_t{0x10000};
     if (!source_size || !result_size || *source_size != base.size() ||
-        *result_size > std::numeric_limits<std::size_t>::max())
+        *result_size > std::numeric_limits<std::size_t>::max() ||
+        *result_size / largest_copy > delta.size())
         return std::unexpected(failure(errc::corrupt, "invalid Git delta sizes"));
     if (*result_size > budget.limits.object_bytes)
         return std::unexpected(failure(errc::corrupt, "Git delta result limit exceeded"));
@@ -479,6 +459,37 @@ auto apply_delta(std::span<const std::byte> base,
 }
 
 } // namespace
+
+auto parse_object(std::span<const std::byte> bytes, const sha1& id) -> result<object> {
+    const auto zero = std::ranges::find(bytes, std::byte{});
+    if (zero == bytes.end())
+        return std::unexpected(
+            failure(errc::corrupt, "Git object header is missing", sha1_hex(id)));
+    const auto header = std::string_view{reinterpret_cast<const char*>(bytes.data()),
+                                         static_cast<std::size_t>(zero - bytes.begin())};
+    const auto separator = header.find(' ');
+    if (separator == std::string_view::npos)
+        return std::unexpected(
+            failure(errc::corrupt, "Git object header is malformed", sha1_hex(id)));
+    const auto kind = parse_kind(header.substr(0, separator));
+    std::uint64_t size{};
+    const auto [end, code] =
+        std::from_chars(header.data() + separator + 1, header.data() + header.size(), size);
+    if (!kind || code != std::errc{} || end != header.data() + header.size() ||
+        size != static_cast<std::uint64_t>(bytes.end() - zero - 1))
+        return std::unexpected(
+            failure(errc::corrupt, "Git object header is invalid", sha1_hex(id)));
+    if (sha1_hash(bytes) != id)
+        return std::unexpected(failure(errc::corrupt, "Git object SHA-1 mismatch", sha1_hex(id)));
+    return object{*kind, id, {zero + 1, bytes.end()}};
+}
+
+auto apply_delta(std::span<const std::byte> base, std::span<const std::byte> delta)
+    -> result<std::vector<std::byte>> {
+    // A delta applied on its own is held to the default read limits with a fresh budget.
+    auto budget = decode_budget{.limits = object_read_limits{}};
+    return apply_delta(base, delta, budget);
+}
 
 auto kind_name(object_kind kind) -> std::string_view {
     switch (kind) {
@@ -738,10 +749,15 @@ auto object_store::read_commit(const sha1& id) -> result<commit> {
     const auto object = read(id);
     if (!object)
         return std::unexpected(object.error());
-    if (object->kind != object_kind::commit)
+    return parse_commit(*object);
+}
+
+auto parse_commit(const object& input) -> result<commit> {
+    const auto& id = input.id;
+    if (input.kind != object_kind::commit)
         return std::unexpected(failure(errc::corrupt, "Git object is not a commit", sha1_hex(id)));
     const auto content =
-        std::string{reinterpret_cast<const char*>(object->payload.data()), object->payload.size()};
+        std::string{reinterpret_cast<const char*>(input.payload.data()), input.payload.size()};
     const auto body = content.find("\n\n");
     if (body == std::string::npos)
         return std::unexpected(
@@ -790,21 +806,29 @@ auto object_store::read_tree(const sha1& id) -> result<std::vector<tree_entry>> 
     const auto object = read(id);
     if (!object)
         return std::unexpected(object.error());
-    if (object->kind != object_kind::tree)
+    return parse_tree(*object);
+}
+
+auto parse_tree(const object& value) -> result<std::vector<tree_entry>> {
+    const auto& id = value.id;
+    const auto& payload = value.payload;
+    if (value.kind != object_kind::tree)
         return std::unexpected(failure(errc::corrupt, "Git object is not a tree", sha1_hex(id)));
     std::vector<tree_entry> entries;
-    for (std::size_t offset{}; offset < object->payload.size();) {
-        const auto zero =
-            std::find(object->payload.begin() + offset, object->payload.end(), std::byte{});
-        if (zero == object->payload.end() || object->payload.end() - zero - 1 < 20)
+    for (std::size_t offset{}; offset < payload.size();) {
+        const auto zero = std::find(payload.begin() + offset, payload.end(), std::byte{});
+        if (zero == payload.end() || payload.end() - zero - 1 < 20)
             return std::unexpected(failure(errc::corrupt, "invalid Git tree entry", sha1_hex(id)));
         const auto header =
-            std::string_view{reinterpret_cast<const char*>(object->payload.data() + offset),
-                             static_cast<std::size_t>(zero - object->payload.begin() - offset)};
+            std::string_view{reinterpret_cast<const char*>(payload.data() + offset),
+                             static_cast<std::size_t>(zero - payload.begin() - offset)};
         const auto space = header.find(' ');
+        // Checked before the parse: header.data() + npos is an out-of-bounds pointer (liquid #407).
+        if (space == std::string_view::npos)
+            return std::unexpected(failure(errc::corrupt, "invalid Git tree mode", sha1_hex(id)));
         std::uint32_t mode{};
         const auto [end, code] = std::from_chars(header.data(), header.data() + space, mode, 8);
-        if (space == std::string_view::npos || code != std::errc{} || end != header.data() + space)
+        if (code != std::errc{} || end != header.data() + space)
             return std::unexpected(failure(errc::corrupt, "invalid Git tree mode", sha1_hex(id)));
         const auto name = header.substr(space + 1);
         if (const auto problem = objects::entry_name_problem(name))
@@ -815,7 +839,7 @@ auto object_store::read_tree(const sha1& id) -> result<std::vector<tree_entry>> 
         sha1 child{};
         std::ranges::copy_n(zero + 1, child.size(), child.begin());
         entries.push_back({std::string{name}, mode, child});
-        offset = static_cast<std::size_t>(zero - object->payload.begin()) + 1 + child.size();
+        offset = static_cast<std::size_t>(zero - payload.begin()) + 1 + child.size();
     }
     return entries;
 }

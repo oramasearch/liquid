@@ -96,4 +96,14 @@ private:
 
 [[nodiscard]] auto kind_name(object_kind kind) -> std::string_view;
 
+// The parsers of untrusted Git bytes, used by object_store and by the fuzz harnesses in fuzz/.
+// parse_object takes an inflated loose object ("<kind> <size>\0<payload>") and checks it against
+// its identifier; parse_commit and parse_tree read a payload; apply_delta applies a pack delta
+// under the default object_read_limits (object_store applies deltas under its own read budget).
+[[nodiscard]] auto parse_object(std::span<const std::byte> bytes, const sha1& id) -> result<object>;
+[[nodiscard]] auto parse_commit(const object& value) -> result<commit>;
+[[nodiscard]] auto parse_tree(const object& value) -> result<std::vector<tree_entry>>;
+[[nodiscard]] auto apply_delta(std::span<const std::byte> base, std::span<const std::byte> delta)
+    -> result<std::vector<std::byte>>;
+
 } // namespace liquid::git_detail
