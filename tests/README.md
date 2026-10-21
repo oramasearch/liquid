@@ -28,7 +28,9 @@ collection suites and the repository transfer suite (`store-write-once`) over th
 deterministic crash schedules run through the disk and in-memory persistence backends, each also
 behind the write-once backend, in `sim/`;
 HTTP/2 framing, HPACK, and gRPC envelope coverage lives in `http2/`; socket-level h2c and TLS
-coverage uses the private Corosio connection adapter.
+coverage uses the private Corosio connection adapter. The HTTP/1.1 client's response parser,
+including a malformed status line from a hostile server, is covered in `http1/`;
+the libFuzzer harnesses for every parser of untrusted bytes are in [`../fuzz/`](../fuzz/README.md).
 `test_forge.cpp` covers lake review, comment, state, and branch-protection round trips; every
 documented envelope error; bearer isolation; HTTPS with the committed certificate; rebase anchor
 mapping; polling review events; and the built CLI's pinned JSON. `support/forge_double` provides the

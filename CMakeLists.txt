@@ -1068,6 +1068,9 @@ if(LIQUID_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests)
 endif()
+if(LIQUID_FUZZ)
+  add_subdirectory(fuzz)
+endif()
 
 # Optional benchmarks have their own dependencies and never enter the default build.
 if(LIQUID_BUILD_BENCH)

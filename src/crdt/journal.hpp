@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -25,6 +26,10 @@ struct drip_record {
     std::optional<digest> scan_attestation;
     bool redacted{};
 };
+
+// Decodes one journal record. Journals are read back from disk and arrive from peers, so this is a
+// parser of untrusted bytes; the fuzz harness fuzz/drip.cpp calls it directly.
+[[nodiscard]] auto decode_drip_record(std::span<const std::byte> bytes) -> result<drip_record>;
 
 class journal {
 public:

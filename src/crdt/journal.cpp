@@ -253,6 +253,10 @@ auto read_length(std::istream& input) -> std::optional<std::uint32_t> {
 
 } // namespace
 
+auto decode_drip_record(std::span<const std::byte> bytes) -> result<drip_record> {
+    return decode_record(bytes);
+}
+
 journal::journal(std::filesystem::path path) : path_(std::move(path)) {}
 
 auto journal::cut_path() const -> std::filesystem::path {

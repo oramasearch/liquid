@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,9 @@ struct LIQUID_EXPORT testing {
     // test can hand a materialiser a name no write or decode would accept.
     static auto rename_working_entry(repository& value, const std::string& from, std::string to)
         -> bool;
+    // Decodes a signed drip body as history verification does; returns the number of paths it
+    // names. The fuzz harness fuzz/drip.cpp feeds it untrusted bytes.
+    static auto decode_drip_body(std::span<const std::byte> bytes) -> result<std::size_t>;
 };
 
 } // namespace liquid::repository_detail
