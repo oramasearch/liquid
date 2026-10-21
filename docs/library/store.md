@@ -147,6 +147,19 @@ an ordinary object and replaces the pointer, so a reader sees the previous point
 and never a torn record. A crash before the replacement leaves the previous journal and loses only
 the unacknowledged write. Open still reads a legacy journal holding an inline document.
 
+**Removals end with a barrier too** (liquid #343). A checkpoint publishes `LIQUID_REPO` and then
+removes `LIQUID_JOURNAL`; a session's publish and discard end by removing the session's state
+prefix. Each removal is followed by `barrier()` on the state backend (and on the store's backend
+when that is a different one, which covers the retention records a checkpoint writes after its
+marker) before the operation returns. Without it, a backend that keeps only what a barrier covered
+could lose the removal in a crash: open prefers the journal whenever it exists, so a resurrected
+journal would revert the acknowledged cut to the document from before it, and a resurrected session
+could be reopened and published again. What an operation acknowledged is durable when it returns.
+`RepositoryStateDurability.CutIsDurableWhenItReturns` (`tests/sim/test_repository_state.cpp`) and
+`Collaboration.published_and_discarded_sessions_stay_gone_after_a_crash`
+(`tests/test_collaboration.cpp`) crash right after each operation on the in-memory backend with
+`lose_unbarriered()`, which drops every mutation since the last barrier.
+
 **Exclusive create.** `repository::create` first refuses an existing `LIQUID_REPO` cheaply, before
 writing any object. The create's first checkpoint then publishes `LIQUID_REPO` with
 `put_if_absent`, so of two concurrent creators of one identifier exactly one succeeds and the other

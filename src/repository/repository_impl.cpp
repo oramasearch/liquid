@@ -4260,17 +4260,34 @@ auto publish_state(const repository_state_location& state,
     co_return co_await state.backend->barrier();
 }
 
+// Makes everything an operation wrote durable before it returns (liquid #343): a barrier on the
+// store's backend when it is a different one (retention records written after the marker), then on
+// the state backend, so a removal that ends an operation is not lost in a crash. Without it a
+// backend that keeps only what a barrier covered could resurrect LIQUID_JOURNAL, which open prefers
+// to LIQUID_REPO, and revert an acknowledged cut; or bring back a published or discarded session.
+auto settle_state(const repository_state_location& state) -> runtime::task<void> {
+    if (state.data && state.data != state.backend) {
+        auto data_settled = co_await state.data->barrier();
+        if (!data_settled) {
+            co_return std::unexpected(data_settled.error());
+        }
+    }
+    co_return co_await state.backend->barrier();
+}
+
+// Removes one state object, then barriers, so the removal is durable when it returns.
 auto remove_state(const repository_state_location& state, std::string_view name)
     -> runtime::task<void> {
     auto removed = co_await state.backend->remove(state.key(name));
     if (!removed && removed.error().code != errc::not_found) {
         co_return std::unexpected(removed.error());
     }
-    co_return result<void>{};
+    co_return co_await settle_state(state);
 }
 
-// Removes every state object under a location. A disk backend also removes the directory itself,
-// as the repository did before its state went through the backend.
+// Removes every state object under a location, then barriers, so the removal is durable when it
+// returns. A disk backend also removes the directory itself, as the repository did before its
+// state went through the backend.
 auto remove_state_tree(const repository_state_location& state) -> runtime::task<void> {
     auto directory = state.prefix;
     if (directory.ends_with('/')) {
@@ -4282,9 +4299,13 @@ auto remove_state_tree(const repository_state_location& state) -> runtime::task<
         if (code) {
             co_return std::unexpected(failure(errc::io, code.message(), local->string()));
         }
-        co_return result<void>{};
+    } else {
+        auto removed = co_await store_detail::remove_backend_prefix(state.backend, state.prefix);
+        if (!removed) {
+            co_return std::unexpected(removed.error());
+        }
     }
-    co_return co_await store_detail::remove_backend_prefix(state.backend, state.prefix);
+    co_return co_await settle_state(state);
 }
 
 auto parse_state_digest(std::string text, std::string_view prefix = {}) -> result<digest> {

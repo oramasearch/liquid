@@ -608,6 +608,50 @@ INSTANTIATE_TEST_SUITE_P(
                     : "After");
     });
 
+// liquid #343: what a repository operation acknowledged is durable when it returns. A checkpoint
+// publishes LIQUID_REPO and then removes LIQUID_JOURNAL; the journal names the document from before
+// the cut, and a reopen prefers the journal whenever it exists. On a backend that keeps only what a
+// barrier covered, a crash right after the cut returned must not resurrect that journal and revert
+// the acknowledged change. lose_unbarriered() is that crash: every mutation since the last barrier
+// is gone.
+TEST(RepositoryStateDurability, CutIsDurableWhenItReturns) {
+    const auto nominal = liquid::test::fixture_path("liquid-memory-durable-cut");
+    std::filesystem::remove_all(nominal);
+    auto host = shared_store_host{backend_kind::memory, nominal};
+    ASSERT_TRUE(host.open());
+    auto subject = liquid::runtime::block_on(
+        liquid::repository::create("workspace/alpha", host.repository_options(1000)));
+    ASSERT_TRUE(subject) << message(subject.error());
+    ASSERT_TRUE(liquid::runtime::block_on(subject->write("README", bytes_of("acknowledged"))));
+    ASSERT_TRUE(state_key(*host.memory, "/LIQUID_JOURNAL"))
+        << "a write between checkpoints publishes the journal";
+    auto cut = liquid::runtime::block_on(subject->cut("acknowledged change"));
+    ASSERT_TRUE(cut) << message(cut.error());
+    EXPECT_FALSE(state_key(*host.memory, "/LIQUID_JOURNAL"));
+
+    // The process stops at once; the backend keeps only what a barrier covered.
+    host.freeze(true);
+    *subject = {};
+    host.objects.reset();
+    host.freeze(false);
+    host.memory->lose_unbarriered();
+
+    EXPECT_FALSE(state_key(*host.memory, "/LIQUID_JOURNAL"))
+        << "the checkpoint's journal removal was not covered by a barrier";
+    ASSERT_TRUE(host.open());
+    auto reopened = liquid::runtime::block_on(
+        liquid::repository::open("workspace/alpha", host.repository_options(1000)));
+    ASSERT_TRUE(reopened) << message(reopened.error());
+    auto history = liquid::runtime::block_on(reopened->log());
+    ASSERT_TRUE(history) << message(history.error());
+    EXPECT_TRUE(std::ranges::any_of(*history, [&](const liquid::change& value) {
+        return value.id.value.bytes == cut->value.bytes;
+    })) << "the acknowledged cut was reverted by a resurrected journal";
+    auto readme = liquid::runtime::block_on(reopened->read("README"));
+    ASSERT_TRUE(readme) << message(readme.error());
+    EXPECT_EQ(*readme, bytes_of("acknowledged"));
+}
+
 // liquid #337: a collection publishes a new object map and commits a collection manifest whose
 // tombstones mark the collected chunks dead. Reopening after a crash between the two must find
 // every chunk the surviving object map names. Seed 17 of the repository simulation reached that

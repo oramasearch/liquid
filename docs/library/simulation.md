@@ -82,6 +82,17 @@ timestamps inside drips can move a pack rollover, so a run may reach fewer fault
 probe; such a seed is checked as a clean stop. Replacing the atomic marker publication with a
 remove-then-put fails the first memory seed.
 
+**Barrier durability.** The seeded schedule freezes the backend at a fault point, so everything
+written before the crash survives. A real backend may also lose acknowledged writes no barrier has
+covered yet. `memory_store_backend::lose_unbarriered()` models that crash: it drops every mutation
+since the last successful barrier, which is a prefix of any issue order (the empty one) and so
+holds whatever ordering contract a backend keeps between barriers (liquid #344).
+`RepositoryStateDurability.CutIsDurableWhenItReturns` and
+`Collaboration.published_and_discarded_sessions_stay_gone_after_a_crash` use it right after a cut,
+a session publish and a session discard return (liquid #343): before those operations ended with a
+barrier, the lost `LIQUID_JOURNAL` removal reverted the cut on reopen and the lost session prefix
+removal let both sessions be reopened.
+
 **Why a seed's crash point moves.** The schedule and the target step are fixed by the seed, but
 drips and changes carry wall-clock timestamps (seconds, and milliseconds for some records), so
 their encoded and compressed sizes, and with them pack rollovers and the number of fault points,

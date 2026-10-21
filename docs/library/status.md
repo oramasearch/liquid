@@ -72,7 +72,9 @@ waits up to `owner_wait` for a draining or killed predecessor to release it (liq
 (`LIQUID_REPO`, `LIQUID_JOURNAL`, session state, and replication cursors) is backend keys under
 `repositories/<id-hash>/`, so a backend with no local root holds the whole repository; create is
 exclusive through `store_backend::put_if_absent` (liquid #326,
-[`store.md`](store.md#repository-state-through-the-backend)). A store on a backend without a local
+[`store.md`](store.md#repository-state-through-the-backend)). A checkpoint's journal removal and
+a session's state removal on publish or discard end with a barrier, so what the operation
+acknowledged is durable when it returns (liquid #343). A store on a backend without a local
 root takes the same ownership through an injected `store_options::owner` whose grant carries a
 fence: the backend's fenced view sends it with every mutation, `put_if_absent` included, so the
 remote refuses a stale holder, and a lost grant refuses every later mutation with `errc::locked`
