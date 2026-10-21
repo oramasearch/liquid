@@ -457,19 +457,25 @@ if(LIQUID_BUILD_CLI)
   set_tests_properties(gc-cli-setup PROPERTIES FIXTURES_SETUP gc_cli)
   add_test(NAME gc-cli-explain
     COMMAND $<TARGET_FILE:liquid-cli> gc --explain ${LIQUID_GC_CLI_REPOSITORY})
+  # The three commands below open the same repository; a lock keeps parallel CTest from running
+  # them at once (two concurrent opens raced on its backend file under `ctest -j`).
   set_tests_properties(gc-cli-explain PROPERTIES
     FIXTURES_REQUIRED gc_cli
+    RESOURCE_LOCK gc_cli_repository
     PASS_REGULAR_EXPRESSION "retained: lease")
   add_test(NAME retain-cli-explain
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_RETAIN_REPOSITORY=${LIQUID_GC_CLI_REPOSITORY}
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/retain-explain.cmake)
-  set_tests_properties(retain-cli-explain PROPERTIES FIXTURES_REQUIRED gc_cli)
+  set_tests_properties(retain-cli-explain PROPERTIES
+    FIXTURES_REQUIRED gc_cli
+    RESOURCE_LOCK gc_cli_repository)
   add_test(NAME gc-cli-compact
     COMMAND $<TARGET_FILE:liquid-cli> gc --compact --compact-below 0.5 ${LIQUID_GC_CLI_REPOSITORY})
   set_tests_properties(gc-cli-compact PROPERTIES
     FIXTURES_REQUIRED gc_cli
+    RESOURCE_LOCK gc_cli_repository
     PASS_REGULAR_EXPRESSION "packs_compacted=0")
   add_test(NAME gc-cli-clean
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${LIQUID_GC_CLI_REPOSITORY})
