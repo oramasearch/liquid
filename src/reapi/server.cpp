@@ -28,6 +28,7 @@
 #include "liquid/store.hpp"
 #include "liquid/workers.hpp"
 #include "objects/records.hpp"
+#include "reapi/action_cache.hpp"
 #include "reapi/conversion.hpp"
 #include "reapi/messages.hpp"
 #include "repository/store_access.hpp"
@@ -498,8 +499,17 @@ auto validate_instance(std::string_view configured, std::string_view requested) 
     return {};
 }
 
-auto cache_path(const server_state& state, const reapi::Digest& action) -> std::filesystem::path {
-    return state.action_cache / action.hash;
+// The ActionCache entry for an action digest of `function` (liquid #428): a malformed digest is
+// refused here, before any file is named.
+auto cache_entry(const reapi::Digest& action, reapi::DigestFunctionValue function)
+    -> result<std::string> {
+    auto hash_algorithm = request_algorithm(function);
+    if (!hash_algorithm) {
+        return std::unexpected(server_error(errc::invalid_argument,
+                                            hash_algorithm.error().message,
+                                            hash_algorithm.error().context));
+    }
+    return reapi::action_cache_name(action, *hash_algorithm);
 }
 
 runtime::task<void> handle_capabilities(http2::connection& connection,
@@ -881,7 +891,11 @@ runtime::task<void> handle_get_action(http2::connection& connection,
             !valid ? valid.error()
                    : server_error(errc::invalid_argument, "action digest is missing"));
     }
-    auto cached = co_await store_detail::read_file(cache_path(state, *request->action_digest));
+    auto entry = cache_entry(*request->action_digest, request->digest_function);
+    if (!entry) {
+        co_return co_await send_failure(connection, stream, entry.error());
+    }
+    auto cached = reapi::read_action_cache(state.action_cache, *entry);
     if (!cached) {
         auto value = cached.error();
         if (value.code == errc::io) {
@@ -913,12 +927,15 @@ runtime::task<void> handle_update_action(http2::connection& connection,
             !valid ? valid.error()
                    : server_error(errc::invalid_argument, "action result request is incomplete"));
     }
+    auto entry = cache_entry(*request->action_digest, request->digest_function);
+    if (!entry) {
+        co_return co_await send_failure(connection, stream, entry.error());
+    }
     auto encoded = reapi::encode(*request->action_result);
     if (!encoded) {
         co_return co_await send_failure(connection, stream, encoded.error());
     }
-    auto written = co_await store_detail::write_file(cache_path(state, *request->action_digest),
-                                                     std::move(*encoded));
+    auto written = reapi::write_action_cache(state.action_cache, *entry, *encoded);
     if (!written) {
         co_return co_await send_failure(connection, stream, written.error());
     }
@@ -937,6 +954,11 @@ runtime::task<reapi::Operation> submit_execution(server_state& state,
     auto hash_algorithm = request_algorithm(function);
     if (!hash_algorithm) {
         co_return std::unexpected(hash_algorithm.error());
+    }
+    // A queued action's digest later names its ActionCache entry, so it is validated now.
+    auto cache_name = reapi::action_cache_name(action_digest, *hash_algorithm);
+    if (!cache_name) {
+        co_return std::unexpected(cache_name.error());
     }
     auto action_id = native_digest(action_digest, *hash_algorithm);
     if (!action_id) {
@@ -1172,8 +1194,13 @@ runtime::task<void> handle_complete(http2::connection& connection,
             co_return co_await send_failure(
                 connection, stream, !action ? action.error() : encoded.error());
         }
-        auto written =
-            co_await store_detail::write_file(cache_path(state, *action), std::move(*encoded));
+        // Validated against its digest function at submission; both supported functions are
+        // 256-bit, so the length check is the same for either.
+        auto entry = cache_entry(*action, reapi::DigestFunctionValue::unknown);
+        if (!entry) {
+            co_return co_await send_failure(connection, stream, entry.error());
+        }
+        auto written = reapi::write_action_cache(state.action_cache, *entry, *encoded);
         if (!written) {
             co_return co_await send_failure(connection, stream, written.error());
         }
