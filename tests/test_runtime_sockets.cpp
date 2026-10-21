@@ -8,6 +8,9 @@
 // opens a connected pair, parks a read on one end, writes twice to the other and closes it, and
 // the reader destroys its socket on whichever runner resumed it. The same load also exposed
 // corosio#7: a work-count underflow that left io_context::run(), and so block_on, waiting forever.
+// Built with AddressSanitizer it also exposed corosio#17 (liquid #346): an invocation of a
+// descriptor state that another runner could free under it, a heap-use-after-free in
+// invoke_deferred_io() in about one process in 25 at --gtest_repeat=10.
 
 #include <gtest/gtest.h>
 
