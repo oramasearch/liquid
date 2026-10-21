@@ -62,6 +62,10 @@ Path history, operation records, line attribution and change attribution carry t
 `liquid blame`, `history`, `ops`, `why` and `wrap` show an unverified author the same way, and
 their JSON carries `"identity_verified"` (#508). The sync push rate limit is charged to the
 authenticated pusher, never to a record's claimed author (#508).
+**FIDO2 assertion bytes (#81).** FIDO2 EdDSA and ES256 signatures are verified over
+`authenticatorData || clientDataHash`, the bytes CTAP2 authenticators sign; the earlier
+double-hashed form is rejected. Proof is independent OpenSSL vectors and protocol-conforming doubles;
+no physical authenticator run exists yet ([`identity.md`](identity.md)).
 
 **Public API.** The public error, digest, identity document codec, signature decoder, and release
 approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers

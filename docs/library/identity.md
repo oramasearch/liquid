@@ -233,6 +233,29 @@ signs `authenticatorData || SHA-256(clientDataHash)`. The TAAP signature object 
 `authenticator_data_base64` and `client_data_hash_base64`. Verification rebuilds the TAAP signed
 bytes, checks the carried client hash, reconstructs the assertion input, and verifies Ed25519 or
 P-256 entirely in software. This additional signature-object reading is sent as protocol feedback, because TAAP §6.7 currently specifies only a direct signature byte string.
+For FIDO2, liquid sets `clientDataHash = SHA-256(TAAP signed bytes)` in CTAP2
+`authenticatorGetAssertion`. The authenticator signs `authenticatorData || clientDataHash`, the
+32 client bytes exactly as sent and not hashed again
+([WebAuthn Level 2 §6.3.3](https://www.w3.org/TR/webauthn-2/#sctn-op-get-assertion) step 11,
+[CTAP 2.2 authenticatorGetAssertion](https://fidoalliance.org/specs/fido-v2.2-ps-20250714/fido-client-to-authenticator-protocol-v2.2-ps-20250714.html#authenticatorGetAssertion)).
+`fido2-eddsa` is Ed25519 over that message directly (RFC 8032); `fido2-es256` is ECDSA P-256 with
+SHA-256 over it, DER-encoded. The TAAP signature object therefore adds `authenticator_data_base64`
+and `client_data_hash_base64`. Verification rebuilds the TAAP signed bytes, checks that the carried
+client hash is their SHA-256, checks that `authenticatorData` begins with SHA-256 of the rpId
+`liquid` and has the user-present flag (WebAuthn §7.2 steps 15-16), concatenates `authenticatorData || clientDataHash`, and verifies
+Ed25519 or P-256 entirely in software.
+
+Before liquid#81 was fixed, the verifier and the test doubles used
+`authenticatorData || SHA-256(clientDataHash)`, a form no real authenticator produces. A signature
+from a physical token therefore never verified, and the only records in that form were made by the
+in-process doubles. **Compatibility policy:** the double-hashed form is rejected, with no fallback
+or migration; a FIDO2 identity created before the fix must be re-signed by rotating again with the
+token attached. `test_hardware_keys.cpp` carries independent vectors built with OpenSSL from the
+specifications (both algorithms, each purpose) and checks that the double-hashed form fails. No
+physical authenticator has yet been run against either algorithm; that evidence stays open on
+liquid#81. This additional signature-object reading is recorded as protocol
+feedback on [liquid-bridge #8](https://github.com/oramasearch/liquid-bridge/issues/8#issuecomment-5562172800),
+because TAAP §6.7 currently specifies only a direct signature byte string.
 
 Device calls are blocking OS operations and run through `runtime::offload`. CTAP2 and PIV command
 layers are owned here; no libfido2 or OpenSC types cross the backend boundary. In-process doubles
