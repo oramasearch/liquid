@@ -76,6 +76,7 @@ add_executable(liquid-tests
   test_temporary_directory.cpp
   test_lake_transparency.cpp
   test_log_url.cpp
+  http1/test_client.cpp
   test_transparency.cpp
   test_tuf.cpp
   ${PROJECT_SOURCE_DIR}/src/crypto/signature.cpp

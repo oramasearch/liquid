@@ -35,6 +35,9 @@ struct request_options {
 };
 
 [[nodiscard]] auto validate_url(std::string_view url) -> result<void>;
+// Parses one complete HTTP/1.1 response read from a server: the status, then a chunked or
+// Content-Length body. The fuzz harness fuzz/http1.cpp calls it directly.
+[[nodiscard]] LIQUID_EXPORT auto parse_response(std::string wire) -> result<response>;
 [[nodiscard]] LIQUID_EXPORT auto request(request_options options) -> runtime::task<response>;
 
 } // namespace liquid::http1
