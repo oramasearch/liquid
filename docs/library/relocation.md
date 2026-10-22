@@ -47,7 +47,9 @@ still follows the table above.
 ## Enforcement and API
 
 `build::relocation_check(output_tree, options)` performs CPU scanning through `runtime::offload`
-and returns a `relocation_report`. Every finding contains the relative file, byte offset, and a
+and returns a `relocation_report`. Truncated linked-binary symbol inspection adds a finding and
+blocks relocation approval, preserving the other collected findings (liquid #475).
+Every finding contains the relative file, byte offset, and a
 short context. The scanner finds:
 
 - the virtual build-root string and an optional declared install-prefix string in any regular file;

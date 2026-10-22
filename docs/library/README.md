@@ -8,6 +8,8 @@ The [documentation index](../README.md#library) lists one entry for each library
 known limits. [libliquid](libliquid.md) covers CMake targets, the installed dependency closure,
 consumer setup, and the repository/coroutine install gate; the [API map](api-map.md) defines
 the public headers and ABI rules.
+The [format guide](formats.md#linked-binaries) records Mach-O symbol truncation and retained-copy
+budgets shared by the registry, ABI, SBOM, and relocation readers.
 The [documentation index](../README.md#library) lists the library's implementation pages.
 [Status](status.md) records what is implemented and the [API map](api-map.md) defines the public
 surface. The [identity guide](identity.md) covers public document export for sign-up, the shared

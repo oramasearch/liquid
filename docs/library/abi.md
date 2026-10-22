@@ -21,6 +21,11 @@ The needed-library list comes from ELF `DT_NEEDED`, Mach-O load-dylib commands, 
 directory. The install name comes from ELF `DT_SONAME`, Mach-O `LC_ID_DYLIB`, or the PE export
 directory's DLL name.
 
+The public descriptor and JSON projection carry `truncated` when a reader shortened a name or
+exhausted its symbol budget. CBOR adds `truncated=true` only for incomplete descriptors; absence
+decodes as false, preserving complete descriptors' canonical bytes. Invalid flag types are rejected.
+Mach-O limits are documented in [formats.md](formats.md#linked-binaries).
+
 Publication recognizes an ELF `ET_DYN` file only when it has a soname, a Mach-O `MH_DYLIB` only
 when it has an ID command, and a PE image only when it has both the DLL characteristic and an
 exported DLL name. Executables, objects, static archives, and unrecognized outputs receive no ABI
@@ -63,6 +68,9 @@ change is reported only when both formats provide a nonzero size. Function code-
 not ABI changes. An added symbol does not override an incompatible change elsewhere.
 The report change kinds are `added`, `removed`, `type_changed`, `size_changed`, and
 `version_changed`.
+If either descriptor is truncated, comparison returns `incompatible` with an
+`inspection_truncated` change: compatibility cannot be established from a partial symbol list.
+The CLI and wrapper report that reason instead of asserting compatibility.
 
 ## Publication and attestation
 

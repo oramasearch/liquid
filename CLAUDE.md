@@ -194,6 +194,10 @@ workflows, and says what works today and what does not. Rules that keep it good:
 every commit; one statement per line. A function collapsed onto one line is sent back unread.
 
 ### Before finishing: run all five
+When changing linked-binary symbol inspection, preserve the retained-byte and truncation contract
+in [`src/formats/binary/README.md`](src/formats/binary/README.md) across inspector and registry callers.
+
+### Before finishing — run all five
 
 The first two are commands; the last three are easy to skip. Treat them as one checklist.
 

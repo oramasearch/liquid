@@ -1240,6 +1240,9 @@ auto encode(const abi_descriptor& value) -> result<std::vector<std::byte>> {
     if (value.install_name) {
         fields.emplace_back("install_name", *value.install_name);
     }
+    if (value.truncated) {
+        fields.emplace_back("truncated", true);
+    }
     return cbor::encode(cbor::value{std::move(fields)});
 }
 
@@ -2288,6 +2291,13 @@ auto decode_abi(std::span<const std::byte> bytes) -> result<abi_descriptor> {
     auto output = abi_descriptor{.subject = *subject,
                                  .binary = static_cast<abi_binary_kind>(*binary),
                                  .architecture = *architecture};
+    if (const auto* value = find(*source, "truncated")) {
+        const auto* truncated = std::get_if<bool>(&value->data);
+        if (!truncated) {
+            return std::unexpected(corrupt("invalid ABI truncation flag"));
+        }
+        output.truncated = *truncated;
+    }
     if (const auto* install_name_value = find(*source, "install_name")) {
         const auto* install_name = std::get_if<std::string>(&install_name_value->data);
         if (!install_name) {

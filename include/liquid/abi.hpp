@@ -36,12 +36,14 @@ struct LIQUID_EXPORT abi_descriptor {
     std::optional<std::string> install_name;
     std::vector<abi_symbol> exported_symbols;
     std::vector<std::string> needed_libraries;
+    // A name cap or symbol budget made this descriptor incomplete.
+    bool truncated{};
 
     auto operator==(const abi_descriptor& other) const -> bool {
         return subject.alg == other.subject.alg && subject.bytes == other.subject.bytes &&
                binary == other.binary && architecture == other.architecture &&
                install_name == other.install_name && exported_symbols == other.exported_symbols &&
-               needed_libraries == other.needed_libraries;
+               needed_libraries == other.needed_libraries && truncated == other.truncated;
     }
 };
 
@@ -52,6 +54,7 @@ enum class abi_change_kind : std::uint8_t {
     type_changed,
     size_changed,
     version_changed,
+    inspection_truncated,
 };
 
 struct LIQUID_EXPORT abi_change {

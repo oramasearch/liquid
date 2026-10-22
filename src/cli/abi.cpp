@@ -56,6 +56,8 @@ auto change_name(liquid::abi_change_kind kind) -> std::string_view {
         return "size_changed";
     case liquid::abi_change_kind::version_changed:
         return "version_changed";
+    case liquid::abi_change_kind::inspection_truncated:
+        return "inspection_truncated";
     }
     return "type_changed";
 }
@@ -172,6 +174,9 @@ void print_descriptor(const liquid::abi_descriptor& descriptor) {
     std::println("subject: {}", liquid::to_string(descriptor.subject));
     std::println("architecture: {}", descriptor.architecture);
     std::println("install-name: {}", descriptor.install_name.value_or("none"));
+    if (descriptor.truncated) {
+        std::println("truncated: symbol name or byte limit reached");
+    }
     for (const auto& library : descriptor.needed_libraries) {
         std::println("needed: {}", library);
     }

@@ -441,6 +441,11 @@ The RPM reader charges the header strings it copies and its
 decoded payload to one byte budget per read (liquid #473).
 RPM reads reject truncated cpio name and file padding before copying members or accepting the
 trailer, and check signature-header padding without wrapping (liquid #439).
+reasons ([`formats.md`](formats.md)).
+Mach-O inspection caps each symbol name at 64 KiB and charges retained names and records to the
+registry caller's byte budget, or 16 MiB for other callers; exhaustion preserves partial facts
+and all consumers report truncation. ABI comparisons and relocation approval fail closed for
+incomplete inspection (liquid #475).
 
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository

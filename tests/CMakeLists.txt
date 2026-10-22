@@ -981,6 +981,7 @@ gtest_discover_tests(liquid-cbor-tests DISCOVERY_TIMEOUT 120)
 add_executable(liquid-format-tests
   formats/test_dotenv.cpp
   formats/test_json.cpp
+  formats/test_macho.cpp
   formats/test_registry.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
@@ -989,6 +990,11 @@ target_compile_definitions(liquid-format-tests PRIVATE
   LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
   LIQUID_FORMAT_TEST_MODULE="$<TARGET_FILE:liquid-format-test-module>")
 target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_main ZLIB::ZLIB)
+
+target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_main)
+if(BUILD_SHARED_LIBS)
+  target_sources(liquid-format-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/formats/binary/macho.cpp)
+endif()
 add_library(liquid-format-test-module MODULE formats/module.c)
 target_include_directories(liquid-format-test-module PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_dependencies(liquid-format-tests liquid-format-test-module)

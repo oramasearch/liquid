@@ -417,6 +417,34 @@ TEST(Records, abi_descriptors_are_canonical_and_round_trip) {
     EXPECT_EQ(*reencoded, *encoded);
 }
 
+TEST(Records, abi_truncation_round_trips_without_changing_complete_records) {
+    auto descriptor =
+        liquid::abi_descriptor{.subject = example_digest(0x42), .architecture = "arm64"};
+    auto complete = liquid::objects::encode(descriptor);
+    ASSERT_TRUE(complete);
+    auto decoded = liquid::objects::decode_abi(*complete);
+    ASSERT_TRUE(decoded);
+    EXPECT_FALSE(decoded->truncated);
+    auto fields = liquid::encoding::cbor::decode(*complete);
+    ASSERT_TRUE(fields);
+    auto* map = std::get_if<liquid::encoding::cbor::value::map>(&fields->data);
+    ASSERT_NE(map, nullptr);
+    EXPECT_TRUE(
+        std::ranges::none_of(*map, [](const auto& field) { return field.first == "truncated"; }));
+
+    descriptor.truncated = true;
+    auto encoded = liquid::objects::encode(descriptor);
+    ASSERT_TRUE(encoded);
+    decoded = liquid::objects::decode_abi(*encoded);
+    ASSERT_TRUE(decoded);
+    EXPECT_EQ(*decoded, descriptor);
+    EXPECT_NE(*encoded, *complete);
+    map->emplace_back("truncated", liquid::encoding::cbor::value{std::uint64_t{1}});
+    auto invalid = liquid::encoding::cbor::encode(*fields);
+    ASSERT_TRUE(invalid);
+    EXPECT_FALSE(liquid::objects::decode_abi(*invalid));
+}
+
 TEST(Records, build_trace_round_trips_actions_edges_timing_and_cache_outcome) {
     const auto trace = liquid::build_trace{
         .wall_time = std::chrono::milliseconds{42},

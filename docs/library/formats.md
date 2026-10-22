@@ -159,6 +159,18 @@ ELF, Mach-O, and PE entries expose bounded section byte ranges, exported symbols
 libraries using the validated #27 readers. Load addresses are volatile. Disassembly and
 decompilation are explicitly out of scope.
 
+Mach-O symbol names are truncated to 64 KiB before copying. A cumulative budget charges each
+retained name copy and symbol record, even when many nlist entries share one string-table offset.
+Both 32-bit and 64-bit readers, in either byte order, apply the limit to exports and compatibility
+name samples. The registry supplies its `format_limits::byte_budget`, subtracts the inspector's
+charge before retaining sections and export entries, and marks the tree truncated when a limit
+is reached. Other callers use a 16 MiB symbol budget. Inspection preserves facts collected before
+exhaustion. ABI descriptors persist truncation and cannot produce a compatible comparison; SBOMs
+record it as evidence, and relocation checks report a blocking finding. Names exactly
+64 KiB long remain intact; longer UTF-8 names end at a complete character. These limits apply in
+the shared inspector used by registry
+recognition/unpack, ABI extraction, SBOM inference, and relocation checking (liquid #475).
+
 ### PDF
 
 The PDF reader recognises indirect objects and simple stream objects, inflates `FlateDecode`,
