@@ -296,6 +296,28 @@ auto deb_control() -> std::vector<std::byte> {
     return tar_archive({{"control", text("Package: nested\nVersion: 1\n")}});
 }
 
+auto safetensors(std::initializer_list<std::array<std::uint64_t, 2>> ranges, std::size_t data_size)
+    -> std::vector<std::byte> {
+    auto header = std::string{"{"};
+    auto index = std::size_t{};
+    for (const auto& range : ranges) {
+        if (index != 0) {
+            header += ',';
+        }
+        header += "\"tensor" + std::to_string(index++) + "\":{\"data_offsets\":[" +
+                  std::to_string(range[0]) + "," + std::to_string(range[1]) +
+                  "],\"dtype\":\"U8\",\"shape\":[" + std::to_string(range[1] - range[0]) + "]}";
+    }
+    header += '}';
+    auto blob = std::vector<std::byte>(8 + header.size() + data_size, std::byte{0x42});
+    const auto length = static_cast<std::uint64_t>(header.size());
+    for (auto byte = std::size_t{}; byte < 8; ++byte) {
+        blob[byte] = static_cast<std::byte>((length >> (byte * 8U)) & 0xffU);
+    }
+    std::copy(header.begin(), header.end(), reinterpret_cast<char*>(blob.data() + 8));
+    return blob;
+}
+
 TEST(FormatRegistry, PublishesBuiltInCodecs) {
     const auto codecs = liquid::format_registry::global().codecs();
     auto names = std::vector<std::string>{};
@@ -361,6 +383,67 @@ TEST(FormatRegistry, UnpacksNotebookTensorAndPickleContent) {
     auto pickle_tree = liquid::format_registry::global().unpack(pickle, "checkpoint.pkl");
     ASSERT_TRUE(pickle_tree) << pickle_tree.error().message;
     EXPECT_NE(entry(*pickle_tree, "globals/os.system"), nullptr);
+}
+
+TEST(FormatRegistry, ChargesSafetensorsCopiesAgainstOneBudget) {
+    const auto* tensors = codec("safetensors");
+    ASSERT_NE(tensors, nullptr);
+    // Repeated, partially overlapping, and disjoint ranges all consume the same allowance.
+    for (const auto& blob : {safetensors({{0, 4096}, {0, 4096}, {0, 4096}, {0, 4096}}, 4096),
+                             safetensors({{0, 4096}, {2048, 6144}, {4096, 8192}}, 8192),
+                             safetensors({{0, 4096}, {4096, 8192}, {8192, 12288}}, 12288)}) {
+        for (const auto direct : {true, false}) {
+            SCOPED_TRACE(direct ? "codec" : "registry");
+            const auto limits = liquid::format_limits{.byte_budget = 8192};
+            auto tree =
+                direct
+                    ? tensors->unpack(blob, limits)
+                    : liquid::format_registry::global().unpack(blob, "budget.safetensors", limits);
+            ASSERT_TRUE(tree) << tree.error().message;
+            EXPECT_TRUE(tree->truncated);
+            EXPECT_FALSE(tree->limits.empty());
+            ASSERT_EQ(tree->entries.size(), 2U);
+            for (const auto& tensor : tree->entries) {
+                EXPECT_EQ(tensor.bytes, std::vector<std::byte>(4096, std::byte{0x42}));
+                ASSERT_TRUE(tensor.source_range);
+                EXPECT_EQ(tensor.source_range->size, 4096U);
+            }
+        }
+        auto complete = tensors->unpack(blob, liquid::format_limits{.byte_budget = 16384});
+        ASSERT_TRUE(complete) << complete.error().message;
+        EXPECT_FALSE(complete->truncated);
+        EXPECT_TRUE(complete->limits.empty());
+    }
+}
+
+TEST(FormatRegistry, StopsBeforeCopyingAnOversizedSafetensorsEntry) {
+    const auto* tensors = codec("safetensors");
+    ASSERT_NE(tensors, nullptr);
+    auto tree =
+        tensors->unpack(safetensors({{0, 8192}}, 8192), liquid::format_limits{.byte_budget = 8191});
+    ASSERT_TRUE(tree) << tree.error().message;
+    EXPECT_TRUE(tree->truncated);
+    EXPECT_TRUE(tree->entries.empty());
+    EXPECT_FALSE(tree->limits.empty());
+    auto exact =
+        tensors->unpack(safetensors({{0, 8192}}, 8192), liquid::format_limits{.byte_budget = 8192});
+    ASSERT_TRUE(exact) << exact.error().message;
+    EXPECT_FALSE(exact->truncated);
+    ASSERT_EQ(exact->entries.size(), 1U);
+    EXPECT_EQ(exact->entries[0].bytes.size(), 8192U);
+}
+
+TEST(FormatRegistry, BoundsEmptySafetensorsEntries) {
+    const auto* tensors = codec("safetensors");
+    ASSERT_NE(tensors, nullptr);
+    const auto blob = safetensors({{0, 0}, {0, 0}}, 0);
+    for (const auto maximum : {0U, 1U, 2U}) {
+        auto tree = tensors->unpack(
+            blob, liquid::format_limits{.byte_budget = 4096, .maximum_entries = maximum});
+        ASSERT_TRUE(tree) << tree.error().message;
+        EXPECT_EQ(tree->entries.size(), maximum);
+        EXPECT_EQ(tree->truncated, maximum < 2);
+    }
 }
 
 TEST(FormatRegistry, UnpacksPdfObjectsAndExtractedText) {

@@ -10,6 +10,8 @@ consumer setup, and the repository/coroutine install gate; the [API map](api-map
 the public headers and ABI rules.
 The [format guide](formats.md#linked-binaries) records Mach-O symbol truncation and retained-copy
 budgets shared by the registry, ABI, SBOM, and relocation readers.
+The [format guide](formats.md#jupyter-and-model-files) describes safetensors' cumulative tensor-copy
+budget and truncation behavior.
 The [documentation index](../README.md#library) lists the library's implementation pages.
 [Status](status.md) records what is implemented and the [API map](api-map.md) defines the public
 surface. The [identity guide](identity.md) covers public document export for sign-up, the shared

@@ -454,6 +454,8 @@ produce partial, truncated results (liquid #474).
 ELF name copies and their records share one cumulative inspection allowance, including section,
 symbol, version, dynamic-path, and DWARF names and generated signatures. A 64 KiB name cap or an
 exhausted allowance stops collection before copying and reports truncation (liquid #479).
+Safetensors charges tensor bytes cumulatively before copying
+and truncates at the byte or entry limit, including for overlapping ranges (liquid #476).
 
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository

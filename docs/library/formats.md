@@ -211,6 +211,12 @@ budget. A stream or its text that does not fit fails the unpack with `unsupporte
 
 Jupyter exposes one entry per cell source while `outputs` and `execution_count` are volatile.
 Safetensors exposes JSON-header tensor entries with dtype, shape, content bytes, and source ranges.
+Every tensor's range consumes the remaining `format_limits::byte_budget` before its bytes are
+copied, including overlapping or identical ranges (liquid #476). The first tensor that would exceed
+the remaining bytes or `maximum_entries` ends decoding with `format_tree::truncated` and a reason
+in `limits`; no partial tensor is copied. Empty tensors consume an entry. The header is checked
+separately against the byte budget. Header parse allocations and the verbatim input copy remain
+proportional to their input sizes and do not consume the tensor-copy allowance.
 Pickle never executes content: the scanner recognises text `GLOBAL` and `INST`, binary unicode and
 `STACK_GLOBAL`, and records `REDUCE`, `OBJ`, `NEWOBJ`, and `BUILD` as code-deserialisation-risk
 opcodes. It deliberately does not reconstruct objects or execute reducers.
