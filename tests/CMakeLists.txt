@@ -983,6 +983,7 @@ add_executable(liquid-format-tests
   formats/test_json.cpp
   formats/test_macho.cpp
   formats/test_pe_registry.cpp
+
   formats/test_registry.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
