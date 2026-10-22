@@ -49,3 +49,6 @@ legacy-constructor behavior, CLI exit statuses, and regression coverage with net
 crash between them reopens cleanly (liquid #337).
 The [store's index](store.md#index) writes every run once, in order, so no backend write rewrites
 bytes already written, as Zetta's object storage requires (liquid #332).
+
+[Linked-binary formats](formats.md#linked-binaries) records PE name length, cumulative allocation,
+and offset deduplication limits (liquid #474).

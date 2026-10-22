@@ -16,3 +16,11 @@ for linked-binary inspectors. ABI, SBOM, and relocation callers use the default 
 ABI descriptors persist the truncation flag and comparisons fail closed for incomplete lists.
 SBOM evidence records `linked-binary-symbols:truncated`; relocation emits a finding and refuses
 approval when inspection was truncated. The collected facts remain available to callers.
+
+PE install, export, and import names are capped at 64 KiB and use one cumulative allowance for
+retained names and records: the caller's budget, or 16 MiB by default. Capped names and exhausted
+budgets mark partial results truncated. Repeated offsets within each name category are skipped
+before scanning or copying (liquid #474).
+
+COFF evidence names retain the 160-byte/256-name bounds and share the PE allowance. The budgeted
+PE adapter also charges registry import entries before retaining their paths.

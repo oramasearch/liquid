@@ -956,12 +956,14 @@ add_executable(liquid-format-tests
   formats/test_dotenv.cpp
   formats/test_json.cpp
   formats/test_macho.cpp
+  formats/test_pe_registry.cpp
   formats/test_registry.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
 target_include_directories(liquid-format-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(liquid-format-tests PRIVATE
   LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"
+  LIQUID_PE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/fixtures/abi"
   LIQUID_FORMAT_TEST_MODULE="$<TARGET_FILE:liquid-format-test-module>")
 target_link_libraries(liquid-format-tests PRIVATE liquid::liquid GTest::gtest_main)
 if(BUILD_SHARED_LIBS)
@@ -971,6 +973,16 @@ add_library(liquid-format-test-module MODULE formats/module.c)
 target_include_directories(liquid-format-test-module PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_dependencies(liquid-format-tests liquid-format-test-module)
 gtest_discover_tests(liquid-format-tests DISCOVERY_TIMEOUT 120)
+
+add_executable(liquid-pe-tests
+  formats/test_pe.cpp
+  ${PROJECT_SOURCE_DIR}/src/formats/binary/pe.cpp)
+target_include_directories(liquid-pe-tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include ${PROJECT_BINARY_DIR}/include)
+target_compile_definitions(liquid-pe-tests PRIVATE LIQUID_STATIC_DEFINE
+  LIQUID_PE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/build/fixtures/abi")
+target_link_libraries(liquid-pe-tests PRIVATE GTest::gtest_main)
+gtest_discover_tests(liquid-pe-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-encryption-tests
   encryption/test_custody.cpp

@@ -184,7 +184,7 @@ workflows, and says what works today and what does not. Rules that keep it good:
 `clang-format` with the repository's `.clang-format` (LLVM base, 100 columns, 4-space indents) before
 every commit; one statement per line. A function collapsed onto one line is sent back unread.
 
-When changing linked-binary symbol inspection, preserve the retained-byte and truncation contract
+When changing linked-binary name inspection, preserve the retained-byte and truncation contract
 in [`src/formats/binary/README.md`](src/formats/binary/README.md) across inspector and registry callers.
 
 ### Before finishing — run all five
