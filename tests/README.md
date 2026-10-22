@@ -138,7 +138,10 @@ encodings, the common registry contract, launch ZIP/tar/HDF5/Parquet/SQLite
 decoders, exact Tier 1 repack, deterministic tar and SquashFS writing, volatile fields, malformed
 boundaries, nesting limits, and a dynamically loaded C11 module. `liquid-pe-tests` exercises
 the shared PE inspector's name caps, offset deduplication, cumulative budgets, and partial-result
-truncation directly. The strict JSON and `.env` codecs
+truncation directly. `liquid-elf-tests` checks every ELF name source, repeated and overlapping
+offsets, exact length limits, and shared inspection budgets across ELF classes and byte orders.
+The registry cases check ELF caller budgets and truncation propagation into ABI comparisons.
+The strict JSON and `.env` codecs
 used by
 structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
