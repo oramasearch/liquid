@@ -171,6 +171,18 @@ record it as evidence, and relocation checks report a blocking finding. Names ex
 the shared inspector used by registry
 recognition/unpack, ABI extraction, SBOM inference, and relocation checking (liquid #475).
 
+PE inspection caps each install, export, and import name at 64 KiB, excluding its NUL
+terminator (liquid #474). Longer names retain a capped prefix ending at a complete UTF-8 character
+and mark inspection truncated.
+One allowance covers retained names and their records for the whole inspection and is charged
+before allocation. The default is 16 MiB; registry callers supply their remaining byte budget.
+Exhausting the allowance stops name collection and marks the partial result truncated.
+Repeated file offsets within exports or imports are skipped before scanning or copying, so one
+long name cannot be copied once per table entry. Distinct and overlapping offsets still spend the
+same allowance. COFF evidence names retain their existing 160-byte and 256-record limits and
+share this allowance. These limits apply to registry recognition and unpacking, ABI extraction, and
+SBOM inspection through their shared PE reader.
+
 ### PDF
 
 The PDF reader recognises indirect objects and simple stream objects, inflates `FlateDecode`,
