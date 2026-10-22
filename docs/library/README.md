@@ -38,6 +38,9 @@ competing front-door and index passages were reconciled.
 The hot-update status includes bounded demo socket paths and explicit platform-limit diagnostics;
 [the fixture guide](../build/socket-fixtures.md) records the construction and cleanup rules.
 
+The [service image contract](../build/service-images.md) records runtime-only layers, non-root
+processes, mounted state ownership, loopback controls, and image inspection proof (liquid #442).
+
 [Projection](projection.md) includes ordinary-repository changes and trees, the public tree-digest
 command, vendored AppImage runtime provenance, and the
 [issue #286 verification record](../build/project-ordinary-repository.md).

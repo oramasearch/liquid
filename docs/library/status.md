@@ -461,6 +461,11 @@ conflict; an opt-in Linux subset exercises configured builds and relocation
 
 ## Deployment
 
+The four service image templates use Ubuntu runtime packages, UID/GID 65532, owned writable state,
+read-only executables, and loopback control listeners (liquid #442, LSR-202). They no longer inherit
+the root CI toolchain; the worker retains its namespace and FUSE utilities. Existing mounted state
+needs ownership prepared for that user; see the [image contract](../build/service-images.md).
+
 Liquid #84 adds an operator-control-plane deployment client with digest-pinned interim OCI images,
 named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
 

@@ -1,5 +1,9 @@
 # Tests
 
+`service-image-templates` checks the four deployable service recipes for non-root runtime layers,
+owned state, read-only binaries, and loopback control listeners; `build/check-service-images.sh`
+inspects the corresponding built images (see [image proof](../docs/build/service-images.md)).
+
 Issue #2 regressions cover split ownership after source removal, retained historical bytes and
 identities, borrowed-store independence, nested history, and destination cleanup. `cli-split`
 replays the customer scenarios in fresh processes; see [the contract](../docs/library/split.md).

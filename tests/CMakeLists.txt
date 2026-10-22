@@ -5,6 +5,10 @@ set(LIQUID_HTTP2_TEST_SOURCES
   ${PROJECT_SOURCE_DIR}/src/http2/hpack.cpp)
 
 find_program(LIQUID_PYTHON_EXECUTABLE NAMES python3 python REQUIRED)
+add_test(NAME service-image-templates
+  COMMAND ${LIQUID_PYTHON_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/build/check-service-templates.py
+    ${PROJECT_SOURCE_DIR})
 add_test(NAME docs-links
   COMMAND ${LIQUID_PYTHON_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/docs/check-links.py

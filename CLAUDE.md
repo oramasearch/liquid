@@ -31,6 +31,10 @@ the commit liquid-bridge pins. liquid never depends on Zetta or on Lake code: th
 client uses liquid's own HTTP client and the provisional wire contract in
 `contracts/control-plane/openapi.json`.
 
+**Service images.** `deploy/` recipes use non-root runtime layers;
+[`docs/build/service-images.md`](docs/build/service-images.md) defines their build, permissions,
+and verification contract. `tools/linux-ci` remains a root build/test image.
+
 ### Vocabulary — use these words exactly
 
 | Term | Meaning |
