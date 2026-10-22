@@ -147,7 +147,9 @@ boundaries, Parquet RLE/bit-packed runs with wrapping lengths or invalid widths,
 allocations charged to one byte budget before they are made, nesting limits,
 and a dynamically loaded C11 module. The strict JSON and `.env` codecs
 boundaries (including an HDF5 link-name length that would wrap its bound check), nesting limits, and
-a dynamically loaded C11 module. The strict JSON and `.env` codecs
+a dynamically loaded C11 module. HDF5 pipeline tests exercise v1/v2 messages, compact/chunked
+datasets, valid filter counts 0, 1, 31 and 32 and corrupt counts 33, 64 and 255, with zero, high-bit and
+all-bit chunk masks (liquid #486). The strict JSON and `.env` codecs
 used by
 structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,

@@ -96,6 +96,9 @@ of inventing a value.
 A link name's length can be 8 bytes wide, so it is compared with the bytes left in the message
 rather than added to the position: a length near 2^64 is refused as a truncated link name before
 any copy (liquid #477).
+Filter pipelines with more than 32 filters are corrupt and refused before any dataset data is
+decoded, for both v1 and v2 pipeline messages. This keeps every filter index within the chunk's
+32-bit skip mask; pipelines of up to 32 filters retain their existing behavior (liquid #486).
 
 ### Parquet
 

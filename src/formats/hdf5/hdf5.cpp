@@ -474,6 +474,10 @@ private:
         }
         const auto version = std::to_integer<std::uint8_t>(source.data[0]);
         const auto count = std::to_integer<std::uint8_t>(source.data[1]);
+        // A chunk's 32-bit mask has one bit per filter in either pipeline encoding.
+        if (count > std::numeric_limits<std::uint32_t>::digits) {
+            return std::unexpected(failure("HDF5 filter pipeline exceeds 32 filters"));
+        }
         auto position = version == 1 ? std::size_t{8} : std::size_t{2};
         auto output = std::vector<filter>{};
         for (auto index = std::uint8_t{}; index < count; ++index) {

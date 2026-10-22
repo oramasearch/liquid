@@ -33,8 +33,9 @@ party types. Synchronous codec work called from a coroutine runs through `runtim
 
 Every new codec adds a real fixture and passes the common cases in `tests/formats/`: recognition,
 unpack, canonicalisation, logical comparison, every truncation boundary, recursion limits, and a
-byte-identical repack assertion whenever recognition reports Tier 1. Supported and unsupported
-subsets belong in `docs/library/formats.md` in the same change.
+byte-identical repack assertion whenever recognition reports Tier 1. HDF5 bounds filter pipeline
+counts to 32 before decoding datasets so chunk-mask shifts stay within 32 bits (liquid #486).
+Supported and unsupported subsets belong in `docs/library/formats.md` in the same change.
 
 `deb/`, `rpm/`, and `apk/` contain the Tier A writers and bounded round-trip readers. Issue #80
 adds each format's four native lifecycle-script locations and exposes payload bytes and modes for
