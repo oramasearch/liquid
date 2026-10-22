@@ -703,12 +703,22 @@ verification. `remote` is their REAPI implementation. See [`reapi.md`](reapi.md)
 ### `liquid/reapi.hpp`
 
 ```cpp
-struct reapi_serve_options { std::filesystem::path store_directory; std::string listen, instance_name; };
+struct reapi_upload_limits {
+  std::size_t max_upload_bytes, max_buffered_bytes, max_uploads, max_resource_bytes;
+  std::chrono::milliseconds idle_timeout;
+};
+struct reapi_serve_options {
+  std::filesystem::path store_directory;
+  std::string listen, instance_name;
+  reapi_upload_limits uploads;
+};
 runtime::task<void> serve_reapi(reapi_serve_options);
 ```
 
 The server exposes the repository's SHA-256 CAS, ByteStream, Capabilities, and ActionCache. It does
-not expose transport implementation types.
+not expose transport implementation types. `uploads` bounds retained payload capacity, upload count,
+resource-name length, idle expiry and active handling time; the same policy is available through
+`scheduler_options::uploads`. Defaults and CLI configuration are in [reapi.md](reapi.md).
 
 ### `liquid/sync.hpp`
 

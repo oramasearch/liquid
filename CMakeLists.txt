@@ -622,6 +622,7 @@ add_library(libliquid
   src/reapi/remote_client.cpp
   src/reapi/action_cache.cpp
   src/reapi/server.cpp
+  src/reapi/uploads.cpp
   src/serve/http.cpp
   src/workers/auth.cpp
   src/workers/protocol.cpp

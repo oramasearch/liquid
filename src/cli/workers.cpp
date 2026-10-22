@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 
+#include "cli/reapi_options.hpp"
 #include "liquid/error.hpp"
 #include "liquid/identity.hpp"
 #include "liquid/runtime.hpp"
@@ -171,6 +172,11 @@ auto run_service(liquid::runtime::task<void> service) -> liquid::result<void> {
 auto scheduler(int argc, char** argv) -> int {
     auto options = liquid::scheduler_options{.store_directory =
                                                  std::filesystem::current_path() / ".liquid-store"};
+    auto uploads = reapi_upload_options();
+    if (!uploads) {
+        return fail(uploads.error());
+    }
+    options.uploads = *uploads;
     if (const auto value = environment("LIQUID_SCHEDULER_LISTEN"); !value.empty()) {
         options.listen = value;
     }

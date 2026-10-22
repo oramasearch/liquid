@@ -99,6 +99,57 @@ The server accepts HTTP/2 prior-knowledge h2c. Its initial SETTINGS frame preced
 of the client preface, which is required by strict stock clients. TLS termination is expected in
 front of this server command.
 
+## ByteStream upload limits (liquid #444, LSR-204)
+
+Both `liquid serve reapi` and `liquid scheduler` retain unfinished uploads in memory so a
+successful partial Write can resume on another connection. Each listener has one shared budget,
+including all connections and instances. The defaults are:
+
+| Library field in `reapi_upload_limits` | CLI environment variable | Default |
+|---|---|---|
+| `max_upload_bytes` | `LIQUID_REAPI_MAX_UPLOAD_BYTES` | 1 GiB (1073741824 bytes) |
+| `max_buffered_bytes` | `LIQUID_REAPI_MAX_BUFFERED_BYTES` | 2 GiB (2147483648 bytes) |
+| `max_uploads` | `LIQUID_REAPI_MAX_UPLOADS` | 128, including empty partial uploads |
+| `max_resource_bytes` | `LIQUID_REAPI_MAX_RESOURCE_BYTES` | 1024 bytes |
+| `idle_timeout` | `LIQUID_REAPI_UPLOAD_IDLE_MS` | 600000 milliseconds (10 minutes) |
+
+Library callers set `reapi_serve_options::uploads` or `scheduler_options::uploads`. The CLI
+variables accept positive decimal integers; invalid, zero, negative, or overflowing values refuse
+startup. Library options require positive limits and a positive timeout, and the per-upload byte
+limit must fit the protocol's signed 64-bit size. These settings affect ByteStream Write state,
+not batch CAS updates or reads.
+
+A declared upload larger than its limit is refused before any upload entry is created. Each
+append must match the retained offset and fit the declared size. Count and total-byte exhaustion
+return gRPC `RESOURCE_EXHAUSTED`; invalid resources, offsets, or sizes return `INVALID_ARGUMENT`.
+The total counts allocated vector capacity, including spare capacity, replacement allocations
+while the old buffer still exists, and completed buffers until storage and the response finish.
+At the defaults this permits up to 2 GiB of upload payload allocations per listener, plus bounded
+entry metadata. A growing upload can be refused when its replacement buffer cannot fit beside the
+old buffer. The message being decoded and repository storage have their own memory use; this
+budget is not a process RSS limit. The transport holds at most one Write message at a time
+(liquid#451, above).
+
+Only one Write can own a resource at a time. The owner releases its buffer on errors, failed
+response delivery, or coroutine cancellation; digest and storage failures also release the charge.
+A failure before a resource has been decoded creates no new retained upload. A successful partial
+RPC releases ownership but keeps the bytes resumable. Normal disconnect after that response keeps
+the partial upload until expiry. A finishing message must be last in its RPC: its bytes are stored
+only after the stream has ended, and a message after it fails the Write with `INVALID_ARGUMENT`
+without storing anything. A Write with no messages is refused.
+
+A one-second sweep expires idle uploads even when no client makes another request. Writes and
+status queries also prune expired entries. Appending and successfully acknowledging a partial
+Write refresh its idle time; status polling does not. Active RPCs keep ownership and their budget
+charge through storage and response delivery. The same timeout also bounds every wait of an active
+Write: each next message, the storage of a finished upload, and the response. A Write that keeps
+sending is not cut off however long it runs, but one that sends nothing for the timeout, or whose
+response cannot be delivered within it, is cancelled: its upload owner releases the buffer and the
+connection closes. This reclaims an upload when a client stops mid-stream or withholds HTTP/2
+response flow-control credit. Once an unfinished upload expires,
+`QueryWriteStatus` returns `NOT_FOUND`; resumption at its old offset fails, and the client must
+restart at offset zero. Completed CAS objects remain available as before.
+
 ## Configuration and CLI
 
 `repository_options::remote` persists the following `remote_config` fields in `config.remote`:
@@ -129,7 +180,7 @@ the same TLS, header, deadline, instance, and CAS settings.
 | Header | Surface |
 |---|---|
 | `liquid/remote.hpp` | `remote_config`, TLS configuration, `remote_blob`, the transport-neutral source and executor contracts, and the move-only `remote` REAPI handle. |
-| `liquid/reapi.hpp` | `reapi_serve_options` and `serve_reapi`. |
+| `liquid/reapi.hpp` | `reapi_upload_limits`, `reapi_serve_options`, and `serve_reapi`. |
 | `liquid/workers.hpp` | scheduler and worker options plus their coroutine-native long-running entry points. |
 | `liquid/repository.hpp` | `repository_options::remote` and `repository::remote_configuration`. |
 | `liquid/build.hpp` | `wrap_options::remote`, per-tier `cache_report`, and the existing remote execution entry points. |

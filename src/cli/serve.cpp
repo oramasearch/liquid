@@ -27,6 +27,7 @@
 #include <boost/http.hpp>
 #include <boost/http/server/http_worker.hpp>
 
+#include "cli/reapi_options.hpp"
 #include "liquid/admission.hpp"
 #include "liquid/error.hpp"
 #include "liquid/reapi.hpp"
@@ -397,6 +398,11 @@ auto parse_options(int argc, char** argv) -> std::optional<serve_options> {
 auto serve_reapi(int argc, char** argv) -> int {
     auto options = liquid::reapi_serve_options{.store_directory = std::filesystem::current_path() /
                                                                   ".liquid-store"};
+    auto uploads = reapi_upload_options();
+    if (!uploads) {
+        return fail(uploads.error());
+    }
+    options.uploads = *uploads;
     for (auto index = 1; index < argc; ++index) {
         const auto argument = std::string_view{argv[index]};
         if (argument == "--listen") {
