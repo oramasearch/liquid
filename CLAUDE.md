@@ -10,6 +10,9 @@ in one program. See [`README.md`](README.md).
 **Status:** the releases are in [`docs/releases/`](docs/releases/README.md); each page says what
 changed, what is not included and the known issues.
 
+FUSE attribute permission checks and their request tests are documented in
+[the VFS notes](docs/library/vfs.md#attribute-mutation-refusal-445).
+
 **Feature status does not live in this file.** The authoritative inventory of what libliquid and
 the `liquid` binary implement, by phase, with the known limits, is
 [`docs/library/status.md`](docs/library/status.md). A change to what liquid does updates that page

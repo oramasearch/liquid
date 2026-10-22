@@ -978,8 +978,12 @@ runtime::task<void> hydrate_pinned_path(fuse_backend* state,
     co_return result<void>{};
 }
 
-runtime::task<int>
-setxattr_request(fuse_backend* state, std::string path, std::string name, std::string value) {
+runtime::task<int> setxattr_request(
+    fuse_backend* state, std::string path, std::int64_t pid, std::string name, std::string value) {
+    if (state->read_only() || state->immutable(path)) {
+        state->observe(observed_operation::write, std::move(path), pid, {}, true);
+        co_return -EROFS;
+    }
     auto entry = co_await state->entry(path);
     if (!entry)
         co_return fuse_error(entry.error());
@@ -1008,7 +1012,12 @@ setxattr_request(fuse_backend* state, std::string path, std::string name, std::s
     co_return 0;
 }
 
-runtime::task<int> removexattr_request(fuse_backend* state, std::string path, std::string name) {
+runtime::task<int>
+removexattr_request(fuse_backend* state, std::string path, std::int64_t pid, std::string name) {
+    if (state->read_only() || state->immutable(path)) {
+        state->observe(observed_operation::write, std::move(path), pid, {}, true);
+        co_return -EROFS;
+    }
     if (name != state_xattr && name != pin_xattr)
         co_return -ENODATA;
     auto entry = co_await state->entry(path);
@@ -1259,9 +1268,10 @@ int fuse_setxattr(const char* path, const char* name, const char* value, size_t 
     static_cast<void>(flags);
     return state->queue()->submit([state,
                                    path = fuse_path(path),
+                                   pid = current_pid(),
                                    name = std::string{name ? name : ""},
                                    value = std::string{value ? value : "", size}] {
-        return setxattr_request(state, path, name, value);
+        return setxattr_request(state, path, pid, name, value);
     });
 }
 
@@ -1270,8 +1280,8 @@ int fuse_removexattr(const char* path, const char* name) {
     if (!state)
         return -EIO;
     return state->queue()->submit(
-        [state, path = fuse_path(path), name = std::string{name ? name : ""}] {
-            return removexattr_request(state, path, name);
+        [state, path = fuse_path(path), pid = current_pid(), name = std::string{name ? name : ""}] {
+            return removexattr_request(state, path, pid, name);
         });
 }
 

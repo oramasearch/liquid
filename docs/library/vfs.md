@@ -28,7 +28,11 @@ depend on lake.
 
 ## Public API
 
-`mount_options::read_only` rejects modifying operations with `EROFS`.
+`mount_options::read_only` rejects modifying operations with `EROFS`, including `setxattr`
+and `removexattr`. Both attribute mutation handlers also reject paths in the immutable `deps/`
+subtree of writable mounts. The checks run before attribute decoding, entry lookup, settings
+persistence, or pin hydration; each refusal records a denied write with the requesting PID in
+the observation sink. Writable paths retain their pin and exclusion controls (liquid #445).
 `mount_options::attr_timeout` controls FUSE attribute and entry caching.
 `mount_options::bearer_token` is used only while registering a configured drive peer and is never
 persisted. The opaque `mount` handle exposes asynchronous `unmount()` and synchronous `status()`:
@@ -262,3 +266,13 @@ header. Repository traversal and range access stay in the private adapter. Cache
 `src/vfs/hydration.cpp`, and callbacks belong in `src/vfs/fuse_fs.cpp`. Add a mount operation only
 by giving it a queued runtime request and a repository mutation; a callback must not access the
 store or repository directly.
+
+## Attribute mutation refusal (#445)
+
+`liquid-vfs-xattr-tests` calls the production FUSE request handlers without a kernel mount.
+It covers ordinary and recorded-tree mounts, files, directories, the mount root, and immutable
+`deps` paths; both attribute names and unknown or invalid attributes must return `EROFS` on
+protected paths. Each attempt checks the stored Drive metadata bytes and the denied write's
+path and PID. A writable control verifies both setters still hydrate and persist pins and both
+removers persist the online-only reset. The target requires the FUSE development library,
+but does not require `/dev/fuse` or permission to mount.

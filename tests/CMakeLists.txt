@@ -783,6 +783,24 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/vfs/request_queue.cpp
     ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
 endif()
+# Run the production xattr request handlers even when the FUSE device is unavailable.
+if(LIQUID_FUSE_TARGET)
+  add_executable(liquid-vfs-xattr-tests vfs/test_xattr_requests.cpp)
+  target_include_directories(liquid-vfs-xattr-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(liquid-vfs-xattr-tests PRIVATE ${LIQUID_FUSE_DEFINITION})
+  target_link_libraries(liquid-vfs-xattr-tests PRIVATE
+    liquid::liquid GTest::gtest_main ${LIQUID_FUSE_TARGET})
+  if(BUILD_SHARED_LIBS)
+    target_sources(liquid-vfs-xattr-tests PRIVATE
+      ${PROJECT_SOURCE_DIR}/src/drive/settings.cpp
+      ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+      ${PROJECT_SOURCE_DIR}/src/vfs/hydration.cpp
+      ${PROJECT_SOURCE_DIR}/src/vfs/request_queue.cpp
+      ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
+  endif()
+  gtest_discover_tests(liquid-vfs-xattr-tests DISCOVERY_TIMEOUT 120 NO_PRETTY_VALUES)
+endif()
+
 set(LIQUID_VFS_CONFORMANCE_BACKENDS "direct;libfuse" CACHE STRING
   "Named VFS drivers to run through the common conformance suite")
 foreach(backend IN LISTS LIQUID_VFS_CONFORMANCE_BACKENDS)

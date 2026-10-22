@@ -68,3 +68,5 @@ and offset deduplication limits (liquid #474).
 
 [Linked-binary formats](formats.md#linked-binaries) also records the ELF limits on section, symbol,
 version, dynamic-path, and DWARF copies and generated signatures (liquid #479).
+[VFS attribute mutation refusal](vfs.md#attribute-mutation-refusal-445) covers read-only and
+immutable mount paths, denied write observations, and request-level tests without a kernel mount.

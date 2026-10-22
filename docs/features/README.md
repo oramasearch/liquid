@@ -6,6 +6,8 @@ replacement must run them itself. Linux libfuse calibration is still owed agains
 
 [Git import](../library/git-interop.md) bounds object inflation and delta reconstruction,
 including reference bases in other packs; malformed or over-budget objects fail closed (#443).
+[VFS attribute mutations](../library/vfs.md#attribute-mutation-refusal-445) respect read-only
+mounts and immutable dependency paths, including persistent Drive policy changes (#445).
 
 This tree states what liquid **does**. It is the counterpart to
 [`docs/research/`](../research/), which states what the world currently does and
