@@ -18,7 +18,11 @@ implementation exposes a C ABI v1 descriptor to `builtin.hpp`; `registry.cpp` re
 descriptor through the same `format_codec::linked` path used by statically linked external modules.
 
 A codec must bound every size and offset before reading or allocating, honour the registry entry,
-depth, and byte limits, and report unsupported objects explicitly. It may not add a format vendor's
+depth, and byte limits, and report unsupported objects explicitly. A limit reported as `errc::unsupported` leaves a nested
+member opaque instead of failing the unpack. A codec that decodes its own
+members calls `format_registry::global().unpack` on the same thread; `registry.cpp` keeps the
+outermost unpack's budgets in a thread-local expansion, so that call draws on them and is not
+expanded further (liquid#438). It may not add a format vendor's
 library or expose third-party types. Synchronous codec work called from a coroutine runs through
 `runtime::offload`.
 

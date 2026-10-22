@@ -4,4 +4,6 @@ The writer emits a deterministic `ar` archive containing `debian-binary`, `contr
 `data.tar.zst`. It owns every archive header and uses the shared deterministic tar and pinned-zstd
 writers. The reader validates the archive and exposes control text, payload bytes and modes,
 installed paths, and optional `preinst`, `postinst`, `prerm`, and `postrm` scripts. The writer
-places fixed issue #80 generated scripts in the control archive with executable mode.
+places fixed issue #80 generated scripts in the control archive with executable mode. The reader
+decodes `control.tar` and `data.tar` through the format registry; inside a registry unpack those
+calls draw on that unpack's depth, byte and entry budgets (liquid#438).

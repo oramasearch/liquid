@@ -5,8 +5,10 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -14,6 +16,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <zlib.h>
@@ -158,6 +161,138 @@ auto parquet_run(std::uint64_t header, std::size_t payload_bytes = 0) -> std::ve
     bytes.push_back(static_cast<std::byte>(header));
     bytes.resize(bytes.size() + payload_bytes);
     return bytes;
+}
+
+auto text(std::string_view value) -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>(value.size());
+    std::ranges::transform(
+        value, output.begin(), [](char character) { return static_cast<std::byte>(character); });
+    return output;
+}
+
+auto crc32(std::span<const std::byte> input) -> std::uint32_t {
+    auto crc = std::uint32_t{0xffffffffU};
+    for (const auto byte : input) {
+        crc ^= std::to_integer<std::uint32_t>(byte);
+        for (auto bit = 0; bit < 8; ++bit) {
+            crc = (crc >> 1U) ^ (0xedb88320U & (std::uint32_t{0} - (crc & 1U)));
+        }
+    }
+    return ~crc;
+}
+
+void append_le(std::vector<std::byte>& output, std::uint64_t value, std::size_t width) {
+    for (auto index = std::size_t{}; index < width; ++index) {
+        output.push_back(static_cast<std::byte>((value >> (8U * index)) & 0xffU));
+    }
+}
+
+using named_bytes = std::vector<std::pair<std::string, std::vector<std::byte>>>;
+
+// The nested-archive builders below write the containers directly rather than through libliquid's
+// private writers, so these tests use only the public format API.
+
+// A gzip member of stored deflate blocks.
+auto stored_gzip(std::span<const std::byte> input) -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>{std::byte{0x1f}, std::byte{0x8b}, std::byte{8}};
+    output.resize(10);
+    auto offset = std::size_t{};
+    do {
+        const auto size = std::min<std::size_t>(input.size() - offset, 0xffff);
+        output.push_back(static_cast<std::byte>(offset + size == input.size() ? 1 : 0));
+        append_le(output, size, 2);
+        append_le(output, ~size & 0xffffU, 2);
+        const auto block = input.subspan(offset, size);
+        output.insert(output.end(), block.begin(), block.end());
+        offset += size;
+    } while (offset < input.size());
+    append_le(output, crc32(input), 4);
+    append_le(output, input.size(), 4);
+    return output;
+}
+
+auto ar_archive(const named_bytes& members) -> std::vector<std::byte> {
+    auto output = text("!<arch>\n");
+    for (const auto& [name, bytes] : members) {
+        const auto header = text(std::format(
+            "{:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n", name + "/", 0, 0, 0, 100644, bytes.size()));
+        output.insert(output.end(), header.begin(), header.end());
+        output.insert(output.end(), bytes.begin(), bytes.end());
+        if (bytes.size() % 2 != 0) {
+            output.push_back(std::byte{'\n'});
+        }
+    }
+    return output;
+}
+
+// A ZIP archive of stored members.
+auto stored_zip(const named_bytes& members) -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>{};
+    auto directory = std::vector<std::byte>{};
+    for (const auto& [name, bytes] : members) {
+        const auto offset = output.size();
+        const auto checksum = crc32(bytes);
+        const auto encoded_name = text(name);
+        append_le(output, 0x04034b50U, 4);
+        append_le(output, 20, 2);
+        append_le(output, 0, 8);
+        append_le(output, checksum, 4);
+        append_le(output, bytes.size(), 4);
+        append_le(output, bytes.size(), 4);
+        append_le(output, name.size(), 2);
+        append_le(output, 0, 2);
+        output.insert(output.end(), encoded_name.begin(), encoded_name.end());
+        output.insert(output.end(), bytes.begin(), bytes.end());
+        append_le(directory, 0x02014b50U, 4);
+        append_le(directory, 20, 2);
+        append_le(directory, 20, 2);
+        append_le(directory, 0, 8);
+        append_le(directory, checksum, 4);
+        append_le(directory, bytes.size(), 4);
+        append_le(directory, bytes.size(), 4);
+        append_le(directory, name.size(), 2);
+        append_le(directory, 0, 12);
+        append_le(directory, offset, 4);
+        directory.insert(directory.end(), encoded_name.begin(), encoded_name.end());
+    }
+    const auto directory_offset = output.size();
+    output.insert(output.end(), directory.begin(), directory.end());
+    append_le(output, 0x06054b50U, 4);
+    append_le(output, 0, 4);
+    append_le(output, members.size(), 2);
+    append_le(output, members.size(), 2);
+    append_le(output, directory.size(), 4);
+    append_le(output, directory_offset, 4);
+    append_le(output, 0, 2);
+    return output;
+}
+
+auto tar_archive(const named_bytes& members) -> std::vector<std::byte> {
+    const auto* tar = codec("tar");
+    if (!tar) {
+        ADD_FAILURE() << "tar codec is absent";
+        return {};
+    }
+    auto tree =
+        liquid::format_tree{.codec = "tar", .tier = liquid::format_tier::canonical_round_trip};
+    for (const auto& [name, bytes] : members) {
+        tree.entries.push_back(file_entry(name, bytes));
+    }
+    auto archive = tar->repack(tree);
+    EXPECT_TRUE(archive) << archive.error().message;
+    return archive.value_or(std::vector<std::byte>{});
+}
+
+// A gzip-compressed .deb from its control.tar bytes and its payload files.
+auto deb_package(std::span<const std::byte> control_tar, const named_bytes& payload)
+    -> std::vector<std::byte> {
+    return ar_archive({{"debian-binary", text("2.0\n")},
+                       {"control.tar.gz", stored_gzip(control_tar)},
+                       {"data.tar.gz", stored_gzip(tar_archive(payload))}});
+}
+
+auto deb_control() -> std::vector<std::byte> {
+    return tar_archive({{"control", text("Package: nested\nVersion: 1\n")}});
 }
 
 TEST(FormatRegistry, PublishesBuiltInCodecs) {
@@ -701,6 +836,80 @@ TEST(FormatRegistry, ReportsTheDecodedByteBudget) {
     EXPECT_TRUE(unpacked->truncated);
     ASSERT_FALSE(unpacked->limits.empty());
     EXPECT_NE(unpacked->limits.front().find("byte budget"), std::string::npos);
+}
+
+// liquid#438: each package's data.tar holds the next package, and the innermost is not a valid
+// package. The package codec decodes its own members through the registry, and that call must stay
+// inside the outermost depth limit instead of reaching the innermost level.
+TEST(FormatRegistry, NestedPackagesStayInsideTheOutermostDepthLimit) {
+    auto package = text("!<arch>\n");
+    for (auto level = 0; level < 6; ++level) {
+        package = deb_package(deb_control(), {{"inner.deb", package}});
+    }
+    auto unpacked = liquid::format_registry::global().unpack(
+        package, "nested.deb", liquid::format_limits{.maximum_depth = 2, .byte_budget = 1'000'000});
+    ASSERT_TRUE(unpacked) << unpacked.error().message;
+    const auto* inner = entry(*unpacked, "data/inner.deb");
+    ASSERT_NE(inner, nullptr);
+    ASSERT_NE(inner->nested, nullptr);
+    EXPECT_TRUE(inner->nested->truncated);
+    const auto* innermost = entry(*inner->nested, "data/inner.deb");
+    ASSERT_NE(innermost, nullptr);
+    EXPECT_EQ(innermost->opaque_reason, "depth limit reached");
+    EXPECT_EQ(innermost->nested, nullptr);
+}
+
+// The same for documents: the document codec decodes its ZIP container through the registry.
+TEST(FormatRegistry, NestedDocumentsStayInsideTheOutermostDepthLimit) {
+    auto document = text("PK\x03\x04 is not a document");
+    for (auto level = 0; level < 6; ++level) {
+        document = stored_zip({{"inner.docx", document}});
+    }
+    auto unpacked = liquid::format_registry::global().unpack(
+        document,
+        "nested.docx",
+        liquid::format_limits{.maximum_depth = 2, .byte_budget = 1'000'000});
+    ASSERT_TRUE(unpacked) << unpacked.error().message;
+    EXPECT_EQ(unpacked->codec, "ooxml");
+    const auto* inner = entry(*unpacked, "inner.docx");
+    ASSERT_NE(inner, nullptr);
+    ASSERT_NE(inner->nested, nullptr);
+    const auto* innermost = entry(*inner->nested, "inner.docx");
+    ASSERT_NE(innermost, nullptr);
+    EXPECT_EQ(innermost->opaque_reason, "depth limit reached");
+    EXPECT_EQ(innermost->nested, nullptr);
+}
+
+// The wrapper's members, decoded in path order, spend all but its tar headers of the budget, which
+// is too little for the package's own members. The package decodes against what is left, not
+// against a new budget.
+TEST(FormatRegistry, NestedPackagesDrawOnTheRemainingByteBudget) {
+    const auto package =
+        deb_package(deb_control(), {{"payload.bin", std::vector<std::byte>(4096, std::byte{'x'})}});
+    const auto filler = std::vector<std::byte>(8192, std::byte{'f'});
+    const auto archive = tar_archive({{"filler.bin", filler}, {"package.deb", package}});
+    auto unpacked = liquid::format_registry::global().unpack(
+        archive,
+        "wrapper.tar",
+        liquid::format_limits{.maximum_depth = 8, .byte_budget = archive.size()});
+    ASSERT_TRUE(unpacked) << unpacked.error().message;
+    EXPECT_TRUE(unpacked->truncated);
+    const auto* nested = entry(*unpacked, "package.deb");
+    ASSERT_NE(nested, nullptr);
+    EXPECT_EQ(nested->nested, nullptr);
+    EXPECT_FALSE(nested->opaque_reason.empty());
+    EXPECT_EQ(nested->bytes, package);
+}
+
+// The registry picks codecs by content, so a control.tar may itself be a package. Decoding a
+// codec's members may not decode members in turn, which would otherwise recurse without bound.
+TEST(FormatRegistry, RefusesPackageMembersThatDecodeMembersThemselves) {
+    const auto inner = deb_package(deb_control(), {{"file.txt", text("inner\n")}});
+    const auto package = deb_package(inner, {{"file.txt", text("outer\n")}});
+    auto unpacked = liquid::format_registry::global().unpack(package, "outer.deb");
+    ASSERT_FALSE(unpacked);
+    EXPECT_TRUE(unpacked.error().message.starts_with("format members nest inside format members"))
+        << unpacked.error().message;
 }
 
 } // namespace
