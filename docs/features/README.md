@@ -143,7 +143,7 @@ specifies it.
 | [08](08-packaging-and-images.md) | Packaging and images | Tier A package and image projection from ordinary-repository changes and trees plus Debian Tier B source packages, generated install scripts, ownership conflict checks, atomic generations, and ABI gates. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to native packages, Homebrew, Arch, OCI, Helm, AppImage with vendored hash-pinned runtimes, Flatpak, and Snap, with ABI and relocation gates. |
 | [07](07-dependency-resolution.md) | Dependency resolution | Direct `.liquid` universe loading, canonical record output, empty-universe diagnostics, typed package rules, and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented; a pinned Spack export seeds the package universe with explicit losses. |
-| [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate. |
+| [08](08-packaging-and-images.md) | Packaging and images | Projection to `.deb`, `.rpm`, `.apk`, OCI images and more, with implemented ABI facts ready for the package gate; RPM reads reject truncated cpio padding. |
 | [09](09-artifact-service.md) | Artifact service | Serving builds, chunk-level distribution, transparency log, retention. |
 | [10](10-supply-chain.md) | Supply chain and signing | Signed builds, hardware-held identity keys, threshold release approval, reproducibility verification, and input policy. |
 | [11](11-secrets-and-encryption.md) | Secrets and encryption | Encrypted subtrees, password and key protection, TPM sealing, and dedup-preserving encryption. |

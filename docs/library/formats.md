@@ -141,6 +141,11 @@ exactly the control and data gzip members, exposes `.PKGINFO`, and lists data pa
 package bytes remain authoritative; complete read-side codecs remain issue #70. Writer and
 dependency rules are in [projection.md](projection.md).
 
+RPM cpio name and file padding must fit in the decoded payload before the reader copies a
+member or accepts the trailer (liquid #439). Alignment adds only padding that fits the remaining
+span, including the signature header's eight-byte alignment; a truncated boundary returns
+`corrupt`. The same reader serves format unpacking and package installation.
+
 The RPM reader has one byte budget per read, the caller's `format_limits::byte_budget` (liquid
 #473). It copies only the main-header strings it uses (name, version, and the four maintainer
 scripts), charges each copy to the budget before making it, and decodes the payload only into what

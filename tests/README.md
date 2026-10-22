@@ -151,6 +151,8 @@ a dynamically loaded C11 module. HDF5 pipeline tests exercise v1/v2 messages, co
 datasets, valid filter counts 0, 1, 31 and 32 and corrupt counts 33, 64 and 255, with zero, high-bit and
 all-bit chunk masks (liquid #486). The strict JSON and `.env` codecs
 boundaries, nesting limits, RPM header strings charged to the byte budget, and a dynamically
+boundaries, nesting limits, RPM header strings charged to the byte budget, truncated RPM cpio
+name/file padding (including trailers), valid aligned payloads, and a dynamically
 loaded C11 module. The strict JSON and `.env` codecs
 used by
 structured configuration encryption remain covered there; `encryption/`

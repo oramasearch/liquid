@@ -8,3 +8,6 @@ enumerates the cpio payload with file bytes and modes. Generated `%pre`, `%post`
 `%postun` values and their `/bin/sh` interpreter tags live in the RPM header and round-trip through
 the reader. The reader copies only those header strings plus name and version, and charges each
 copy and then the decoded payload to one byte budget per read (liquid #473).
+Name and file padding must fit the decoded cpio payload before any member copy or trailer
+acceptance. Both cpio and signature-header alignment check the available padding before adding
+it, and reject truncated padding as corrupt (liquid #439).

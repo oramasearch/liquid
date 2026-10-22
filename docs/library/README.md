@@ -30,6 +30,9 @@ public headers and ABI rules.
 
 The complete topic index is in [`../README.md`](../README.md#library).
 
+[Formats](formats.md) records bounded RPM cpio and signature-header alignment, including rejection
+of truncated member and trailer padding (liquid #439).
+
 [VFS conformance](vfs.md#backend-conformance-301) documents named backend execution, common
 filesystem and observation assertions, direct core calibration, adding a driver, and the Linux
 libfuse baseline still owed against #299. The [proof record](vfs-conformance-proof.md) preserves

@@ -439,6 +439,8 @@ chunk mask before decoding any dataset layout (liquid #486).
 The RPM reader charges the header strings it copies and its
 The RPM reader charges the header strings it copies and its
 decoded payload to one byte budget per read (liquid #473).
+RPM reads reject truncated cpio name and file padding before copying members or accepting the
+trailer, and check signature-header padding without wrapping (liquid #439).
 
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository
