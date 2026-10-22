@@ -24,3 +24,13 @@ before scanning or copying (liquid #474).
 
 COFF evidence names retain the 160-byte/256-name bounds and share the PE allowance. The budgeted
 PE adapter also charges registry import entries before retaining their paths.
+
+ELF inspection caps every section, symbol, version, dynamic path, and DWARF name or generated
+signature at 64 KiB (liquid #479). A longer name stops collection before its copy, preserves earlier
+facts, and marks inspection truncated. Each copy, including temporary metadata, repeated offsets,
+section output copies, and the corresponding records, spends one cumulative allowance before
+allocation. There is no refund for discarded temporary copies. The default is 16 MiB; registry
+unpacking supplies its byte budget and subtracts inspection charges before copying section data
+or entry paths. Registry recognition, ABI, SBOM, and relocation use the same bounded inspector.
+The local limit signal is caught only at the inspector boundary, so nested version and DWARF
+parsing cannot continue with an uncharged name. Exact 64 KiB names remain supported.

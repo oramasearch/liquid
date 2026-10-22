@@ -451,6 +451,10 @@ PE names have a 64 KiB length cap, offset
 deduplication, and one allowance for retained names and records; capped names or exhausted budgets
 produce partial, truncated results (liquid #474).
 
+ELF name copies and their records share one cumulative inspection allowance, including section,
+symbol, version, dynamic-path, and DWARF names and generated signatures. A 64 KiB name cap or an
+exhausted allowance stops collection before copying and reports truncation (liquid #479).
+
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository
 lookup ([executable guide](../guides/project-from-files.md)). Tier A package and image projection and Debian-only Tier B source projection are

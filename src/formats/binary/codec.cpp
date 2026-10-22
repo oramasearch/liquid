@@ -50,13 +50,15 @@ public:
         }
         auto remaining = limits.byte_budget - std::min(limits.byte_budget, image->symbol_bytes);
         for (const auto& section : image->sections) {
-            if (section.size > remaining || section.offset > blob.size() ||
-                section.size > blob.size() - section.offset) {
+            const auto name_charge =
+                name_ == "elf" ? sizeof(format_entry) + 9U + section.name.size() : 0U;
+            if (name_charge > remaining || section.size > remaining - name_charge ||
+                section.offset > blob.size() || section.size > blob.size() - section.offset) {
                 output.truncated = true;
-                output.limits.push_back("byte budget reached at sections/" + section.name);
+                output.limits.push_back("byte budget reached at sections");
                 break;
             }
-            remaining -= section.size;
+            remaining -= section.size + name_charge;
             auto attributes = detail::attributes({{"address", std::to_string(section.address)},
                                                   {"flags", std::to_string(section.flags)},
                                                   {"type", std::to_string(section.type)}});
@@ -77,7 +79,8 @@ public:
         }
         for (const auto& symbol : image->exported_symbols) {
             if (inspect_budgeted_) {
-                const auto charge = sizeof(format_entry) + 8U + symbol.name.size();
+                const auto charge = sizeof(format_entry) + 8U + symbol.name.size() +
+                                    (symbol.version ? 4U * symbol.version->size() : 0U);
                 if (charge > remaining) {
                     output.truncated = true;
                     output.limits.push_back("byte budget reached at exports");
@@ -181,7 +184,7 @@ constexpr auto macho_magic =
 } // namespace
 
 auto elf_module() -> const liquid_format_module_v1* {
-    return module<binary::inspect_elf>(
+    return module<static_cast<reader>(binary::inspect_elf), binary::inspect_elf>(
         "elf", elf_extensions.data(), elf_extensions.size(), elf_magic.data(), elf_magic.size());
 }
 

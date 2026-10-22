@@ -982,6 +982,7 @@ add_executable(liquid-format-tests
   formats/test_dotenv.cpp
   formats/test_json.cpp
   formats/test_macho.cpp
+  formats/test_elf_registry.cpp
   formats/test_pe_registry.cpp
 
 
@@ -1003,6 +1004,15 @@ add_library(liquid-format-test-module MODULE formats/module.c)
 target_include_directories(liquid-format-test-module PRIVATE ${PROJECT_SOURCE_DIR}/include)
 add_dependencies(liquid-format-tests liquid-format-test-module)
 gtest_discover_tests(liquid-format-tests DISCOVERY_TIMEOUT 120)
+
+add_executable(liquid-elf-tests
+  formats/test_elf.cpp
+  ${PROJECT_SOURCE_DIR}/src/formats/binary/elf.cpp)
+target_include_directories(liquid-elf-tests PRIVATE
+  ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include ${PROJECT_BINARY_DIR}/include)
+target_compile_definitions(liquid-elf-tests PRIVATE LIQUID_STATIC_DEFINE)
+target_link_libraries(liquid-elf-tests PRIVATE GTest::gtest_main)
+gtest_discover_tests(liquid-elf-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-pe-tests
   formats/test_pe.cpp

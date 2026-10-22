@@ -34,3 +34,10 @@ constructed in memory from the pinned [`../build/fixtures/abi/`](../build/fixtur
 `test_pe_registry.cpp` checks registry budget dispatch and truncation propagation. Both PE test
 files use `pe_fixture.hpp` for their table builder. Inspector cases also cover PE32, UTF-8 cutoff
 boundaries, and the fixed-width/long COFF evidence-name paths.
+
+`test_elf.cpp` builds directly with the ELF inspector as `liquid-elf-tests`. Its in-memory builder
+in `elf_fixture.hpp` covers ELF32/ELF64 in both byte orders; section and symbol names; version
+definitions/requirements; dynamic library/search paths; inline, indirect, line, and indexed DWARF
+strings; repeated/overlapping offsets; exact length limits; and cumulative copy budgets (liquid #479).
+`test_elf_registry.cpp` checks caller-budget dispatch, registry truncation, and fail-closed ABI
+comparison for a truncated ELF descriptor.

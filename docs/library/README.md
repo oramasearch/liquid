@@ -63,3 +63,6 @@ before decoding datasets (liquid #486).
 coverage (liquid #440).
 [Linked-binary formats](formats.md#linked-binaries) records PE name length, cumulative allocation,
 and offset deduplication limits (liquid #474).
+
+[Linked-binary formats](formats.md#linked-binaries) also records the ELF limits on section, symbol,
+version, dynamic-path, and DWARF copies and generated signatures (liquid #479).
