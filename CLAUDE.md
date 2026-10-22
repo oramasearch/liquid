@@ -16,6 +16,8 @@ the `liquid` binary implement, by phase, with the known limits, is
 in the same commit. This file records the repository's rules and decisions, and the root
 `README.md` is the build and first-result path. Do not add per-feature status here. The
 [reconciliation record](docs/library/readme-history.md) explains the earlier duplicate inventories.
+Scanner work bounds and their regression coverage are documented in
+[`docs/library/secret-scanning.md`](docs/library/secret-scanning.md).
 
 **Shape.** Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package`
 works; see [`docs/library/libliquid.md`](docs/library/libliquid.md)) plus the `liquid` binary as a

@@ -267,7 +267,8 @@ record, with the limits of each area, is the
   values of a JSON or `.env` file, with key custody by passphrase, recipient key, cloud KMS,
   Shamir shares or a TPM. [Encryption](docs/library/encryption.md),
   [leaf encryption](docs/library/leaf-encryption.md)
-- **Secret scanning** that blocks by default, and verified redaction from history.
+- **Secret scanning** that blocks by default, with linear JWT detection, and verified redaction
+  from history.
   [Secret scanning](docs/library/secret-scanning.md)
 - **A transparency-log and TUF client**, trusted timestamps, threshold release approval, and
   a **Kubernetes admission** webhook that refuses an image without the evidence a policy asks

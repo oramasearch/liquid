@@ -8,3 +8,8 @@ hint cannot deliver the same safe block twice.
 
 Repository and capture fixtures allocate their named directories beneath the unique process root
 specified in the parent [`README.md`](../README.md).
+
+JWT regressions cover long invalid components with many candidate prefixes under a two-second
+budget, valid candidates inside later components and after failed candidates, minimum component
+lengths, valid components above 64 KiB, and detection beyond a two-MiB prefix without skipping
+other detectors.
