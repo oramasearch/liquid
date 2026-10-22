@@ -18,6 +18,33 @@ index cache; the same cache resolves known object names without reopening an ind
 indexes are scanned without retaining their entries. A bounded eight-file pack-stream cache avoids
 reopening the active pack for each object while preserving streamed zlib inflation.
 
+## Object read limits (#443)
+
+Local import treats Git bytes as untrusted. Loose and packed objects, delta programs, and
+delta results are limited to 4 GiB each. Inflation reads the declared size first and stops
+at the first extra decoded byte; a shorter stream is also corrupt. Loose headers must end
+within 64 bytes. Compressed input is limited to the declared decoded length plus a quarter and
+64 KiB, which admits fixed-Huffman encodings and bounds streams of empty deflate blocks.
+
+Each top-level object read shares one budget across OFS_DELTA, REF_DELTA, other packs, loose
+bases, and cache copies. It permits at most twice the final object's payload size plus
+64 MiB of decoded and reconstructed bytes. Loose headers and decoded delta programs count
+toward that budget. The final size comes from the ordinary object's header or the outermost
+delta's target header, before bases are resolved; nested reads cannot reset it.
+
+At most 1,024 delta links are followed, with visited pack positions tracked to reject cycles.
+Chains resolve in a loop: each delta program is inflated on the way to the base and applied on
+the way back, so chain length does not consume native stack. Import resumes on runtime pool
+threads, whose stacks are 512 KiB by default on macOS.
+Offset bases must identify strictly earlier indexed objects; zero and overflowing distances
+are corrupt. Size integers must fit without wrapping. Every delta insertion and copy must
+fit both the available input/base and the declared target before bytes are appended. The
+reader does not reserve the attacker-declared result length before validating instructions.
+
+These limits apply through `liquid::import_git` and the CLI, return `errc::corrupt`, and have
+no public bypass. Repositories exceeding the byte or chain limits now fail import, including
+otherwise valid Git objects. Private fixtures can lower limits to test exact boundaries.
+
 ## Import design
 
 Import builds the reachable graph in parent-before-child topological order without replaying
@@ -58,8 +85,13 @@ directory name as though it ends in `/`; this is required for `git fsck --strict
 The Git integration tests build a 50-change fixture with branches, a merge, a rename, a tag, and
 packed deltas using the system Git executable when it is installed. They check the bidirectional
 mapping, full history, snapshots, rename node identity, resumable import, corrupt-object refusal,
-and `git fsck` against the export. Delta instructions are size-checked before reconstruction. The private object-reader sources are compiled into that
-fixture too, so this verification also runs with a shared `libliquid`.
+and `git fsck` against the export. Hand-written loose and pack fixtures cover declared and actual
+inflation bounds, compressed streams without output, delta target and instruction bounds,
+overflowing size encodings, shared byte budgets, cross-pack cycles, and the 1,024-link depth
+boundary. Subprocess regressions fail on the unchanged reader: offset self-reference and a
+cross-pack reference cycle crash, a huge declared result throws during allocation, and a
+1,024-link chain read on a 512 KiB thread stack overflows a recursive reader.
+The private object-reader sources are compiled into that fixture too, so this verification also runs with a shared `libliquid`.
 The public-header fixture compiles `liquid/git.hpp` independently.
 
 The real-world check is excluded from ordinary `ctest` runs. Configure with

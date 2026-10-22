@@ -126,8 +126,9 @@ liquid import git /path/to/repo   # reachable history and identities come with i
 liquid export git /path/to/out    # write a standalone Git repository back out
 ```
 
-Import preserves reachable local history and maps identities. Export reports exactly what
-could not be carried over. See [Git interop](docs/library/git-interop.md).
+Import preserves reachable local history and maps identities, with bounded Git object decoding.
+Export reports exactly what could not be carried over. See
+[Git interop](docs/library/git-interop.md).
 
 **Where Git has a command for the same thing, liquid uses Git's name.** Where it differs there
 is a reason, and typing the Git name tells you what to use: `liquid commit` answers with

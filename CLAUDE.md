@@ -117,6 +117,10 @@ formats ride *inside* TAAP as profile bodies; they do not get their own envelope
 
 ## Working rules for this repo
 
+Git object readers must preserve the shared byte and delta-depth budgets across offset and
+reference bases, including bases in other packs or loose storage. The limits and import
+compatibility contract live in [`docs/library/git-interop.md`](docs/library/git-interop.md).
+
 **Check links before finishing.** Every internal link must resolve:
 
 ```sh

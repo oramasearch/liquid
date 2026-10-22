@@ -18,6 +18,26 @@ auto failure(errc code, std::string message, std::string context = {}) -> error 
     return {code, std::move(message), std::move(context)};
 }
 
+struct decode_budget {
+    object_read_limits limits;
+    std::uint64_t used{};
+    std::optional<std::uint64_t> target;
+
+    auto consume(std::uint64_t size) -> result<void> {
+        const auto limit = 2 * target.value_or(limits.object_bytes) + limits.read_slack_bytes;
+        if (used > limit || size > limit - used)
+            return std::unexpected(failure(errc::corrupt, "Git object read budget exceeded"));
+        used += size;
+        return {};
+    }
+
+    auto set_target(std::uint64_t size) -> result<void> {
+        if (!target)
+            target = size;
+        return consume(0);
+    }
+};
+
 auto read_file(const std::filesystem::path& path) -> result<std::vector<std::byte>> {
     auto input = std::ifstream{path, std::ios::binary | std::ios::ate};
     if (!input)
@@ -32,33 +52,6 @@ auto read_file(const std::filesystem::path& path) -> result<std::vector<std::byt
     if (!input && !bytes.empty())
         return std::unexpected(failure(errc::io, "cannot read Git file", path.string()));
     return bytes;
-}
-
-auto inflate(std::span<const std::byte> input, std::string_view context)
-    -> result<std::vector<std::byte>> {
-    auto stream = z_stream{};
-    stream.next_in = reinterpret_cast<Bytef*>(const_cast<std::byte*>(input.data()));
-    stream.avail_in = static_cast<uInt>(input.size());
-    if (inflateInit(&stream) != Z_OK)
-        return std::unexpected(
-            failure(errc::internal, "cannot initialize zlib", std::string{context}));
-    std::vector<std::byte> output;
-    std::array<std::byte, 64 * 1024> block{};
-    int status{};
-    do {
-        stream.next_out = reinterpret_cast<Bytef*>(block.data());
-        stream.avail_out = static_cast<uInt>(block.size());
-        status = ::inflate(&stream, Z_NO_FLUSH);
-        if (status != Z_OK && status != Z_STREAM_END) {
-            inflateEnd(&stream);
-            return std::unexpected(
-                failure(errc::corrupt, "cannot inflate Git object", std::string{context}));
-        }
-        output.insert(
-            output.end(), block.begin(), block.begin() + (block.size() - stream.avail_out));
-    } while (status != Z_STREAM_END);
-    inflateEnd(&stream);
-    return output;
 }
 
 auto deflate(std::span<const std::byte> input, std::string_view context)
@@ -315,50 +308,6 @@ auto cached_pack_offset(std::span<const pack_index_entry> entries, const sha1& i
     return found->offset;
 }
 
-struct inflated_pack {
-    std::vector<std::byte> bytes;
-};
-
-auto inflate_pack(std::istream& input, const std::filesystem::path& path, std::uint64_t offset)
-    -> result<inflated_pack> {
-    input.clear();
-    input.seekg(static_cast<std::streamoff>(offset));
-    auto stream = z_stream{};
-    if (inflateInit(&stream) != Z_OK)
-        return std::unexpected(failure(errc::internal, "cannot initialize zlib", path.string()));
-    std::array<std::byte, 64 * 1024> input_block{};
-    std::array<std::byte, 64 * 1024> output_block{};
-    inflated_pack output{};
-    int status = Z_OK;
-    while (status != Z_STREAM_END) {
-        if (stream.avail_in == 0) {
-            input.read(reinterpret_cast<char*>(input_block.data()),
-                       static_cast<std::streamsize>(input_block.size()));
-            const auto count = input.gcount();
-            if (count <= 0) {
-                inflateEnd(&stream);
-                return std::unexpected(
-                    failure(errc::corrupt, "truncated compressed Git object", path.string()));
-            }
-            stream.next_in = reinterpret_cast<Bytef*>(input_block.data());
-            stream.avail_in = static_cast<uInt>(count);
-        }
-        stream.next_out = reinterpret_cast<Bytef*>(output_block.data());
-        stream.avail_out = static_cast<uInt>(output_block.size());
-        status = ::inflate(&stream, Z_NO_FLUSH);
-        if (status != Z_OK && status != Z_STREAM_END) {
-            inflateEnd(&stream);
-            return std::unexpected(
-                failure(errc::corrupt, "cannot inflate packed Git object", path.string()));
-        }
-        output.bytes.insert(output.bytes.end(),
-                            output_block.begin(),
-                            output_block.begin() + (output_block.size() - stream.avail_out));
-    }
-    inflateEnd(&stream);
-    return output;
-}
-
 auto delta_size(std::span<const std::byte> input, std::size_t& offset) -> result<std::uint64_t> {
     std::uint64_t value{};
     unsigned shift{};
@@ -366,6 +315,9 @@ auto delta_size(std::span<const std::byte> input, std::size_t& offset) -> result
         if (offset == input.size() || shift >= 64)
             return std::unexpected(failure(errc::corrupt, "invalid Git delta header"));
         const auto byte = std::to_integer<unsigned char>(input[offset++]);
+        if (static_cast<std::uint64_t>(byte & 0x7fU) >
+            (std::numeric_limits<std::uint64_t>::max() >> shift))
+            return std::unexpected(failure(errc::corrupt, "invalid Git delta header"));
         value |= static_cast<std::uint64_t>(byte & 0x7fU) << shift;
         if ((byte & 0x80U) == 0)
             return value;
@@ -373,20 +325,121 @@ auto delta_size(std::span<const std::byte> input, std::size_t& offset) -> result
     }
 }
 
-auto apply_delta(std::span<const std::byte> base, std::span<const std::byte> delta)
-    -> result<std::vector<std::byte>> {
+// A missing expected size denotes a loose object: read its bounded header before its body.
+auto inflate_object(std::istream& input,
+                    const std::filesystem::path& path,
+                    std::uint64_t offset,
+                    std::optional<std::uint64_t> expected_size,
+                    decode_budget& budget,
+                    bool delta = false) -> result<std::vector<std::byte>> {
+    input.clear();
+    input.seekg(static_cast<std::streamoff>(offset));
+    auto stream = z_stream{};
+    if (inflateInit(&stream) != Z_OK)
+        return std::unexpected(failure(errc::internal, "cannot initialize zlib", path.string()));
+    struct end_stream {
+        z_stream& stream;
+        ~end_stream() {
+            inflateEnd(&stream);
+        }
+    } cleanup{stream};
+    std::array<std::byte, 64 * 1024> input_block{};
+    std::array<std::byte, 64 * 1024> output_block{};
+    std::vector<std::byte> output;
+    auto maximum = expected_size.value_or(64);
+    bool header_pending = !expected_size;
+    bool target_pending = delta && !budget.target;
+    int status = Z_OK;
+    while (status != Z_STREAM_END) {
+        if (stream.avail_in == 0) {
+            input.read(reinterpret_cast<char*>(input_block.data()),
+                       static_cast<std::streamsize>(input_block.size()));
+            if (input.gcount() <= 0)
+                return std::unexpected(
+                    failure(errc::corrupt, "truncated compressed Git object", path.string()));
+            stream.next_in = reinterpret_cast<Bytef*>(input_block.data());
+            stream.avail_in = static_cast<uInt>(input.gcount());
+        }
+        const auto capacity =
+            header_pending || target_pending
+                ? 1ULL
+                : std::min<std::uint64_t>(output_block.size(), maximum - output.size() + 1);
+        stream.next_out = reinterpret_cast<Bytef*>(output_block.data());
+        stream.avail_out = static_cast<uInt>(capacity);
+        status = ::inflate(&stream, Z_NO_FLUSH);
+        if (status != Z_OK && status != Z_STREAM_END)
+            return std::unexpected(
+                failure(errc::corrupt, "cannot inflate Git object", path.string()));
+        const auto count = capacity - stream.avail_out;
+        // Allow fixed-Huffman expansion while bounding streams of empty compressed blocks.
+        if (count > maximum - output.size() || stream.total_in > maximum + maximum / 4 + 64 * 1024)
+            return std::unexpected(
+                failure(errc::corrupt, "Git object inflation limit exceeded", path.string()));
+        if (const auto charged = budget.consume(count); !charged)
+            return std::unexpected(charged.error());
+        output.insert(output.end(), output_block.begin(), output_block.begin() + count);
+        if (header_pending) {
+            if (!output.empty() && output.back() == std::byte{}) {
+                const auto header = std::string_view{reinterpret_cast<const char*>(output.data()),
+                                                     output.size() - 1};
+                const auto space = header.find(' ');
+                std::uint64_t size{};
+                if (space == std::string_view::npos || !parse_kind(header.substr(0, space)))
+                    return std::unexpected(failure(errc::corrupt, "invalid Git object header"));
+                const auto [end, code] =
+                    std::from_chars(header.data() + space + 1, header.data() + header.size(), size);
+                if (code != std::errc{} || end != header.data() + header.size() ||
+                    size > budget.limits.object_bytes)
+                    return std::unexpected(
+                        failure(errc::corrupt, "Git object size limit exceeded"));
+                maximum = output.size() + size;
+                expected_size = maximum;
+                header_pending = false;
+                if (const auto target = budget.set_target(size); !target)
+                    return std::unexpected(target.error());
+            } else if (output.size() >= 64) {
+                return std::unexpected(failure(errc::corrupt, "invalid Git object header"));
+            }
+        } else if (target_pending) {
+            std::size_t cursor{};
+            const auto source = delta_size(output, cursor);
+            const auto target = delta_size(output, cursor);
+            if (source && target) {
+                if (*target > budget.limits.object_bytes)
+                    return std::unexpected(
+                        failure(errc::corrupt, "Git delta result limit exceeded"));
+                if (const auto sized = budget.set_target(*target); !sized)
+                    return std::unexpected(sized.error());
+                target_pending = false;
+            } else if (output.size() >= 20) {
+                return std::unexpected(failure(errc::corrupt, "invalid Git delta header"));
+            }
+        }
+    }
+    if (header_pending || target_pending || !expected_size || output.size() != *expected_size)
+        return std::unexpected(failure(errc::corrupt, "Git object size mismatch", path.string()));
+    return output;
+}
+
+auto apply_delta(std::span<const std::byte> base,
+                 std::span<const std::byte> delta,
+                 decode_budget& budget) -> result<std::vector<std::byte>> {
     std::size_t offset{};
     const auto source_size = delta_size(delta, offset);
     const auto result_size = delta_size(delta, offset);
     if (!source_size || !result_size || *source_size != base.size() ||
         *result_size > std::numeric_limits<std::size_t>::max())
         return std::unexpected(failure(errc::corrupt, "invalid Git delta sizes"));
+    if (*result_size > budget.limits.object_bytes)
+        return std::unexpected(failure(errc::corrupt, "Git delta result limit exceeded"));
+    if (const auto charged = budget.consume(*result_size); !charged)
+        return std::unexpected(charged.error());
     std::vector<std::byte> output;
-    output.reserve(static_cast<std::size_t>(*result_size));
     while (offset < delta.size()) {
         const auto instruction = std::to_integer<unsigned char>(delta[offset++]);
         if ((instruction & 0x80U) == 0) {
-            if (instruction == 0 || offset + instruction > delta.size())
+            if (instruction == 0 || instruction > delta.size() - offset ||
+                instruction > *result_size - output.size())
                 return std::unexpected(failure(errc::corrupt, "invalid Git delta insertion"));
             output.insert(
                 output.end(), delta.begin() + offset, delta.begin() + offset + instruction);
@@ -412,7 +465,8 @@ auto apply_delta(std::span<const std::byte> base, std::span<const std::byte> del
             }
         if (size == 0)
             size = 0x10000U;
-        if (source_offset > base.size() || size > base.size() - source_offset)
+        if (source_offset > base.size() || size > base.size() - source_offset ||
+            size > *result_size - output.size())
             return std::unexpected(failure(errc::corrupt, "Git delta copy exceeds base"));
         output.insert(
             output.end(), base.begin() + source_offset, base.begin() + source_offset + size);
@@ -438,7 +492,13 @@ auto kind_name(object_kind kind) -> std::string_view {
     return "unknown";
 }
 
-object_store::object_store(std::filesystem::path directory) : directory_(std::move(directory)) {}
+object_store::object_store(std::filesystem::path directory, object_read_limits limits)
+    : directory_(std::move(directory)), limits_(limits) {
+    const object_read_limits defaults;
+    limits_.object_bytes = std::min(limits_.object_bytes, defaults.object_bytes);
+    limits_.read_slack_bytes = std::min(limits_.read_slack_bytes, defaults.read_slack_bytes);
+    limits_.delta_depth = std::min(limits_.delta_depth, defaults.delta_depth);
+}
 
 auto object_store::stream_for(const std::filesystem::path& path) -> result<std::ifstream*> {
     const auto found = std::ranges::find(streams_, path, &pack_stream::path);
@@ -458,170 +518,218 @@ auto object_store::stream_for(const std::filesystem::path& path) -> result<std::
     return streams_.front().input.get();
 }
 
+// Resolves delta chains iteratively: each link's program is inflated and kept until the base is
+// found, then applied outward, so chain length never reaches the native stack.
 auto object_store::read(const sha1& id) -> result<object> {
-    const auto hex = sha1_hex(id);
-    if (const auto cached = delta_cache_.find(hex); cached != delta_cache_.end()) {
-        delta_lru_.splice(delta_lru_.begin(), delta_lru_, cached->second.position);
-        return cached->second.value;
-    }
-    const auto compressed = read_file(directory_ / "objects" / hex.substr(0, 2) / hex.substr(2));
-    if (compressed) {
-        const auto raw = inflate(*compressed, hex);
-        if (!raw)
-            return std::unexpected(raw.error());
-        return parse_object(*raw, id);
-    }
-    if (compressed.error().code != errc::not_found)
-        return std::unexpected(compressed.error());
-
-    std::error_code code;
-    const auto pack_directory = directory_ / "objects" / "pack";
-    if (!std::filesystem::exists(pack_directory))
-        return std::unexpected(failure(errc::not_found, "Git object is not present", hex));
-    for (std::filesystem::directory_iterator it{pack_directory, code}, end; !code && it != end;
-         it.increment(code)) {
-        if (it->path().extension() != ".idx")
-            continue;
-        if (indexed_pack_ != it->path()) {
-            const auto entries = pack_index_entries(it->path());
-            if (!entries)
-                return std::unexpected(entries.error());
-            indexed_pack_ = it->path();
-            indexed_objects_ = *entries;
+    auto cache = [this](const object& value) {
+        constexpr std::uint64_t delta_cache_limit = 32U * 1024U * 1024U;
+        const auto name = sha1_hex(value.id);
+        if (value.payload.size() > delta_cache_limit)
+            return;
+        if (const auto found = delta_cache_.find(name); found != delta_cache_.end()) {
+            delta_lru_.splice(delta_lru_.begin(), delta_lru_, found->second.position);
+            return;
         }
-        const auto offset =
-            indexed_objects_.empty()
-                ? pack_offset(it->path(), id)
-                : result<std::optional<std::uint64_t>>{cached_pack_offset(indexed_objects_, id)};
-        if (!offset)
-            return std::unexpected(offset.error());
-        if (!*offset)
-            continue;
-        auto pack = it->path();
-        pack.replace_extension(".pack");
-        auto cache = [this](const object& value) {
-            constexpr std::uint64_t delta_cache_limit = 32U * 1024U * 1024U;
-            const auto name = sha1_hex(value.id);
-            if (value.payload.size() > delta_cache_limit)
-                return;
-            if (const auto found = delta_cache_.find(name); found != delta_cache_.end()) {
-                delta_lru_.splice(delta_lru_.begin(), delta_lru_, found->second.position);
-                return;
+        while (delta_cache_bytes_ + value.payload.size() > delta_cache_limit) {
+            const auto oldest = delta_cache_.find(delta_lru_.back());
+            delta_cache_bytes_ -= oldest->second.value.payload.size();
+            delta_cache_.erase(oldest);
+            delta_lru_.pop_back();
+        }
+        delta_cache_bytes_ += value.payload.size();
+        delta_lru_.push_front(name);
+        delta_cache_.emplace(name, cached_object{value, delta_lru_.begin()});
+    };
+    struct delta_link {
+        std::vector<std::byte> program;
+        sha1 expected;
+    };
+    decode_budget budget{.limits = limits_};
+    std::vector<delta_link> chain;
+    std::set<std::pair<std::filesystem::path, std::uint64_t>> visited;
+    auto expected = id;
+    // A name to find in the cache, loose storage or any pack; empty while following an offset.
+    auto lookup = std::optional<sha1>{id};
+    std::filesystem::path index;
+    std::filesystem::path pack;
+    std::uint64_t position{};
+    object base{};
+    for (;;) {
+        if (chain.size() > limits_.delta_depth)
+            return std::unexpected(failure(errc::corrupt, "Git delta depth limit exceeded"));
+        if (lookup) {
+            const auto hex = sha1_hex(*lookup);
+            if (const auto cached = delta_cache_.find(hex); cached != delta_cache_.end()) {
+                const auto size = cached->second.value.payload.size();
+                if (const auto target = budget.set_target(size); !target)
+                    return std::unexpected(target.error());
+                if (const auto charged = budget.consume(size); !charged)
+                    return std::unexpected(charged.error());
+                delta_lru_.splice(delta_lru_.begin(), delta_lru_, cached->second.position);
+                base = cached->second.value;
+                break;
             }
-            while (delta_cache_bytes_ + value.payload.size() > delta_cache_limit) {
-                const auto oldest = delta_cache_.find(delta_lru_.back());
-                delta_cache_bytes_ -= oldest->second.value.payload.size();
-                delta_cache_.erase(oldest);
-                delta_lru_.pop_back();
+            const auto loose_path = directory_ / "objects" / hex.substr(0, 2) / hex.substr(2);
+            auto loose = std::ifstream{loose_path, std::ios::binary};
+            if (loose) {
+                const auto raw = inflate_object(loose, loose_path, 0, {}, budget);
+                if (!raw)
+                    return std::unexpected(raw.error());
+                auto parsed = parse_object(*raw, *lookup);
+                if (!parsed)
+                    return std::unexpected(parsed.error());
+                base = std::move(*parsed);
+                break;
             }
-            delta_cache_bytes_ += value.payload.size();
-            delta_lru_.push_front(name);
-            delta_cache_.emplace(name, cached_object{value, delta_lru_.begin()});
-        };
-        auto decode = [&](auto&& self,
-                          std::uint64_t position,
-                          std::optional<sha1> expected) -> result<object> {
-            const auto input = stream_for(pack);
-            if (!input)
-                return std::unexpected(input.error());
-            const auto header = read_at(**input, pack, position, 64);
-            if (!header)
-                return std::unexpected(header.error());
-            std::size_t cursor{};
-            auto byte = std::to_integer<unsigned char>(header->at(cursor++));
-            const auto type = (byte >> 4U) & 7U;
-            std::uint64_t size = byte & 0x0fU;
-            unsigned shift = 4;
+            std::error_code code;
+            const auto pack_directory = directory_ / "objects" / "pack";
+            if (!std::filesystem::exists(pack_directory))
+                return std::unexpected(failure(errc::not_found, "Git object is not present", hex));
+            auto found = std::optional<std::uint64_t>{};
+            for (std::filesystem::directory_iterator it{pack_directory, code}, end;
+                 !code && it != end;
+                 it.increment(code)) {
+                if (it->path().extension() != ".idx")
+                    continue;
+                if (indexed_pack_ != it->path()) {
+                    const auto entries = pack_index_entries(it->path());
+                    if (!entries)
+                        return std::unexpected(entries.error());
+                    indexed_pack_ = it->path();
+                    indexed_objects_ = *entries;
+                }
+                const auto offset = indexed_objects_.empty()
+                                        ? pack_offset(it->path(), *lookup)
+                                        : result<std::optional<std::uint64_t>>{
+                                              cached_pack_offset(indexed_objects_, *lookup)};
+                if (!offset)
+                    return std::unexpected(offset.error());
+                if (*offset) {
+                    found = **offset;
+                    index = it->path();
+                    break;
+                }
+            }
+            if (code)
+                return std::unexpected(failure(errc::io, code.message(), pack_directory.string()));
+            if (!found)
+                return std::unexpected(failure(errc::not_found, "Git object is not present", hex));
+            pack = index;
+            pack.replace_extension(".pack");
+            position = *found;
+            expected = *lookup;
+            lookup.reset();
+        }
+        if (!visited.emplace(pack, position).second)
+            return std::unexpected(failure(errc::corrupt, "cyclic Git delta base"));
+        const auto input = stream_for(pack);
+        if (!input)
+            return std::unexpected(input.error());
+        const auto header = read_at(**input, pack, position, 64);
+        if (!header)
+            return std::unexpected(header.error());
+        std::size_t cursor{};
+        auto byte = std::to_integer<unsigned char>(header->at(cursor++));
+        const auto type = (byte >> 4U) & 7U;
+        std::uint64_t size = byte & 0x0fU;
+        unsigned shift = 4;
+        while ((byte & 0x80U) != 0) {
+            if (cursor == header->size() || shift >= 64)
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid packed Git header", pack.string()));
+            byte = std::to_integer<unsigned char>(header->at(cursor++));
+            if (static_cast<std::uint64_t>(byte & 0x7fU) >
+                (std::numeric_limits<std::uint64_t>::max() >> shift))
+                return std::unexpected(
+                    failure(errc::corrupt, "invalid packed Git header", pack.string()));
+            size |= static_cast<std::uint64_t>(byte & 0x7fU) << shift;
+            shift += 7;
+        }
+        if (size > limits_.object_bytes)
+            return std::unexpected(failure(errc::corrupt, "Git object size limit exceeded"));
+        if (type < 1U || type > 7U || type == 5U)
+            return std::unexpected(failure(errc::corrupt, "invalid packed Git object"));
+        if (type <= 4U) {
+            if (const auto target = budget.set_target(size); !target)
+                return std::unexpected(target.error());
+        }
+        auto base_position = std::optional<std::uint64_t>{};
+        auto reference = sha1{};
+        if (type == 6U) {
+            if (cursor == header->size())
+                return std::unexpected(
+                    failure(errc::corrupt, "truncated OFS_DELTA", pack.string()));
+            byte = std::to_integer<unsigned char>(header->at(cursor++));
+            std::uint64_t distance = byte & 0x7fU;
             while ((byte & 0x80U) != 0) {
-                if (cursor == header->size() || shift >= 64)
-                    return std::unexpected(
-                        failure(errc::corrupt, "invalid packed Git header", pack.string()));
-                byte = std::to_integer<unsigned char>(header->at(cursor++));
-                size |= static_cast<std::uint64_t>(byte & 0x7fU) << shift;
-                shift += 7;
-            }
-            auto base = std::optional<object>{};
-            if (type == 6U) {
-                if (cursor == header->size())
+                if (cursor == header->size() ||
+                    distance >= (std::numeric_limits<std::uint64_t>::max() >> 7U))
                     return std::unexpected(
                         failure(errc::corrupt, "truncated OFS_DELTA", pack.string()));
                 byte = std::to_integer<unsigned char>(header->at(cursor++));
-                std::uint64_t distance = byte & 0x7fU;
-                while ((byte & 0x80U) != 0) {
-                    if (cursor == header->size())
-                        return std::unexpected(
-                            failure(errc::corrupt, "truncated OFS_DELTA", pack.string()));
-                    byte = std::to_integer<unsigned char>(header->at(cursor++));
-                    distance = ((distance + 1U) << 7U) | (byte & 0x7fU);
-                }
-                if (distance > position)
-                    return std::unexpected(
-                        failure(errc::corrupt, "invalid OFS_DELTA base", pack.string()));
-                const auto base_id =
-                    pack_id_at_offset(it->path(), indexed_objects_, position - distance);
-                if (!base_id)
-                    return std::unexpected(base_id.error());
-                if (!*base_id)
-                    return std::unexpected(failure(
-                        errc::corrupt, "OFS_DELTA base is absent from index", pack.string()));
-                auto decoded = self(self, position - distance, *base_id);
-                if (!decoded)
-                    return std::unexpected(decoded.error());
-                base = std::move(*decoded);
-            } else if (type == 7U) {
-                if (cursor + sha1{}.size() > header->size())
-                    return std::unexpected(
-                        failure(errc::corrupt, "truncated REF_DELTA", pack.string()));
-                sha1 base_id{};
-                std::ranges::copy_n(header->begin() + cursor, base_id.size(), base_id.begin());
-                cursor += base_id.size();
-                auto decoded = read(base_id);
-                if (!decoded)
-                    return std::unexpected(decoded.error());
-                base = std::move(*decoded);
+                distance = ((distance + 1U) << 7U) | (byte & 0x7fU);
             }
-            const auto inflated_input = stream_for(pack);
-            if (!inflated_input)
-                return std::unexpected(inflated_input.error());
-            const auto inflated = inflate_pack(**inflated_input, pack, position + cursor);
-            if (!inflated)
-                return std::unexpected(inflated.error());
-            object output{};
-            if (type == 6U || type == 7U) {
-                if (inflated->bytes.size() != size)
-                    return std::unexpected(
-                        failure(errc::corrupt, "packed Git delta size mismatch", pack.string()));
-                const auto resolved = apply_delta(base->payload, inflated->bytes);
-                if (!resolved)
-                    return std::unexpected(resolved.error());
-                output = {base->kind, expected.value_or(sha1{}), *resolved};
-            } else {
-                const auto kind = type == 1U   ? object_kind::commit
-                                  : type == 2U ? object_kind::tree
-                                  : type == 3U ? object_kind::blob
-                                  : type == 4U ? object_kind::tag
-                                               : object_kind{};
-                if (type < 1U || type > 4U || inflated->bytes.size() != size)
-                    return std::unexpected(
-                        failure(errc::corrupt, "invalid packed Git object", pack.string()));
-                output = {kind, expected.value_or(sha1{}), std::move(inflated->bytes)};
-            }
-            if (expected && sha1_hash(object_bytes(output.kind, output.payload)) != *expected)
+            if (distance == 0 || distance > position)
                 return std::unexpected(
-                    failure(errc::corrupt, "Git object SHA-1 mismatch", sha1_hex(*expected)));
-            if (expected)
-                cache(output);
-            return output;
-        };
-        auto object = decode(decode, **offset, id);
-        if (!object)
-            return std::unexpected(object.error());
-        cache(*object);
-        return object;
+                    failure(errc::corrupt, "invalid OFS_DELTA base", pack.string()));
+            // The cached entries may belong to another pack after a reference lookup.
+            const auto entries = indexed_pack_ == index
+                                     ? std::span<const pack_index_entry>{indexed_objects_}
+                                     : std::span<const pack_index_entry>{};
+            const auto base_id = pack_id_at_offset(index, entries, position - distance);
+            if (!base_id)
+                return std::unexpected(base_id.error());
+            if (!*base_id)
+                return std::unexpected(
+                    failure(errc::corrupt, "OFS_DELTA base is absent from index", pack.string()));
+            base_position = position - distance;
+            reference = **base_id;
+        } else if (type == 7U) {
+            if (cursor + reference.size() > header->size())
+                return std::unexpected(
+                    failure(errc::corrupt, "truncated REF_DELTA", pack.string()));
+            std::ranges::copy_n(header->begin() + cursor, reference.size(), reference.begin());
+            cursor += reference.size();
+        }
+        const auto inflated_input = stream_for(pack);
+        if (!inflated_input)
+            return std::unexpected(inflated_input.error());
+        auto inflated = inflate_object(
+            **inflated_input, pack, position + cursor, size, budget, type == 6U || type == 7U);
+        if (!inflated)
+            return std::unexpected(inflated.error());
+        if (type <= 4U) {
+            const auto kind = type == 1U   ? object_kind::commit
+                              : type == 2U ? object_kind::tree
+                              : type == 3U ? object_kind::blob
+                                           : object_kind::tag;
+            base = {kind, expected, std::move(*inflated)};
+            if (sha1_hash(object_bytes(base.kind, base.payload)) != expected)
+                return std::unexpected(
+                    failure(errc::corrupt, "Git object SHA-1 mismatch", sha1_hex(expected)));
+            cache(base);
+            break;
+        }
+        chain.push_back({std::move(*inflated), expected});
+        if (base_position) {
+            position = *base_position;
+            expected = reference;
+        } else {
+            lookup = reference;
+        }
     }
-    if (code)
-        return std::unexpected(failure(errc::io, code.message(), pack_directory.string()));
-    return std::unexpected(failure(errc::not_found, "Git object is not present", hex));
+    for (auto link = chain.rbegin(); link != chain.rend(); ++link) {
+        auto resolved = apply_delta(base.payload, link->program, budget);
+        if (!resolved)
+            return std::unexpected(resolved.error());
+        link->program = {};
+        base = {base.kind, link->expected, std::move(*resolved)};
+        if (sha1_hash(object_bytes(base.kind, base.payload)) != link->expected)
+            return std::unexpected(
+                failure(errc::corrupt, "Git object SHA-1 mismatch", sha1_hex(link->expected)));
+        cache(base);
+    }
+    return base;
 }
 
 auto object_store::read_commit(const sha1& id) -> result<commit> {

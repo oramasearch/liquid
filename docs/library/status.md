@@ -122,7 +122,11 @@ historical diff. Whole-file encryption remains the fallback
 
 **Git.** `liquid import git` preserves reachable local Git history and its identity mapping;
 `liquid export git` writes a standalone Git repository and reports compatibility losses
-([`git-interop.md`](git-interop.md)).
+([`git-interop.md`](git-interop.md)). Object inflation and delta reconstruction are bounded
+per read, including cross-pack reference bases; nonprogressing offset bases and excessive
+delta depth are rejected (#443).
+Limits are 4 GiB per object/program/result, 1,024 delta links, and twice the final payload size
+plus 64 MiB of decoded/reconstructed bytes per read.
 
 **Sync and review.** Repository push and pull, signed metadata exchange, missing-object
 negotiation, the public sync server with change and graph-derived per-reference authorization,
