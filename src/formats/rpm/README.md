@@ -6,4 +6,5 @@ provides include the ABI-derived RPM soname form. OpenPGP is deliberately absent
 carried by the adjacent TAAP projection attestation. The minimal reader validates both headers and
 enumerates the cpio payload with file bytes and modes. Generated `%pre`, `%post`, `%preun`, and
 `%postun` values and their `/bin/sh` interpreter tags live in the RPM header and round-trip through
-the reader.
+the reader. The reader copies only those header strings plus name and version, and charges each
+copy and then the decoded payload to one byte budget per read (liquid #473).

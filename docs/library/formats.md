@@ -141,6 +141,13 @@ exactly the control and data gzip members, exposes `.PKGINFO`, and lists data pa
 package bytes remain authoritative; complete read-side codecs remain issue #70. Writer and
 dependency rules are in [projection.md](projection.md).
 
+The RPM reader has one byte budget per read, the caller's `format_limits::byte_budget` (liquid
+#473). It copies only the main-header strings it uses (name, version, and the four maintainer
+scripts), charges each copy to the budget before making it, and decodes the payload only into what
+is left. Index entries that repeat a tag or point many tags at one long value therefore cannot copy
+the header store more times than the budget pays for; a read that runs out fails with
+`unsupported`.
+
 ### Linked binaries
 
 ELF, Mach-O, and PE entries expose bounded section byte ranges, exported symbols, and imported
