@@ -57,8 +57,8 @@ The executable guides in [`../guides/`](../guides/README.md) continue from there
 cmake --install build --prefix /opt/liquid
 ```
 
-The prefix receives `bin/liquid`, `lib/libliquid.a`, `libexec/liquid/` (the wrap hook, the Linux
-remote-action read guard, and the bundled frontend modules), `include/liquid/`, and
+The prefix receives `bin/liquid`, `lib/libliquid.a`, `libexec/liquid/` (the wrap hook, Linux wrap
+supervisor and remote-action read guard, and the bundled frontend modules), `include/liquid/`, and
 `lib/cmake/liquid/` so that `find_package(liquid CONFIG)` works. The complete layout, including
 the exported Capy headers and the private Boost component targets, is in
 [`../library/libliquid.md`](../library/libliquid.md).

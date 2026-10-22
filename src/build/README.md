@@ -1,5 +1,10 @@
 # Build implementation
 
+Linux wrap traces and FUSE observations share namespace-qualified process identities, including
+parallel seed launches. `wrap.cpp` passes coroutine cancellation to the launcher and refuses
+publication when a process identity cannot be read. The [launcher contract](../../docs/library/build-engine.md#linux-process-isolation-447)
+describes PID isolation and cleanup.
+
 Input tree materialisation rejects a reached `conflict` entry with `errc::conflict` and names its
 repository path and digest. Other input trees continue through the ordinary blob and directory
 materialisation path.

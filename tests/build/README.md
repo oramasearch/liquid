@@ -1,5 +1,12 @@
 # Build tests
 
+`test_wrap_processes.cpp` checks PID isolation for both network modes, fresh procfs setup, matching
+observer identities, an outside same-user sentinel, exit status and cancellation of a detached
+signal-ignoring tree. Live namespace tests require unprivileged user/mount/PID namespaces and skip
+with a reason when those are denied; bootstrap and launch-argument checks still run without them.
+The probe's Linux `--identity` mode checks that its identities agree with the real preloaded hook,
+contain their exec-time launch scopes, and refuse zero or malformed scope values.
+
 `test_executor.cpp` exercises public action execution and the private disk-cache invariants. Tests
 that require observation and sandbox enforcement run only when FUSE is configured; the prescribed
 privileged Linux container runs them for real. Portable tests cover action-index persistence,

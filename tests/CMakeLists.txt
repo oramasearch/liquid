@@ -100,6 +100,7 @@ add_executable(liquid-tests
   build/test_symbols.cpp
   build/test_wrap.cpp
   build/test_wrap_plan.cpp
+  build/test_wrap_processes.cpp
   ${LIQUID_HTTP2_TEST_SOURCES}
 )
 if(BUILD_SHARED_LIBS)
@@ -118,6 +119,10 @@ if(BUILD_SHARED_LIBS)
     ${PROJECT_SOURCE_DIR}/src/vfs/xattrs.cpp)
   if(APPLE)
     target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_sources(liquid-tests PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/linux.cpp)
+    target_compile_definitions(liquid-tests PRIVATE
+      LIQUID_WRAP_INIT_PATH="$<TARGET_FILE:liquid-wrap-init>")
   endif()
   target_link_libraries(liquid-tests PRIVATE libzstd_static ZLIB::ZLIB liquid_blake3)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
@@ -177,9 +182,10 @@ target_link_libraries(liquid-http2-test-server PRIVATE
   $<COMPILE_ONLY:Boost::corosio_openssl>)
 target_include_directories(liquid-http2-test-server PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
-if(APPLE)
-  # The macOS wrap hook tests preload the real hook into this tool (liquid#401).
+if(UNIX)
+  # The hook tests and Linux launch-scope tests execute this tool directly.
   add_executable(liquid-wrap-probe build/wrap_probe.c)
+  target_include_directories(liquid-wrap-probe PRIVATE ${PROJECT_SOURCE_DIR}/src)
   add_dependencies(liquid-tests liquid-wrap-probe liquid-wrap-hook)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_WRAP_PROBE="$<TARGET_FILE:liquid-wrap-probe>"
@@ -719,6 +725,9 @@ if(LIQUID_BUILD_CLI)
       target_sources(liquid-offline-runner PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/macos.cpp)
     else()
       target_sources(liquid-offline-runner PRIVATE ${PROJECT_SOURCE_DIR}/src/sandbox/linux.cpp)
+      target_compile_definitions(liquid-offline-runner PRIVATE
+        LIQUID_WRAP_INIT_PATH="$<TARGET_FILE:liquid-wrap-init>")
+      add_dependencies(liquid-offline-runner liquid-wrap-init)
     endif()
     add_test(NAME cli-offline
       COMMAND ${CMAKE_COMMAND}

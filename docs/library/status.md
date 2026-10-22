@@ -206,6 +206,9 @@ the first differing input on a miss. The on-disk action index rebuilds from its 
 The exec-time hook revalidates conditional inputs by BLAKE3-256 and reads only a plan at liquid's
 own location whose bytes hash to the digest liquid passed (#401); process keys are still FNV-1a
 (#449).
+Linux wrap launches, including seeds, verification/replay and network-enabled builds, use a private
+PID namespace and matching procfs with a PID 1 supervisor and cancellation cleanup (#447).
+Kernel-wide procfs identifiers remain visible (#414); see [process isolation](build-engine.md#linux-process-isolation-447).
 
 **Verification.** `liquid verify` re-executes cached actions in fresh sandboxes, compares exit
 status and every output digest, signs a `reproducibility/1` attestation, and permanently

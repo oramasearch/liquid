@@ -396,6 +396,9 @@ if(UNIX)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(liquid-wrap-init src/sandbox/wrap_init.c)
+  target_link_options(liquid-wrap-init PRIVATE -static)
+  target_compile_features(liquid-wrap-init PRIVATE c_std_99)
   add_executable(liquid-read-guard src/sandbox/read_guard.c)
   target_link_options(liquid-read-guard PRIVATE -static)
   target_compile_features(liquid-read-guard PRIVATE c_std_99)
@@ -713,6 +716,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     LIQUID_READ_GUARD_PATH="$<TARGET_FILE:liquid-read-guard>"
     LIQUID_READ_GUARD_FILENAME="$<TARGET_FILE_NAME:liquid-read-guard>")
   add_dependencies(libliquid liquid-read-guard)
+  target_compile_definitions(libliquid PRIVATE
+    LIQUID_WRAP_INIT_PATH="$<TARGET_FILE:liquid-wrap-init>")
+  add_dependencies(libliquid liquid-wrap-init)
 endif()
 target_link_libraries(libliquid
   PUBLIC Boost::capy
@@ -909,7 +915,7 @@ install(TARGETS liquid-hot EXPORT liquidTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  install(TARGETS liquid-read-guard
+  install(TARGETS liquid-read-guard liquid-wrap-init
     RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/liquid)
 endif()
 if(LIQUID_BUILD_FRONTENDS)

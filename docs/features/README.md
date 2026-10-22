@@ -133,7 +133,7 @@ specifies it.
 | [01](01-object-model-and-storage.md) | Object model and storage | The chunk store, Merkle DAG, large-file support, and how everything else sits on it. |
 | [02](02-version-control.md) | Version control | History, branching, first-class conflicts, and **repository composition** — nesting, standalone splits with owned data and retained history, and merging unrelated codebases. |
 | [03](03-diff-and-merge.md) | Diff and merge | Structural diff for source, format-aware diff **inside** zip, HDF5, Parquet, SQLite and OOXML, with a generated codec-tier table. |
-| [04](04-build-engine.md) | Build engine | The incremental query graph, actions, typed `.liquid` targets, early cutoff, compile-as-you-type, and local critical-path traces. |
+| [04](04-build-engine.md) | Build engine | The incremental query graph, actions, typed `.liquid` targets, early cutoff, compile-as-you-type, local critical-path traces, and [Linux wrap process isolation](../library/build-engine.md#linux-process-isolation-447). |
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with content-addressed outputs, miss explanations, byte statistics, and phase attribution. |
 | [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
 | [07](07-dependency-resolution.md) | Dependency resolution | Direct `.liquid` universe loading, canonical record output, empty-universe diagnostics, typed package rules, and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented. |

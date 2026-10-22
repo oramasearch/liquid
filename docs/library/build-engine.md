@@ -318,6 +318,52 @@ adds every configured application database's declared environment key with that 
 URL. It refuses an absent branch before launch. These additions are part of action identity, and
 their presence selects the network-enabled sandbox definition needed to reach PostgreSQL. A wrap
 without session data remains network-denied.
+
+### Linux process isolation (#447)
+
+Every Linux wrap launch creates a private PID namespace, including compilation-database seeds,
+the build driver, verification/replay, and network-enabled session builds. Its `/proc` is a new
+procfs mounted inside that namespace. A wrapped command can enumerate and signal only processes
+in its own namespace and descendants; it cannot signal a same-user process in the invoking
+namespace. Namespace or procfs setup errors stop execution without a fallback.
+
+The bootstrap enters the sandbox root before executing the installed static
+`libexec/liquid/liquid-wrap-init` as PID 1. The supervisor shares the command's root, so
+`/proc/1/root` cannot expose the parent's filesystem. It forks the command, reaps orphaned
+descendants, preserves the command's exit status, and exits when the
+command finishes so the kernel terminates any remaining descendants, including detached sessions.
+Cancellation kills the launcher's process group; a parent-death signal kills the launcher if its
+caller dies, and `unshare --kill-child=KILL` kills PID 1 if the launcher dies.
+The supervisor handles ordinary termination signals and bounds cleanup even
+when descendants ignore them. Interrupted parent waits retry rather than abandoning the tree.
+Cancelled wraps and verifications return an unavailable error before publishing partial outputs
+or treating interrupted verification as a divergent result.
+PID 1 is nondumpable, and command children lose `CAP_SYS_PTRACE` from their current and bounding
+capability sets so they cannot rewrite the supervisor to disable cleanup. Tracing a command's
+own dumpable children still follows the usual kernel permission checks.
+
+The hook and the parent-side FUSE observer use a launch sequence, PID-namespace inode and PID within
+that namespace as the process identity. The launcher holds one namespace descriptor while that
+launch is active; the sequence distinguishes later reuse after the descriptor is closed.
+The trusted bootstrap waits for the parent to pin the namespace before starting the command.
+This keeps reads, writes, parent relationships and exit timing
+aligned across parallel seed namespaces, whose numeric PIDs can repeat. The observer reads the
+identity while the task is blocked in its filesystem request, including the launch sequence in
+the task's exec-time environment, and refuses publication if it cannot identify a task inside a
+private namespace. These transient identities do not enter persisted manifests or process-key
+hashes. Old Linux wrap-hook binaries must be upgraded with libliquid.
+The internal `LIQUID_WRAP_LAUNCH_SEQUENCE` variable must survive exec alongside the hook metadata;
+the launcher supplies it and overrides any caller-provided value. The invoking process must have
+procfs mounted for its own PID namespace; mismatched process views are refused.
+The Linux wrap mechanism is versioned in the sandbox record, so this policy has a different cache
+identity from wraps that ran in the parent PID namespace.
+
+`WrapProcesses.*` checks both network modes, the private proc mount, an outside same-user sentinel,
+exit status and cancellation of a detached tree. Runtime namespace cases skip with a reason when
+the runner denies user/mount/PID namespaces; launch-argument and bootstrap checks still run.
+A private procfs still exposes kernel-wide values such as `/proc/sys/kernel/random/boot_id`:
+this process-isolation fix does not promise to mask those reproducibility inputs (#414).
+
 On Linux, optional `etc`, `lib`, and `lib64` directories from that same toolchain are mounted at
 their conventional absolute paths for dynamic executables and compiler driver configuration; no
 worker-image runtime file is exposed.

@@ -1,5 +1,8 @@
 # Library implementation notes
 
+The [build engine's process-isolation contract](build-engine.md#linux-process-isolation-447)
+records Linux wrap PID namespaces, supervisor cleanup and namespace-qualified observations.
+
 The [documentation index](../README.md#library) lists one entry for each library topic.
 [Implementation status](status.md) is the authoritative inventory of implemented behavior and
 known limits. [libliquid](libliquid.md) covers CMake targets, the installed dependency closure,

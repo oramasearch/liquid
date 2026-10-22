@@ -7,6 +7,13 @@ an explicit network capability; callers cannot enable it through an ordinary `ac
 The offline CLI proof selects a network-only request: macOS preserves ordinary access to the test
 tree and local Unix-domain IPC while `sandbox-exec` denies IP networking, and Linux enters a
 separate network namespace.
+Every Linux wrap path also creates a PID namespace and mounts its own procfs. The static
+`wrap_init.c` supervisor is PID 1: it reaps orphans, returns the command's status and lets the
+kernel kill remaining namespace members on exit. Launcher death and stop-token cancellation
+terminate the whole namespace, including detached sessions. Namespace setup fails closed.
+`process_identity.h` names tasks by launch sequence, namespace inode and local PID so hook traces match the
+parent-side FUSE observations across concurrent launches. Kernel-wide procfs values remain visible;
+see [the process-isolation contract](../../docs/library/build-engine.md#linux-process-isolation-447).
 The profile does not add executable-specific permissions: data actions invoke their recorded
 installed PostgreSQL clients through the pre-existing installed-tool roots, while an ordinary
 action remains unable to execute an arbitrary external binary.

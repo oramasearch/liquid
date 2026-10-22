@@ -80,7 +80,8 @@ the identity/hot ABI and forge-double checks.
 
 `cmake --install build --prefix <p>` lays out `bin/liquid`, `lib/libliquid.a`, `include/liquid/`,
 `lib/cmake/liquid/` (`liquidConfig.cmake`, `liquidConfigVersion.cmake`, and
-`liquidTargets.cmake`), `lib/libliquid-hot`, the wrap hook and Linux remote-action read guard under `libexec/liquid/`,
+`liquidTargets.cmake`), `lib/libliquid-hot`, the wrap hook, Linux wrap supervisor and remote-action
+read guard under `libexec/liquid/`,
 the bundled dynamic frontend modules under `libexec/liquid/frontends/`, plus Capy's public headers
 under `include/boost/`. The liquid export owns
 Capy's `liquid::capy` library target and recreates its `Boost::capy` alias. It carries its
