@@ -133,7 +133,8 @@ untrusted checkpoints, policy reload, source readiness, metrics, REST, and MCP u
 Delta cases create and apply a zstd reference patch, verify its registered attestation, select local
 catalog records whose patch is range-hydrated through the on-disk remote source, fall back through
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.
-The `formats/` cases cover the common registry contract, launch ZIP/tar/HDF5/Parquet/SQLite
+The `formats/` cases cover Mach-O name truncation and cumulative copy budgets across all nlist
+encodings, the common registry contract, launch ZIP/tar/HDF5/Parquet/SQLite
 decoders, exact Tier 1 repack, deterministic tar and SquashFS writing, volatile fields, malformed
 boundaries, nesting limits, and a dynamically loaded C11 module. The strict JSON and `.env` codecs
 used by

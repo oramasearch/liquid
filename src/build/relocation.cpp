@@ -154,6 +154,9 @@ void scan_binary_paths(relocation_report& report, const build_detail::relocation
         bytes[2] == std::byte{'L'} && bytes[3] == std::byte{'F'}) {
         auto image = formats::binary::inspect_elf(bytes);
         if (image) {
+            if (image->truncated) {
+                add_finding(report, file.path, 0, "ELF symbol inspection was truncated");
+            }
             scan_elf_paths(report, file, *image);
         }
         return;
@@ -173,6 +176,9 @@ void scan_binary_paths(relocation_report& report, const build_detail::relocation
     }
     auto image = formats::binary::inspect_macho(bytes);
     if (image) {
+        if (image->truncated) {
+            add_finding(report, file.path, 0, "Mach-O symbol inspection was truncated");
+        }
         scan_macho_paths(report, file, *image);
     }
 }

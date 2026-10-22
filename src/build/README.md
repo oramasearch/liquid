@@ -54,6 +54,8 @@ provenance and SBOMs and owns output-path lookup.
 components, writes SPDX 2.3 and CycloneDX 1.5 from one model, stores signed `sbom/1` claims, and
 performs explicitly marked ELF/Mach-O/PE inference for foreign artifacts through the shared private
 binary readers.
+Truncated symbol inspection is recorded as SBOM analysis evidence and a blocking relocation
+finding. ABI descriptors retain their truncation flag and cannot establish compatibility.
 
 `wrap.cpp` snapshots an existing working tree, uses the persistent project cache and toolchain pin,
 validates saved actions, launches one writable observed mount, derives child actions from process

@@ -56,6 +56,8 @@ and complete target-byte verification gate used by registry and drive clients.
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.
+ABI descriptors expose `truncated`; comparisons fail closed with an `inspection_truncated`
+change when either descriptor contains partial inspection results.
 `build.hpp` also exposes relocation findings, reports, the asynchronous output-tree check, and
 install-prefix wrapper options. Binary-reader and repository-scanning details remain private.
 `projection.hpp` exposes deterministic binary package, Debian source package, OCI, Helm, OSTree,

@@ -400,6 +400,10 @@ repository and CLI container diffs, archive entries use `!/` paths in search, an
 entries are retained as deduplicated blobs beside the verbatim container. Uncompressed tar has a
 deterministic writer, while hard or unsupported format surfaces retain honest tiers and opaque
 reasons ([`formats.md`](formats.md)).
+Mach-O inspection caps each symbol name at 64 KiB and charges retained names and records to the
+registry caller's byte budget, or 16 MiB for other callers; exhaustion preserves partial facts
+and all consumers report truncation. ABI comparisons and relocation approval fail closed for
+incomplete inspection (liquid #475).
 
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository

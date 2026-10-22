@@ -108,6 +108,8 @@ the commit checksum plus text or stable JSON reports. It does not read format wr
 internals.
 `abi.cpp` resolves regular files, blob digests, output paths, and exact result/output pairs through
 the public ABI and repository APIs. It prints stable text or JSON descriptors and comparisons.
+Incomplete descriptors report truncation, and ABI/wrapper comparisons print an
+`inspection_truncated` change with an incompatible verdict.
 
 `policy.cpp` implements `policy check` and `policy explain` through public build APIs. It prints
 canonical rule configuration and per-input verified-identity counts without reading the store
