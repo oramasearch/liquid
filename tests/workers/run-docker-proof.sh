@@ -38,7 +38,8 @@ trap cleanup EXIT
 wait_http() {
   local url=$1
   for _ in $(seq 1 120); do
-    if docker exec "$scheduler" wget -T 1 -qO- "$url" >/dev/null 2>&1; then
+    if docker run --rm --network host --entrypoint wget liquid-linux-ci \
+      -T 1 -qO- "$url" >/dev/null 2>&1; then
       return
     fi
     sleep 0.1
@@ -53,7 +54,8 @@ wait_http() {
 read_scheduler_metrics() {
   local output
   for _ in $(seq 1 120); do
-    if output=$(docker exec "$scheduler" wget -T 1 -qO- http://127.0.0.1:8080/metrics) &&
+    if output=$(docker run --rm --network host --entrypoint wget liquid-linux-ci \
+      -T 1 -qO- http://127.0.0.1:8080/metrics) &&
       grep -q 'liquid_scheduler_' <<<"$output"; then
       echo "$output"
       return
@@ -132,7 +134,13 @@ docker run --rm --privileged --device /dev/fuse \
 
 rm -rf "$runtime"
 mkdir -p "$runtime/scheduler" "$runtime/worker-one" "$runtime/worker-two" \
+  "$runtime/scheduler-home" "$runtime/worker-one-home" "$runtime/worker-two-home" \
   "$runtime/trust/workers"
+# Only the fixture's bind mounts need preparation as root; services keep their image user.
+docker run --rm --network none --user 0:0 --cap-drop ALL --cap-add CHOWN \
+  -v "$runtime:/state" --entrypoint chown "$scheduler_image" -R 65532:65532 \
+  /state/scheduler /state/worker-one /state/worker-two \
+  /state/scheduler-home /state/worker-one-home /state/worker-two-home
 provision_identity "$scheduler_image" scheduler "$runtime/trust/scheduler"
 provision_identity "$worker_image" worker-one "$runtime/trust/workers/worker-one"
 provision_identity "$worker_image" worker-two "$runtime/trust/workers/worker-two"

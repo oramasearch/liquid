@@ -1,5 +1,9 @@
 # Worker fleet tests
 
+The Docker proof prepares its bind-mounted state for UID/GID 65532 before starting services.
+HTTP probes run in a separate CI image, so the scheduler and worker runtime images need no
+download client or build toolchain. The services retain their non-root image user.
+
 `test_scheduler.cpp` pins the private worker protocol's schedule payload and empty idle response,
 action-digest deduplication, recorded-size-class placement, and the one-requeue rule after a
 worker lease expires. `WorkerAuthentication.*` (liquid #416) creates separate TAAP identities in

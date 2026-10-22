@@ -3,7 +3,9 @@
 The two Dockerfiles package the Linux `liquid` executable with distinct scheduler and worker
 entry points. The default build context expects `build-linux/liquid`; override
 `LIQUID_BINARY` when the executable is elsewhere, `LIQUID_READ_GUARD` for its matching static read
-guard, and `LIQUID_BASE` when the prescribed `liquid-linux-ci` image has another local tag.
+guard. Both images run as `65532:65532` on an Ubuntu 24.04 runtime with no CI toolchain;
+`LIQUID_BASE` is no longer supported. The worker also carries the FUSE and namespace utilities its
+sandbox uses; action toolchains arrive through the scheduler's content-addressed store.
 The root `.dockerignore` limits this image context to the default `build-linux` artifacts and the
 acceptance proof's `build/linux` artifacts.
 
@@ -31,6 +33,10 @@ the worker. Rotating an identity means replacing its document on the other side.
 The Compose example uses host networking because that is the acceptance environment. It mounts a
 separate liquid store for each process and gives workers the namespace and FUSE privileges needed
 by the Phase 2 executor. Scheduler control is on port 8080 and the workers use 8081 and 8082.
+All image control listeners default to loopback. Existing state and identity volumes must be owned
+by UID/GID 65532; mounted trust documents must be readable by it. Fresh named volumes inherit the
+image's ownership. See the [image contract](../../docs/build/service-images.md) for permissions,
+network exposure, and the image inspection proof.
 
 Production identity provisioning (creating each identity, distributing the documents, rotating
 them), scheduling policy, and rollout belong to the Phase 6 operator. Configuration remains flags or the environment variables documented in

@@ -1,5 +1,12 @@
 # Build tests
 
+`check-service-templates.py` is the portable `service-image-templates` CTest: all four service
+recipes must select runtime packages, UID/GID 65532, owned writable state, read-only executables,
+and loopback control listeners. `check-service-images.sh <prefix>` checks the built images'
+configured and actual user, filesystem for compilers, permissions, library loading, and identity
+creation without network or extra capabilities. See the
+[image proof](../../docs/build/service-images.md#verification) for the build commands.
+
 `test_executor.cpp` exercises public action execution and the private disk-cache invariants. Tests
 that require observation and sandbox enforcement run only when FUSE is configured; the prescribed
 privileged Linux container runs them for real. Portable tests cover action-index persistence,

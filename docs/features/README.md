@@ -161,6 +161,10 @@ specifies it.
 
 ## Status
 
+The four service image templates use runtime-only Ubuntu layers, UID/GID 65532, owned state, and
+loopback control listeners; the worker retains its namespace and FUSE utilities. The contract and
+image proof are in [`../build/service-images.md`](../build/service-images.md) (liquid #442).
+
 The implemented Phase 1 chunk store selects a coroutine-native persistence backend. Disk is the
 reference implementation, and the deterministic simulator also runs against an in-memory test
 implementation with injected latency and failures. A repository opened on a shared store keeps all

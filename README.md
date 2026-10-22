@@ -25,6 +25,9 @@ liquid project oci "$change" ...   # ship what you built, with signed provenance
 **libliquid**, and a `liquid` command-line binary, on macOS and Linux. The repository is
 private and no licence has been chosen yet.
 
+The service image templates use non-root runtime layers; their
+[image contract](docs/build/service-images.md) covers state permissions and verification.
+
 ## Contents
 
 - [What Git left on the table](#what-git-left-on-the-table)

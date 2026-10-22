@@ -134,6 +134,7 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 | Page | What it contains |
 |---|---|
 | [`build/local.md`](build/local.md) | Building liquid on a workstation: prerequisites, configure, build, test, run, install, options, and the documentation checks. |
+| [`build/service-images.md`](build/service-images.md) | Non-root service runtime layers, writable state ownership, control listener defaults, and image inspection proof. |
 | [`build/socket-fixtures.md`](build/socket-fixtures.md) | Unix-domain socket limits, bounded temporary fixtures, cleanup, and deep-worktree verification. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, toolchains, the documentation-site job, and the local Linux container proof. |
 | [`build/phase-2-exit-lane-audit.md`](build/phase-2-exit-lane-audit.md) | Why the Phase 2 exit (#299) has not been demonstrated: each candidate machine checked for a FUSE mount, on 2026-09-08 and 2026-10-12, with commands, output and the decision needed. |
