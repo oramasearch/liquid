@@ -413,6 +413,13 @@ ELF name copies and their records share one cumulative inspection allowance, inc
 symbol, version, dynamic-path, and DWARF names and generated signatures. A 64 KiB name cap or an
 exhausted allowance stops collection before copying and reports truncation (liquid #479).
 
+JSON, XML, Parquet compact containers and flat schemas, and ELF DWARF parsing enforce independent
+64-level structural limits and cumulative 1,000,000-unit work allowances (liquid #434). Parquet
+shares work across footer, schema, and page headers; JSON uses ordered decoded-key tracking; XML
+resolves namespaces through a chain of per-element scopes instead of copying them. SQLite b-tree
+and HDF5 group and B-tree traversal reject a 64th level. Structural exhaustion returns an error
+through each common parser entry point.
+
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository
 lookup ([executable guide](../guides/project-from-files.md)). Tier A package and image projection and Debian-only Tier B source projection are

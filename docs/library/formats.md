@@ -66,6 +66,39 @@ member modification times, external attributes, and timestamp extra fields. tar 
 uid, and gid. HDF5 ignores physical object placement, Parquet ignores writer metadata, and SQLite
 ignores the freelist and physical page placement.
 
+## Structural parser limits
+
+JSON, XML, Parquet, ELF DWARF, SQLite, and HDF5 readers bound document structure independently
+of `format_limits::maximum_depth`, which counts nested archives (liquid #434). The shared private
+budget in `src/formats/structural_budget.hpp` permits 64 structural levels, with the root at level
+zero, and 1,000,000 work units. Every descent checks depth before it recurses. Exhaustion returns
+an error, including from recognition paths that invoke these readers.
+
+JSON charges one unit per value and one per object key. An ordered set detects duplicate decoded
+keys in logarithmic comparisons while the value tree preserves source order; escaped spellings of
+the same key remain duplicates. The JSON limits apply to every `formats::json::parse` caller, not
+only format codecs. XML charges every element and attribute. Each element records only the
+namespaces it declares and resolves prefixes by walking outward through its ancestors, so no
+element copies the declarations it inherits. Parquet charges fields, values, collection slots
+before reservation, and schema nodes to one allowance spanning the footer and all column page
+headers. Lists, sets, maps, and structs each check depth; flat schema group traversal checks its
+own depth against the same limit.
+
+ELF decodes indirect DWARF forms iteratively and caps both form chains and the iterative DIE
+parent stack. Compilation units, abbreviations, attributes, DIEs (including null entries), and
+forms share one inspection work allowance across compilation units. Structural exhaustion is an
+inspection error, so ABI, SBOM, relocation, and registry callers receive the same failure.
+Existing 16-level type-reference traversal remains bounded.
+
+SQLite table b-tree traversal and HDF5 group, group B-tree, and chunk B-tree traversal reject a
+64th level. Their cycle checks alone allowed one distinct page or node per level. A chunk B-tree
+past the limit makes its dataset opaque, as other unreadable chunk layouts do; a group or SQLite
+b-tree past the limit fails the unpack. Archive byte and entry limits continue to apply
+separately.
+
+Previously accepted documents beyond these structural or work limits are now rejected. Limits
+are fixed parser safeguards, including when recognition occurs before unpack limits are supplied.
+
 ## Supported subsets
 
 ### ZIP

@@ -1,9 +1,11 @@
 #include "formats/json.hpp"
+#include "formats/structural_budget.hpp"
 
 #include <array>
 #include <charconv>
 #include <cstdint>
 #include <limits>
+#include <set>
 #include <string_view>
 
 namespace liquid::formats::json {
@@ -101,7 +103,10 @@ public:
     }
 
 private:
-    auto item() -> result<value> {
+    auto item(std::size_t depth = 0) -> result<value> {
+        if (!budget_.consume(depth)) {
+            return std::unexpected(json_error("JSON structural limit exceeded", position_));
+        }
         if (position_ == input_.size()) {
             return std::unexpected(json_error("unexpected end of input", position_));
         }
@@ -120,9 +125,9 @@ private:
             return value{std::move(*text)};
         }
         case '[':
-            return array();
+            return array(depth);
         case '{':
-            return object();
+            return object(depth);
         default:
             return numeric();
         }
@@ -291,7 +296,7 @@ private:
         return value{number{std::string{input_.substr(start, position_ - start)}}};
     }
 
-    auto array() -> result<value> {
+    auto array(std::size_t depth) -> result<value> {
         ++position_;
         whitespace();
         auto output = value::array{};
@@ -299,7 +304,7 @@ private:
             return value{std::move(output)};
         }
         while (true) {
-            auto child = item();
+            auto child = item(depth + 1);
             if (!child) {
                 return std::unexpected(child.error());
             }
@@ -315,10 +320,11 @@ private:
         }
     }
 
-    auto object() -> result<value> {
+    auto object(std::size_t depth) -> result<value> {
         ++position_;
         whitespace();
         auto output = value::object{};
+        auto keys = std::set<std::string, std::less<>>{};
         if (consume('}')) {
             return value{std::move(output)};
         }
@@ -330,18 +336,18 @@ private:
             if (!key) {
                 return std::unexpected(key.error());
             }
-            for (const auto& [existing, ignored] : output) {
-                static_cast<void>(ignored);
-                if (existing == *key) {
-                    return std::unexpected(json_error("duplicate object key", position_));
-                }
+            if (!budget_.consume(depth)) {
+                return std::unexpected(json_error("JSON structural limit exceeded", position_));
+            }
+            if (!keys.insert(*key).second) {
+                return std::unexpected(json_error("duplicate object key", position_));
             }
             whitespace();
             if (!consume(':')) {
                 return std::unexpected(json_error("expected colon", position_));
             }
             whitespace();
-            auto child = item();
+            auto child = item(depth + 1);
             if (!child) {
                 return std::unexpected(child.error());
             }
@@ -375,6 +381,7 @@ private:
 
     std::string_view input_;
     std::size_t position_{};
+    structural_budget budget_;
 };
 
 void indent(std::string& output, std::size_t depth) {

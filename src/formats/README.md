@@ -45,3 +45,11 @@ decoding; `binary/codec.cpp` adapts the validated ELF, Mach-O, and PE readers to
 `pdf/` owns the PDF object reader; `xml/` owns namespace-aware XML canonicalisation; `document/`
 owns OOXML, ODF, wheel, and JAR ZIP views; and `model/` owns Jupyter, safetensors, and pickle
 readers. None executes payloads, renders documents, disassembles code, or writes these formats.
+
+`structural_budget.hpp` bounds JSON, XML, Parquet compact metadata/schema/page headers, and
+ELF DWARF decoding independently of archive depth (liquid #434). Documents allow at most 64
+structural levels and 1,000,000 work units; nested containers share the current allowance. JSON
+uses an ordered set of decoded keys and charges each key before insertion. Parquet shares one
+allowance across footer, schema traversal, and all column page headers. `sqlite/` and `hdf5/`
+use the same 64-level limit for b-tree and group traversal. Structural exhaustion returns an
+error, including during ELF inspection.

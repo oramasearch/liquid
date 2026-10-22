@@ -955,12 +955,14 @@ gtest_discover_tests(liquid-cbor-tests DISCOVERY_TIMEOUT 120)
 add_executable(liquid-format-tests
   formats/test_dotenv.cpp
   formats/test_json.cpp
+  formats/test_structural_limits.cpp
   formats/test_macho.cpp
   formats/test_elf_registry.cpp
   formats/test_pe_registry.cpp
   formats/test_registry.cpp
   ${PROJECT_SOURCE_DIR}/src/formats/dotenv.cpp
-  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp)
+  ${PROJECT_SOURCE_DIR}/src/formats/json.cpp
+  ${PROJECT_SOURCE_DIR}/src/formats/xml/xml.cpp)
 target_include_directories(liquid-format-tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(liquid-format-tests PRIVATE
   LIQUID_FORMAT_FIXTURES="${PROJECT_SOURCE_DIR}/tests/fixtures/formats"

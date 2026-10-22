@@ -24,3 +24,13 @@ definitions/requirements; dynamic library/search paths; inline, indirect, line, 
 strings; repeated/overlapping offsets; exact length limits; and cumulative copy budgets (liquid #479).
 `test_elf_registry.cpp` checks caller-budget dispatch, registry truncation, and fail-closed ABI
 comparison for a truncated ELF descriptor.
+
+`test_structural_limits.cpp` checks JSON array/object/mixed depth and wide value and key work,
+XML paired/self-closing depth, sibling/attribute work, and namespace inheritance without
+per-child copies, and Parquet list/set/map/struct depth (including nested map keys), flat
+schemas, pre-reservation work limits, and a shared footer/page-header work allowance
+(liquid #434). It also builds SQLite interior-page chains and HDF5 group, group B-tree, and chunk
+B-tree chains on either side of the depth limit. Notebook recognition and unpacking exercise the
+same JSON limit. `test_elf.cpp` also checks
+DWARF indirect-form limits for both ELF classes and byte orders, the iterative parent stack,
+and shared work across compilation units including null DIEs.

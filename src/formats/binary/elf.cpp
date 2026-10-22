@@ -1,4 +1,5 @@
 #include "formats/binary/elf.hpp"
+#include "formats/structural_budget.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -42,10 +43,12 @@ auto integer(std::span<const std::byte> bytes, std::uint64_t offset, bool little
 // A local limit signal unwinds nested version/DWARF parsing to the one inspector boundary.
 // Charges are cumulative, including temporary and repeated copies, and are never refunded.
 struct name_limit {};
+struct structural_limit {};
 
 struct name_budget {
     image& output;
     std::uint64_t remaining;
+    structural_budget structure;
     static constexpr auto maximum_length = std::size_t{64} * 1024;
 
     auto charge(std::uint64_t bytes) -> void {
@@ -318,6 +321,9 @@ auto abbreviations(std::span<const std::byte> bytes,
         if (!tag || !children) {
             break;
         }
+        if (!budget.structure.consume(0)) {
+            throw structural_limit{};
+        }
         auto value = dwarf_abbreviation{*tag, *children != 0, {}};
         while (cursor.offset < bytes.size()) {
             const auto name = cursor.uleb();
@@ -335,6 +341,9 @@ auto abbreviations(std::span<const std::byte> bytes,
                     return {};
                 }
                 implicit = *parsed;
+            }
+            if (!budget.structure.consume(0)) {
+                throw structural_limit{};
             }
             budget.charge(sizeof(dwarf_attribute));
             value.attributes.push_back({*name, *form, implicit});
@@ -366,20 +375,19 @@ auto form_value(dwarf_cursor& cursor,
                 std::uint64_t str_offsets_base,
                 std::int64_t implicit,
                 name_budget& budget) -> std::optional<dwarf_value> {
-    if (form == 0x16) {
+    auto depth = std::size_t{};
+    for (;;) {
+        if (!budget.structure.consume(depth++)) {
+            throw structural_limit{};
+        }
+        if (form != 0x16) {
+            break;
+        }
         const auto actual = cursor.uleb();
-        return actual ? form_value(cursor,
-                                   *actual,
-                                   address_size,
-                                   offset_size,
-                                   unit_start,
-                                   debug_str,
-                                   line_str,
-                                   str_offsets,
-                                   str_offsets_base,
-                                   implicit,
-                                   budget)
-                      : std::nullopt;
+        if (!actual) {
+            return std::nullopt;
+        }
+        form = *actual;
     }
     auto fixed = [&](std::uint8_t size) -> std::optional<std::uint64_t> {
         switch (size) {
@@ -595,6 +603,9 @@ auto dwarf_records(std::span<const std::byte> bytes,
     auto objects = std::vector<std::uint64_t>{};
     auto unit_at = std::uint64_t{};
     while (unit_at + 11 <= info.size()) {
+        if (!budget.structure.consume(0)) {
+            throw structural_limit{};
+        }
         auto cursor = dwarf_cursor{info, unit_at, little};
         const auto length32 = cursor.take<std::uint32_t>();
         if (!length32 || *length32 == 0) {
@@ -640,6 +651,9 @@ auto dwarf_records(std::span<const std::byte> bytes,
         auto parents = std::vector<std::uint64_t>{};
         auto str_offsets_base = str_offsets.size() >= 8 ? std::uint64_t{8} : std::uint64_t{};
         while (cursor.offset < unit_end) {
+            if (!budget.structure.consume(0)) {
+                throw structural_limit{};
+            }
             const auto node_offset = cursor.offset;
             const auto code = cursor.uleb();
             if (!code) {
@@ -655,6 +669,9 @@ auto dwarf_records(std::span<const std::byte> bytes,
             if (definition == table.end()) {
                 cursor.offset = unit_end;
                 break;
+            }
+            if (!budget.structure.consume(parents.size(), 0)) {
+                throw structural_limit{};
             }
             auto node = dwarf_node{.tag = definition->second.tag};
             auto valid = true;
@@ -980,6 +997,8 @@ auto inspect_elf(std::span<const std::byte> bytes, std::uint64_t byte_budget) ->
         if (!parsed) {
             return std::unexpected(parsed.error());
         }
+    } catch (const structural_limit&) {
+        return std::unexpected(malformed("DWARF structural limit exceeded"));
     } catch (const name_limit&) {
         output.truncated = true;
     }

@@ -1,8 +1,10 @@
 #include "formats/xml/xml.hpp"
+#include "formats/structural_budget.hpp"
 
 #include <algorithm>
 #include <map>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -26,8 +28,7 @@ public:
 
     auto parse() -> result<std::string> {
         skip_misc();
-        auto namespaces = namespace_scope{};
-        auto output = element(namespaces);
+        auto output = element(nullptr);
         if (!output) {
             return std::unexpected(output.error());
         }
@@ -39,7 +40,22 @@ public:
     }
 
 private:
-    using namespace_scope = std::map<std::string, std::string>;
+    // The declarations one element makes. Lookups walk outward through at most the depth
+    // limit, so a child never copies the namespaces its ancestors declared.
+    struct namespace_scope {
+        const namespace_scope* parent{};
+        std::map<std::string, std::string, std::less<>> declared;
+
+        auto find(std::string_view prefix) const -> const std::string* {
+            for (const auto* scope = this; scope != nullptr; scope = scope->parent) {
+                if (const auto found = scope->declared.find(prefix);
+                    found != scope->declared.end()) {
+                    return &found->second;
+                }
+            }
+            return nullptr;
+        }
+    };
 
     auto skip_space() -> void {
         while (position_ < input_.size() &&
@@ -99,14 +115,18 @@ private:
         const auto prefix =
             separator == std::string::npos ? std::string{} : value.substr(0, separator);
         const auto local = separator == std::string::npos ? value : value.substr(separator + 1);
-        const auto found = namespaces.find(prefix);
-        if (found == namespaces.end() || (attribute && prefix.empty())) {
+        const auto* found = namespaces.find(prefix);
+        if (found == nullptr || (attribute && prefix.empty())) {
             return local;
         }
-        return "{" + found->second + "}" + local;
+        return "{" + *found + "}" + local;
     }
 
-    auto element(namespace_scope namespaces) -> result<std::string> {
+    auto element(const namespace_scope* inherited, std::size_t depth = 0) -> result<std::string> {
+        if (!budget_.consume(depth)) {
+            return std::unexpected(failure("XML structural limit exceeded"));
+        }
+        auto namespaces = namespace_scope{.parent = inherited};
         if (position_ == input_.size() || input_[position_++] != '<') {
             return std::unexpected(failure("XML element is absent"));
         }
@@ -130,6 +150,9 @@ private:
                 ++position_;
                 break;
             }
+            if (!budget_.consume(depth)) {
+                return std::unexpected(failure("XML structural limit exceeded"));
+            }
             auto raw_attribute = name();
             if (!raw_attribute) {
                 return std::unexpected(raw_attribute.error());
@@ -144,9 +167,9 @@ private:
                 return std::unexpected(value.error());
             }
             if (*raw_attribute == "xmlns") {
-                namespaces[""] = *value;
+                namespaces.declared[""] = *value;
             } else if (raw_attribute->starts_with("xmlns:")) {
-                namespaces[raw_attribute->substr(6)] = *value;
+                namespaces.declared[raw_attribute->substr(6)] = *value;
             } else if (!(omit_relationship_ids_ && raw_attribute->ends_with(":id") &&
                          value->starts_with("rId"))) {
                 attributes.emplace_back(expanded_name(*raw_attribute, namespaces, true),
@@ -181,7 +204,7 @@ private:
                     position_ = end + 3;
                     continue;
                 }
-                auto child = element(namespaces);
+                auto child = element(&namespaces, depth + 1);
                 if (!child) {
                     return std::unexpected(child.error());
                 }
@@ -201,6 +224,7 @@ private:
 
     std::string_view input_;
     std::size_t position_{};
+    structural_budget budget_;
     bool omit_relationship_ids_{};
 };
 

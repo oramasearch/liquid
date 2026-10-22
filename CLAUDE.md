@@ -188,6 +188,10 @@ When changing linked-binary name inspection, preserve the retained-byte and trun
 in [`src/formats/binary/README.md`](src/formats/binary/README.md) across inspector and registry callers,
 including ELF section, symbol, version, dynamic-path, and DWARF name copies.
 
+Structural parser depth and work limits are documented in
+[`docs/library/formats.md`](docs/library/formats.md#structural-parser-limits) and apply to
+recognition and unpacking independently of archive limits (liquid #434).
+
 ### Before finishing — run all five
 
 The first two are commands and got run every time; the last two are prose and got

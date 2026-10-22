@@ -4,6 +4,7 @@
 
 #include "elf_fixture.hpp"
 #include "formats/binary/elf.hpp"
+#include "formats/structural_budget.hpp"
 
 namespace {
 
@@ -188,6 +189,84 @@ TEST(ElfInspector, validates_headers_before_budget_exhaustion) {
     auto bytes = fixture.bytes();
     bytes[0] = std::byte{};
     EXPECT_FALSE(inspect_elf(bytes, 0));
+}
+
+TEST(ElfInspector, bounds_indirect_forms_in_every_elf_class_and_byte_order) {
+    for (const auto is64 : {false, true}) {
+        for (const auto little : {false, true}) {
+            for (const auto depth : {63U, 64U}) {
+                SCOPED_TRACE(::testing::Message() << is64 << '/' << little << '/' << depth);
+                auto fixture = elf_fixture{.is64 = is64, .little = little};
+                fixture.dwarf(0x16, 1, 1);
+                auto& info = fixture.sections.back().data;
+                info.insert(info.begin() + 12, depth - 1, std::byte{0x16});
+                fixture.put(info, 0, info.size() - 4, 4);
+                const auto parsed = inspect_elf(fixture.bytes());
+                EXPECT_EQ(parsed.has_value(),
+                          depth < liquid::formats::structural_budget::maximum_depth);
+                if (!parsed) {
+                    EXPECT_NE(parsed.error().message.find("structural limit"), std::string::npos);
+                }
+            }
+        }
+    }
+}
+
+TEST(ElfInspector, rejects_a_very_long_indirect_chain) {
+    auto fixture = elf_fixture{};
+    fixture.dwarf(0x16, 1, 1);
+    auto& info = fixture.sections.back().data;
+    info.insert(info.begin() + 12, 100000, std::byte{0x16});
+    fixture.put(info, 0, info.size() - 4, 4);
+    const auto parsed = inspect_elf(fixture.bytes());
+    ASSERT_FALSE(parsed);
+    EXPECT_NE(parsed.error().message.find("structural limit"), std::string::npos);
+}
+
+TEST(ElfInspector, bounds_the_iterative_dwarf_parent_stack) {
+    for (const auto depth : {64U, 65U}) {
+        auto fixture = elf_fixture{};
+        fixture.add(".debug_abbrev",
+                    {std::byte{1},
+                     std::byte{0x0b},
+                     std::byte{1},
+                     std::byte{0},
+                     std::byte{0},
+                     std::byte{0}});
+        auto info = std::vector<std::byte>(11);
+        fixture.put(info, 4, 4, 2);
+        fixture.put(info, 10, 8, 1);
+        info.insert(info.end(), depth, std::byte{1});
+        info.insert(info.end(), depth, std::byte{0});
+        fixture.put(info, 0, info.size() - 4, 4);
+        fixture.add(".debug_info", std::move(info));
+        const auto parsed = inspect_elf(fixture.bytes());
+        EXPECT_EQ(parsed.has_value(), depth <= 64);
+        if (!parsed) {
+            EXPECT_NE(parsed.error().message.find("structural limit"), std::string::npos);
+        }
+    }
+}
+
+TEST(ElfInspector, shares_structural_work_across_compilation_units_including_null_dies) {
+    for (const auto units : {1, 2}) {
+        auto fixture = elf_fixture{};
+        fixture.add(".debug_abbrev", {std::byte{0}});
+        auto unit = std::vector<std::byte>(11 + 500000);
+        fixture.put(unit, 0, unit.size() - 4, 4);
+        fixture.put(unit, 4, 4, 2);
+        fixture.put(unit, 10, 8, 1);
+        auto info = std::vector<std::byte>{};
+        for (auto index = 0; index < units; ++index) {
+            info.insert(info.end(), unit.begin(), unit.end());
+        }
+        fixture.add(".debug_info", std::move(info));
+        const auto parsed = inspect_elf(fixture.bytes());
+        EXPECT_EQ(parsed.has_value(), units == 1);
+        if (!parsed) {
+            EXPECT_NE(parsed.error().message.find("structural limit"), std::string::npos);
+        }
+    }
 }
 
 } // namespace

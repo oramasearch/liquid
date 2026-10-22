@@ -34,3 +34,10 @@ unpacking supplies its byte budget and subtracts inspection charges before copyi
 or entry paths. Registry recognition, ABI, SBOM, and relocation use the same bounded inspector.
 The local limit signal is caught only at the inspector boundary, so nested version and DWARF
 parsing cannot continue with an uncharged name. Exact 64 KiB names remain supported.
+
+DWARF indirect forms are decoded iteratively with at most 64 form levels (liquid #434).
+Compilation units, abbreviation entries, attributes, DIEs (including null entries), and decoded
+forms share a 1,000,000-unit inspection
+allowance across compilation units. The iterative DIE parent stack also checks the 64-level
+limit. Exceeding a structural limit returns an error from the common ELF inspector, so registry,
+ABI, SBOM, and relocation callers cannot treat incomplete structural decoding as success.

@@ -55,3 +55,6 @@ and offset deduplication limits (liquid #474).
 
 [Linked-binary formats](formats.md#linked-binaries) also records the ELF limits on section, symbol,
 version, dynamic-path, and DWARF copies and generated signatures (liquid #479).
+
+[Structural parser limits](formats.md#structural-parser-limits) records the document-wide work
+allowances, independent structural depth limits, and JSON duplicate-key tracking (liquid #434).
