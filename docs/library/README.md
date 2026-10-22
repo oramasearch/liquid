@@ -14,6 +14,8 @@ The [format guide](formats.md#linked-binaries) records Mach-O symbol truncation 
 budgets shared by the registry, ABI, SBOM, and relocation readers.
 The [format guide](formats.md#jupyter-and-model-files) describes safetensors' cumulative tensor-copy
 budget and truncation behavior.
+[Sync](sync.md) documents missing-object validation: a sender refuses requests outside the
+current offered root closure before uploading anything (liquid #446).
 The [documentation index](../README.md#library) lists the library's implementation pages.
 [Status](status.md) records what is implemented and the [API map](api-map.md) defines the public
 surface. The [identity guide](identity.md) covers public document export for sign-up, the shared

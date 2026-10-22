@@ -138,6 +138,9 @@ formats ride *inside* TAAP as profile bodies; they do not get their own envelope
 Git object readers must preserve the shared byte and delta-depth budgets across offset and
 reference bases, including bases in other packs or loose storage. The limits and import
 compatibility contract live in [`docs/library/git-interop.md`](docs/library/git-interop.md).
+**Sync requests stay within the offer.** `sync_session::send` rejects a peer's entire missing-object
+response if any digest is outside the current offered root closure, before loading payloads or
+uploading objects. See [`docs/library/sync.md`](docs/library/sync.md) (liquid #446).
 
 **Check links before finishing.** Every internal link must resolve:
 

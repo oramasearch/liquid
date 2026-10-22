@@ -47,6 +47,13 @@ is the next opaque cursor to persist for that peer.
 `objects` contains the roots referenced by the metadata stream. Missing-object negotiation walks
 their content-addressed graph and sends only objects the receiver reports absent.
 
+The sender validates the complete missing-object response against that exact offered closure,
+including each digest's algorithm, before loading payloads or uploading any object (liquid #446).
+Any unoffered identity returns `corrupt`, even if it exists elsewhere in the local store or follows
+valid requested identities. Empty roots permit only an empty missing response. This check lives in
+`sync_session::send`, so it applies to HTTP pushes and callers supplying their own
+`remote_blob_source`; valid subsets still load payload chunks only when requested.
+
 ## Collaboration frames and epochs
 
 Presence uses metadata item kind `5`. Its canonical CBOR body carries actor, session, path,

@@ -173,6 +173,9 @@ forge review client with its polling event stream and installable double are imp
 Chunk uploads are bounded by a 64 MiB
 decoded-size budget per request that counts repeated frames, and are stored one decoded frame at a
 time (liquid#435).
+Send rejects any missing-object
+response containing a digest outside the current offered root closure before any upload
+(liquid #446).
 
 **Drive.** Issue #195 adds the persisted three-tree drive client, named concurrent conflict values,
 interrupted-transfer resume, per-reference refusal reporting, stable-node path history and restore,

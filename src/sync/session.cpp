@@ -3,6 +3,7 @@
 #include "liquid/sync.hpp"
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <map>
 #include <set>
@@ -86,14 +87,14 @@ runtime::task<sync_transfer_report> sync_session::send(std::span<const digest> r
     for (const auto& root : roots) {
         pending.push_back({root, false});
     }
-    auto visited = std::set<std::string>{};
+    auto visited = std::set<std::pair<algorithm, std::array<std::byte, 32>>>{};
     auto objects = std::vector<digest>{};
     auto contents = std::map<std::string, std::vector<std::byte>>{};
     auto registry = store_detail::reference_registry{};
     while (!pending.empty()) {
         const auto item = pending.front();
         pending.pop_front();
-        if (!visited.insert(to_string(item.id)).second) {
+        if (!visited.emplace(item.id.alg, item.id.bytes).second) {
             continue;
         }
         objects.push_back(item.id);
@@ -128,6 +129,15 @@ runtime::task<sync_transfer_report> sync_session::send(std::span<const digest> r
     auto missing = co_await impl_->peer->find_missing(impl_->instance, objects);
     if (!missing) {
         co_return std::unexpected(missing.error());
+    }
+    // Validate the whole response before loading payloads or uploading any object.
+    for (const auto& id : *missing) {
+        if (!visited.contains({id.alg, id.bytes})) {
+            co_return std::unexpected(
+                sync_error(errc::corrupt,
+                           "remote requested an object outside the offered closure",
+                           to_string(id)));
+        }
     }
     auto report = sync_transfer_report{};
     for (const auto& id : *missing) {
