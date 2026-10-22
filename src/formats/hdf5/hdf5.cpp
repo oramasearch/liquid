@@ -1,4 +1,5 @@
 #include "formats/builtin.hpp"
+#include "formats/structural_budget.hpp"
 
 #include <algorithm>
 #include <array>
@@ -578,10 +579,15 @@ private:
         std::uint64_t address{};
     };
 
+    // B-tree and group walks bound depth separately: distinct nodes can chain without a cycle.
     auto chunks(std::uint64_t node,
                 std::uint8_t dimensions,
                 std::vector<chunk_record>& output,
-                std::set<std::uint64_t>& visited) -> result<void> {
+                std::set<std::uint64_t>& visited,
+                std::size_t depth = 0) -> result<void> {
+        if (depth >= structural_budget::maximum_depth) {
+            return std::unexpected(failure("HDF5 chunk B-tree structural limit exceeded", node));
+        }
         if (!visited.insert(node).second) {
             return std::unexpected(failure("chunk B-tree cycle", node));
         }
@@ -625,7 +631,7 @@ private:
             if (level == 0) {
                 output.push_back(std::move(record));
             } else {
-                auto nested = chunks(record.address, dimensions, output, visited);
+                auto nested = chunks(record.address, dimensions, output, visited, depth + 1);
                 if (!nested) {
                     return nested;
                 }
@@ -828,7 +834,11 @@ private:
     auto group_btree(std::uint64_t offset,
                      std::span<const std::byte> names,
                      std::vector<std::pair<std::string, std::uint64_t>>& output,
-                     std::set<std::uint64_t>& visited) -> result<void> {
+                     std::set<std::uint64_t>& visited,
+                     std::size_t depth = 0) -> result<void> {
+        if (depth >= structural_budget::maximum_depth) {
+            return std::unexpected(failure("HDF5 group B-tree structural limit exceeded", offset));
+        }
         if (!visited.insert(offset).second) {
             return std::unexpected(failure("group B-tree cycle", offset));
         }
@@ -851,7 +861,7 @@ private:
             }
             const auto child_address = address(*child);
             auto read = level == 0 ? symbol_node(child_address, names, output)
-                                   : group_btree(child_address, names, output, visited);
+                                   : group_btree(child_address, names, output, visited, depth + 1);
             if (!read) {
                 return read;
             }
@@ -958,7 +968,11 @@ private:
     auto walk_object(std::uint64_t offset,
                      std::string path,
                      format_tree& output,
-                     std::set<std::uint64_t>& visited) -> result<void> {
+                     std::set<std::uint64_t>& visited,
+                     std::size_t depth = 0) -> result<void> {
+        if (depth >= structural_budget::maximum_depth) {
+            return std::unexpected(failure("HDF5 group structural limit exceeded", offset));
+        }
         if (!visited.insert(offset).second) {
             return {};
         }
@@ -1015,7 +1029,7 @@ private:
         }
         for (auto& [name, child] : *links) {
             const auto child_path = path.empty() ? name : path + "/" + name;
-            auto walked = walk_object(child, std::move(child_path), output, visited);
+            auto walked = walk_object(child, std::move(child_path), output, visited, depth + 1);
             if (!walked) {
                 return walked;
             }

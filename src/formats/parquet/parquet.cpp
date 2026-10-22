@@ -1,4 +1,5 @@
 #include "formats/builtin.hpp"
+#include "formats/structural_budget.hpp"
 
 #include <algorithm>
 #include <array>
@@ -48,11 +49,12 @@ struct thrift_value {
 
 class compact_reader {
 public:
-    explicit compact_reader(std::span<const std::byte> input) : input_(input) {}
+    compact_reader(std::span<const std::byte> input, structural_budget& budget)
+        : input_(input), budget_(budget) {}
 
     auto object_value(std::size_t depth = 0) -> result<thrift_value> {
-        if (depth > 64) {
-            return std::unexpected(failure("Thrift nesting limit exceeded", offset_));
+        if (!budget_.consume(depth)) {
+            return std::unexpected(failure("Thrift structural limit exceeded", offset_));
         }
         auto fields = thrift_value::object{};
         auto previous = std::int16_t{};
@@ -78,6 +80,9 @@ public:
                 id = static_cast<std::int16_t>(previous + delta);
             }
             previous = id;
+            if (!budget_.consume(depth)) {
+                return std::unexpected(failure("Thrift structural limit exceeded", offset_));
+            }
             auto value = type == 1 || type == 2 ? result<thrift_value>{thrift_value{type == 1}}
                                                 : read(type, depth + 1);
             if (!value) {
@@ -149,8 +154,9 @@ private:
             }
             size = *decoded;
         }
-        if (size > 10'000'000) {
-            return std::unexpected(failure("Thrift list limit exceeded", offset_));
+        if (size > structural_budget::maximum_work ||
+            !budget_.consume(depth, static_cast<std::size_t>(size))) {
+            return std::unexpected(failure("Thrift structural limit exceeded", offset_));
         }
         auto output = thrift_value::list{};
         output.reserve(static_cast<std::size_t>(size));
@@ -176,13 +182,20 @@ private:
         if (!types) {
             return std::unexpected(types.error());
         }
+        if (*size > structural_budget::maximum_work / 2 ||
+            !budget_.consume(depth, static_cast<std::size_t>(*size) * 2)) {
+            return std::unexpected(failure("Thrift structural limit exceeded", offset_));
+        }
         auto output = thrift_value::list{};
         output.reserve(static_cast<std::size_t>(*size) * 2);
         for (auto index = std::uint64_t{}; index < *size; ++index) {
             auto key = read(*types >> 4U, depth + 1);
+            if (!key) {
+                return std::unexpected(key.error());
+            }
             auto value = read(*types & 0x0fU, depth + 1);
-            if (!key || !value) {
-                return std::unexpected(failure("invalid Thrift map", offset_));
+            if (!value) {
+                return std::unexpected(value.error());
             }
             output.push_back(std::move(*key));
             output.push_back(std::move(*value));
@@ -191,6 +204,9 @@ private:
     }
 
     auto read(std::uint8_t type, std::size_t depth) -> result<thrift_value> {
+        if (!budget_.consume(depth)) {
+            return std::unexpected(failure("Thrift structural limit exceeded", offset_));
+        }
         switch (type) {
         case 1:
         case 2: {
@@ -240,6 +256,7 @@ private:
 
     std::span<const std::byte> input_;
     std::size_t offset_{};
+    structural_budget& budget_;
 };
 
 auto object(const thrift_value& value) -> const thrift_value::object* {
@@ -547,7 +564,8 @@ struct schema_leaf {
     std::uint64_t maximum_repetition{};
 };
 
-auto schema_leaves(const thrift_value& metadata) -> result<std::map<std::string, schema_leaf>> {
+auto schema_leaves(const thrift_value& metadata, structural_budget& budget)
+    -> result<std::map<std::string, schema_leaf>> {
     const auto* schema_value = child(metadata, 2);
     const auto* elements = schema_value ? list(*schema_value) : nullptr;
     if (!elements || elements->empty()) {
@@ -560,7 +578,13 @@ auto schema_leaves(const thrift_value& metadata) -> result<std::map<std::string,
                           std::vector<std::string> path,
                           std::uint64_t definition,
                           std::uint64_t repetition) -> result<void> {
+        if (children < 0 || !budget.consume(path.size(), 0)) {
+            return std::unexpected(failure("Parquet schema structural limit exceeded"));
+        }
         for (auto child_index = std::int64_t{}; child_index < children; ++child_index) {
+            if (!budget.consume(path.size())) {
+                return std::unexpected(failure("Parquet schema structural limit exceeded"));
+            }
             if (index >= elements->size()) {
                 return std::unexpected(failure("truncated Parquet schema"));
             }
@@ -576,6 +600,9 @@ auto schema_leaves(const thrift_value& metadata) -> result<std::map<std::string,
                 definition + (repetition_type == 1 || repetition_type == 2 ? 1 : 0);
             const auto next_repetition = repetition + (repetition_type == 2 ? 1 : 0);
             const auto nested = integer(element, 5).value_or(0);
+            if (nested < 0) {
+                return std::unexpected(failure("invalid Parquet schema child count"));
+            }
             if (nested > 0) {
                 auto walked =
                     self(self, nested, std::move(next_path), next_definition, next_repetition);
@@ -714,7 +741,8 @@ auto column_values(std::span<const std::byte> file,
                    const thrift_value& metadata,
                    const schema_leaf& schema,
                    std::uint64_t row_count,
-                   std::string& opaque_reason) -> result<std::vector<std::byte>> {
+                   std::string& opaque_reason,
+                   structural_budget& budget) -> result<std::vector<std::byte>> {
     const auto codec = integer(metadata, 4).value_or(-1);
     if (codec == 1) {
         opaque_reason = "Snappy compression is unsupported";
@@ -733,7 +761,7 @@ auto column_values(std::span<const std::byte> file,
     auto values = std::vector<std::string>{};
     auto dictionary = std::vector<std::string>{};
     while (produced < row_count) {
-        auto reader = compact_reader{file.subspan(offset)};
+        auto reader = compact_reader{file.subspan(offset), budget};
         auto header = reader.object_value();
         if (!header) {
             return std::unexpected(header.error());
@@ -825,12 +853,16 @@ public:
             return std::unexpected(failure("invalid footer size", blob.size() - 8));
         }
         const auto footer_offset = blob.size() - 8 - *footer_size;
-        auto reader = compact_reader{blob.subspan(footer_offset, *footer_size)};
+        auto budget = structural_budget{};
+        auto reader = compact_reader{blob.subspan(footer_offset, *footer_size), budget};
         auto metadata = reader.object_value();
-        if (!metadata || reader.offset() != *footer_size) {
+        if (!metadata) {
+            return std::unexpected(metadata.error());
+        }
+        if (reader.offset() != *footer_size) {
             return std::unexpected(failure("invalid Thrift footer", footer_offset));
         }
-        auto schemas = schema_leaves(*metadata);
+        auto schemas = schema_leaves(*metadata, budget);
         if (!schemas) {
             return std::unexpected(schemas.error());
         }
@@ -871,8 +903,8 @@ public:
                     return output;
                 }
                 auto reason = std::string{};
-                auto contents =
-                    column_values(blob, *column_metadata, schema->second, row_count, reason);
+                auto contents = column_values(
+                    blob, *column_metadata, schema->second, row_count, reason, budget);
                 if (!contents) {
                     return std::unexpected(contents.error());
                 }

@@ -1,4 +1,5 @@
 #include "formats/builtin.hpp"
+#include "formats/structural_budget.hpp"
 
 #include <algorithm>
 #include <array>
@@ -297,7 +298,12 @@ private:
         return row{*rowid, std::move(*values)};
     }
 
-    auto traverse(std::uint32_t number, std::vector<row>& output) -> result<void> {
+    // Interior pages chain without a cycle up to the page count, so depth is bounded separately.
+    auto traverse(std::uint32_t number, std::vector<row>& output, std::size_t depth = 0)
+        -> result<void> {
+        if (depth >= structural_budget::maximum_depth) {
+            return std::unexpected(failure("SQLite b-tree structural limit exceeded", number));
+        }
         if (!visited_.insert(number).second) {
             return std::unexpected(failure("b-tree page cycle", number));
         }
@@ -333,7 +339,7 @@ private:
                 if (!child) {
                     return std::unexpected(child.error());
                 }
-                auto traversed = traverse(*child, output);
+                auto traversed = traverse(*child, output, depth + 1);
                 if (!traversed) {
                     return traversed;
                 }
@@ -354,7 +360,7 @@ private:
             if (!right) {
                 return std::unexpected(right.error());
             }
-            return traverse(*right, output);
+            return traverse(*right, output, depth + 1);
         }
         return {};
     }

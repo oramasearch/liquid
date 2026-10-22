@@ -351,3 +351,7 @@ including equality of Debian bytes from a change and its root tree, without a mo
 `test_log_url.cpp` covers HTTP log URL factory errors and all six legacy source operations.
 `cli-log-url` repeats these API tests and every malformed URL through the three log verbs
 with networking denied on macOS and Linux. See [the contract](../docs/library/transparency.md#http-url-validation-289).
+
+`formats/test_structural_limits.cpp` exercises structural limits independently of archive depth
+for JSON, XML, Parquet, SQLite, and HDF5; `ElfInspector.bounds_indirect_forms_in_every_elf_class_and_byte_order`
+covers iterative DWARF indirect forms (liquid #434).
