@@ -27,6 +27,27 @@ produced a derived record. Compiler-origin symbol records omit the field.
 `liquid tiers` loads this module and derives one Tier 2 row per locked grammar with that same digest;
 new lock entries therefore enter the generated matrix without a second inventory.
 
+## Syntax traversal limits
+
+After parsing, the common frontend checks the entire tree with an iterative tree-sitter cursor
+before unit discovery, symbol discovery, tag queries, syntax-error inspection, or either tree
+encoder runs. Trees may contain at most 100,000 nodes and reach depth 128, counting the root at
+depth zero and including anonymous tokens. The check also visits function bodies and declarations
+that unit discovery would otherwise skip. These fixed limits are declared in
+[`syntax.hpp`](../../modules/frontends/common/syntax.hpp).
+
+Exceeding either limit returns `syntax_error_code::traversal_limit`, with no partial units,
+symbols, or encoded tree. The legacy C/C++ enum overloads return an empty vector, as they do for
+other parse failures; callers needing a diagnostic use the string-language overloads. The bundled
+module propagates the failure through the frontend ABI for static and shared consumers. This
+protects the recursive name, unit, symbol, and tree-value walkers and the encoding and destruction
+of their nested values. It bounds traversal after tree-sitter has parsed the source; it does not
+limit the parser's own work or scanner execution.
+
+`Grammars.TraversalLimit*` tests cover nested C/C++ namespaces, bodies and declarators, both depth
+and node-count boundaries, anonymous tokens, every common source entry point, and module errors
+([liquid #441](https://github.com/oramasearch/liquid/issues/441), LSR-131).
+
 ## Lock format and build controls
 
 The version 1 JSON object contains `runtime` and a language-sorted `grammars` array. Each grammar

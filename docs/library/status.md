@@ -317,7 +317,9 @@ outside libliquid, and the native liquify plugin descriptor accepts a versioned 
 and attribution event callback table ([`frontends.md`](frontends.md)). The bundled tree-sitter fallback fetches 49
 exact-commit grammars under archive and per-file SHA-256 checks, registers their extensions, and
 discovers units from pinned tag queries where upstream supplies them; syntactic records and
-`liquid version --json` carry the grammar-lock digest. The distribution decision and inventory are
+`liquid version --json` carry the grammar-lock digest. A shared iterative check rejects syntax
+trees over depth 128 or 100,000 nodes before any recursive traversal, without partial results
+(#441, LSR-131). The distribution decision, traversal limits, and inventory are
 in [`grammars.md`](grammars.md). The Clang C++ module emits definition actions and assembles their
 outputs into a relocatable translation-unit object. A function-body edit therefore executes only
 that definition's new action; recorded header reads invalidate the definitions that use them.

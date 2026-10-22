@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <span>
@@ -15,7 +16,17 @@ struct grammar_descriptor;
 
 enum class syntax_language { c, cpp };
 
-enum class syntax_error_code { unsupported, incompatible_abi, parse_failed, invalid_query };
+enum class syntax_error_code {
+    unsupported,
+    incompatible_abi,
+    parse_failed,
+    invalid_query,
+    traversal_limit
+};
+
+// Count every tree-sitter node, including anonymous tokens; the root has depth zero.
+inline constexpr std::size_t syntax_tree_max_depth = 128;
+inline constexpr std::size_t syntax_tree_max_nodes = 100'000;
 
 struct syntax_error {
     syntax_error_code code;

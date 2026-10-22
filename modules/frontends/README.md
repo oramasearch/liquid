@@ -16,7 +16,9 @@ compiler module from tree-sitter syntax fallback; the record is in
 [`docs/library/symbols.md`](../../docs/library/symbols.md).
 The optional ABI v1 `syntax` operation returns the complete concrete tree as canonical CBOR.
 Tree-sitter implements it for every configured grammar; Clang leaves its descriptor pointer null.
-Shared encoding and traversal live in `common/syntax.cpp`.
+Shared encoding and traversal live in `common/syntax.cpp`. Its iterative preflight validates the
+whole parsed tree against the shared depth and node limits before any recursive processing;
+over-limit input returns an error without partial results (#441, LSR-131).
 The later optional `parse` tail returns a compact named-node tree plus unit and symbol sidecars.
 Both bundled modules implement it, and their unit and symbol operations consume the supplied parse
 sidecar so graph consumers do not invoke the parser again.

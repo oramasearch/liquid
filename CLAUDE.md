@@ -147,6 +147,10 @@ Unix-domain socket fixtures use the scoped `tests/socket_fixture.hpp` helper, in
 repository paths. Native byte limits, temporary-root fallback, and cleanup are documented in
 [`docs/build/socket-fixtures.md`](docs/build/socket-fixtures.md) (liquid #305).
 
+Frontend changes preserve the shared syntax traversal limits documented in
+[`grammars.md`](docs/library/grammars.md#syntax-traversal-limits); all source entry points validate
+the whole parsed tree before recursive processing (#441, LSR-131).
+
 ### Commands follow Git
 
 Steve, 2026-10-12: *"liquid should really not deviate from git commands without a good reason

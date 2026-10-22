@@ -132,6 +132,40 @@ auto syntax_language_name(syntax_language language) -> std::string_view {
     return language == syntax_language::c ? "c" : "c++";
 }
 
+// Validate the whole tree before any recursive walk, including subtrees unit discovery skips.
+auto validate_traversal(TSNode root) -> std::expected<void, syntax_error> {
+    auto cursor = ts_tree_cursor_new(root);
+    auto depth = std::size_t{};
+    auto nodes = std::size_t{};
+    auto result = std::expected<void, syntax_error>{};
+    while (true) {
+        if (depth > syntax_tree_max_depth || ++nodes > syntax_tree_max_nodes) {
+            const auto depth_exceeded = depth > syntax_tree_max_depth;
+            result = std::unexpected(syntax_error{
+                syntax_error_code::traversal_limit,
+                "syntax tree exceeds " + std::string{depth_exceeded ? "depth" : "node"} +
+                    " limit (" +
+                    std::to_string(depth_exceeded ? syntax_tree_max_depth : syntax_tree_max_nodes) +
+                    ")",
+            });
+            break;
+        }
+        if (ts_tree_cursor_goto_first_child(&cursor)) {
+            ++depth;
+            continue;
+        }
+        while (depth != 0 && !ts_tree_cursor_goto_next_sibling(&cursor)) {
+            ts_tree_cursor_goto_parent(&cursor);
+            --depth;
+        }
+        if (depth == 0) {
+            break;
+        }
+    }
+    ts_tree_cursor_delete(&cursor);
+    return result;
+}
+
 auto parse(const grammar_descriptor& grammar, std::span<const std::uint8_t> source)
     -> std::expected<parsed_tree, syntax_error> {
     if (source.size() > std::numeric_limits<std::uint32_t>::max()) {
@@ -172,7 +206,12 @@ auto parse(const grammar_descriptor& grammar, std::span<const std::uint8_t> sour
         return std::unexpected(
             syntax_error{syntax_error_code::parse_failed, "tree-sitter did not produce a tree"});
     }
-    return parsed_tree{parser, tree};
+    auto output = parsed_tree{parser, tree};
+    auto validated = validate_traversal(output.root());
+    if (!validated) {
+        return std::unexpected(validated.error());
+    }
+    return output;
 }
 
 void append_unit(TSNode node,
