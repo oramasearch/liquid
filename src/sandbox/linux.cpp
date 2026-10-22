@@ -1,15 +1,22 @@
 #include "sandbox/override.hpp"
+#include "sandbox/process_identity.h"
 #include "sandbox/sandbox.hpp"
 
 #if defined(__linux__)
 
+#include <atomic>
 #include <cerrno>
 #include <csignal>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
+#include <limits>
+#include <memory>
 #include <spawn.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -25,6 +32,63 @@ extern char** environ;
 
 namespace liquid::sandbox_detail {
 namespace {
+
+std::atomic_uint64_t next_wrap_sequence{1};
+
+struct namespace_descriptor {
+    namespace_descriptor() = default;
+    namespace_descriptor(const namespace_descriptor&) = delete;
+    auto operator=(const namespace_descriptor&) -> namespace_descriptor& = delete;
+    ~namespace_descriptor() {
+        if (value >= 0)
+            ::close(value);
+    }
+    int value{-1};
+};
+
+// Mapping helpers may precede PID 1; retain only the child in a new PID namespace.
+auto pin_private_pid_namespace(pid_t launcher, ino_t invoking_namespace)
+    -> result<std::optional<int>> {
+    const auto children_path =
+        "/proc/" + std::to_string(launcher) + "/task/" + std::to_string(launcher) + "/children";
+    errno = 0;
+    auto children = std::unique_ptr<FILE, decltype(&std::fclose)>{
+        std::fopen(children_path.c_str(), "re"), &std::fclose};
+    if (!children) {
+        if (errno == ENOENT || errno == ESRCH) {
+            auto exited = siginfo_t{};
+            const auto waited =
+                ::waitid(P_PID, static_cast<id_t>(launcher), &exited, WEXITED | WNOHANG | WNOWAIT);
+            if ((waited == 0 && exited.si_pid == launcher) ||
+                (waited < 0 && (errno == EINTR || errno == ECHILD)))
+                return std::nullopt;
+        }
+        return std::unexpected(
+            error{errc::io, "cannot inspect wrap namespace child", children_path});
+    }
+    auto child = long{};
+    while (std::fscanf(children.get(), "%ld", &child) == 1) {
+        if (child <= 0)
+            continue;
+        const auto path = "/proc/" + std::to_string(child) + "/ns/pid";
+        const auto descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        if (descriptor < 0) {
+            if (errno == ENOENT || errno == ESRCH)
+                continue;
+            return std::unexpected(error{errc::io, std::strerror(errno), path});
+        }
+        struct stat value{};
+        if (::fstat(descriptor, &value) != 0) {
+            const auto failure = errno;
+            ::close(descriptor);
+            return std::unexpected(error{errc::io, std::strerror(failure), path});
+        }
+        if (value.st_ino != invoking_namespace)
+            return std::optional{descriptor};
+        ::close(descriptor);
+    }
+    return std::nullopt;
+}
 
 auto quote(std::string_view value) -> std::string {
     auto output = std::string{"'"};
@@ -74,6 +138,23 @@ auto read_guard_path() -> result<std::filesystem::path> {
     }
     return std::unexpected(error{
         errc::not_found, "cannot locate the remote action read guard", LIQUID_READ_GUARD_FILENAME});
+}
+
+auto wrap_init_path() -> result<std::filesystem::path> {
+    auto candidates = std::vector<std::filesystem::path>{};
+#ifdef LIQUID_WRAP_INIT_PATH
+    candidates.emplace_back(LIQUID_WRAP_INIT_PATH);
+#endif
+    auto code = std::error_code{};
+    const auto executable = std::filesystem::read_symlink("/proc/self/exe", code);
+    if (!code)
+        candidates.push_back(executable.parent_path() / "../libexec/liquid/liquid-wrap-init");
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::is_regular_file(candidate))
+            return std::filesystem::canonical(candidate);
+    }
+    return std::unexpected(
+        error{errc::not_found, "cannot locate the wrap process supervisor", "liquid-wrap-init"});
 }
 
 auto read_violation(const launch_request& request) -> std::optional<std::string> {
@@ -158,8 +239,10 @@ auto write_bootstrap(const launch_request& request,
     return {};
 }
 
-auto write_wrap_bootstrap(const wrap_launch_request& request, const std::filesystem::path& script)
-    -> result<void> {
+auto write_wrap_bootstrap(const wrap_launch_request& request,
+                          const std::filesystem::path& script,
+                          const std::filesystem::path& init,
+                          const std::string& sequence) -> result<void> {
     auto stream = std::ofstream{script, std::ios::binary | std::ios::trunc};
     if (!stream)
         return std::unexpected(error{errc::io, "cannot create wrap bootstrap", script.string()});
@@ -167,6 +250,8 @@ auto write_wrap_bootstrap(const wrap_launch_request& request, const std::filesys
         return request.sandbox_root / std::filesystem::path{path}.relative_path();
     };
     stream << "set -eu\n";
+    stream << "while [ ! -e " << quote((request.sandbox_root / "namespace-pinned").string())
+           << " ]; do /bin/sleep 0.01; done\n";
     stream << "/usr/bin/mount --make-rprivate /\n";
     stream << "/usr/bin/mount --bind " << quote(request.input_mount.string()) << ' '
            << quote(rooted("/liquid/work").string()) << "\n";
@@ -183,6 +268,10 @@ auto write_wrap_bootstrap(const wrap_launch_request& request, const std::filesys
         stream << "/usr/bin/mount -o remount,bind,ro " << quote(destination.string()) << "\n";
     }
     stream << "/usr/bin/mount --rbind /dev " << quote(rooted("/dev").string()) << "\n";
+    stream << "/usr/bin/mount --bind " << quote(init.string()) << ' '
+           << quote(rooted("/liquid/wrap-init").string()) << "\n";
+    stream << "/usr/bin/mount -o remount,bind,ro " << quote(rooted("/liquid/wrap-init").string())
+           << "\n";
     stream << "/usr/bin/mount --bind " << quote(request.hook.string()) << ' '
            << quote(rooted("/liquid/wrap-hook.so").string()) << "\n";
     stream << "/usr/bin/mount --bind " << quote(request.trace.string()) << ' '
@@ -194,11 +283,13 @@ auto write_wrap_bootstrap(const wrap_launch_request& request, const std::filesys
            << "\n";
     stream << "/usr/bin/mount -t tmpfs tmpfs " << quote(rooted("/tmp").string()) << "\n";
     stream << "/usr/bin/mkdir -p " << quote(rooted("/tmp/home").string()) << "\n";
-    stream << "/usr/bin/mount --rbind /proc " << quote(rooted("/proc").string()) << "\n";
+    stream << "/usr/bin/mount -t proc -o nosuid,nodev,noexec proc "
+           << quote(rooted("/proc").string()) << "\n";
     stream << "exec /usr/bin/unshare --root=" << quote(request.sandbox_root.string())
-           << " --wd=" << quote(request.cwd) << " -- /usr/bin/env -i";
+           << " --wd=" << quote(request.cwd) << " -- /liquid/wrap-init /usr/bin/env -i";
     for (const auto& [name, value] : request.environment)
         stream << ' ' << quote(name + "=" + value);
+    stream << ' ' << quote(std::string{LIQUID_WRAP_LAUNCH_SEQUENCE "="} + sequence);
     for (const auto& argument : request.command)
         stream << ' ' << quote(argument);
     stream << "\n";
@@ -336,7 +427,34 @@ auto launch(const launch_request& request) -> result<launch_result> {
     }
 }
 
+auto wrap_namespace_arguments(bool network) -> std::vector<std::string> {
+    auto arguments = std::vector<std::string>{
+        "unshare", "--user", "--map-root-user", "--mount", "--pid", "--fork", "--kill-child=KILL"};
+    if (!network)
+        arguments.push_back("--net");
+    return arguments;
+}
+
 auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
+    auto init = wrap_init_path();
+    if (!init)
+        return std::unexpected(init.error());
+    auto sequence_number = next_wrap_sequence.load(std::memory_order_relaxed);
+    do {
+        if (sequence_number == std::numeric_limits<std::uint64_t>::max())
+            return std::unexpected(error{errc::unavailable, "wrap launch sequence exhausted", {}});
+    } while (!next_wrap_sequence.compare_exchange_weak(
+        sequence_number, sequence_number + 1, std::memory_order_relaxed));
+    const auto sequence = std::to_string(sequence_number);
+    auto proc_error = std::error_code{};
+    const auto process_view = std::filesystem::read_symlink("/proc/self", proc_error);
+    if (proc_error || process_view != std::filesystem::path{std::to_string(::getpid())})
+        return std::unexpected(error{errc::unsupported,
+                                     "Linux wrap requires procfs for the invoking PID namespace",
+                                     "/proc"});
+    struct stat invoking_namespace{};
+    if (::stat("/proc/self/ns/pid", &invoking_namespace) != 0)
+        return std::unexpected(error{errc::io, std::strerror(errno), "/proc/self/ns/pid"});
     auto created = ensure_directory(request.sandbox_root / "liquid/work");
     if (!created)
         return std::unexpected(created.error());
@@ -351,23 +469,28 @@ auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
         if (!created)
             return std::unexpected(created.error());
     }
-    for (const auto* path : {"liquid/wrap-hook.so", "liquid/trace", "liquid/plan"}) {
+    for (const auto* path :
+         {"liquid/wrap-init", "liquid/wrap-hook.so", "liquid/trace", "liquid/plan"}) {
         auto file = create_file(request.sandbox_root / path);
         if (!file)
             return std::unexpected(file.error());
     }
     const auto script = request.sandbox_root / "wrap-bootstrap.sh";
-    auto written = write_wrap_bootstrap(request, script);
+    const auto ready_path = request.sandbox_root / "namespace-pinned";
+    auto code = std::error_code{};
+    std::filesystem::remove(ready_path, code);
+    if (code)
+        return std::unexpected(error{errc::io, code.message(), ready_path.string()});
+    auto written = write_wrap_bootstrap(request, script, *init, sequence);
     if (!written)
         return std::unexpected(written.error());
-    auto arguments = std::vector<std::string>{"unshare", "--user", "--map-root-user", "--mount"};
-    if (!request.network) {
-        arguments.push_back("--net");
-    }
+    auto arguments = wrap_namespace_arguments(request.network);
     arguments.push_back("/bin/sh");
     arguments.push_back(script.string());
+    arguments.front() = "/usr/bin/unshare";
+    arguments.insert(arguments.begin(), {init->string(), "--launch", std::to_string(::getpid())});
     auto argument_pointers = pointers(arguments);
-    auto environment = environment_block({});
+    auto environment = environment_block({{LIQUID_WRAP_LAUNCH_SEQUENCE, sequence}});
     auto environment_pointers = pointers(environment);
     auto actions = posix_spawn_file_actions_t{};
     auto attributes = posix_spawnattr_t{};
@@ -402,7 +525,7 @@ auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
     posix_spawnattr_setpgroup(&attributes, 0);
     auto pid = pid_t{};
     const auto spawned = posix_spawn(&pid,
-                                     "/usr/bin/unshare",
+                                     init->c_str(),
                                      &actions,
                                      &attributes,
                                      argument_pointers.data(),
@@ -417,10 +540,56 @@ auto launch_wrap(const wrap_launch_request& request) -> result<launch_result> {
     }
     if (spawned != 0)
         return std::unexpected(error{errc::io, std::strerror(spawned), "posix_spawn wrap"});
+    auto wait_failure = std::optional<int>{};
+    auto setup_failure = std::optional<error>{};
+    auto pinned_namespace = namespace_descriptor{};
+    {
+        auto stop_callback = std::stop_callback{request.stop, [pid] { ::kill(-pid, SIGKILL); }};
+        auto info = siginfo_t{};
+        // Keep the child waitable until the callback is removed, so its PID cannot be reused
+        // between reaping it and a concurrent cancellation callback.
+        for (;;) {
+            info = {};
+            const auto flags =
+                WEXITED | WNOWAIT | (pinned_namespace.value < 0 && !setup_failure ? WNOHANG : 0);
+            if (::waitid(P_PID, static_cast<id_t>(pid), &info, flags) < 0) {
+                if (errno == EINTR)
+                    continue;
+                wait_failure = errno;
+                if (*wait_failure != ECHILD)
+                    ::kill(-pid, SIGKILL);
+                break;
+            }
+            if (info.si_pid == pid)
+                break;
+            auto pinned = pin_private_pid_namespace(pid, invoking_namespace.st_ino);
+            if (!pinned) {
+                setup_failure = pinned.error();
+            } else if (*pinned) {
+                pinned_namespace.value = **pinned;
+                auto ready = create_file(ready_path);
+                if (!ready)
+                    setup_failure = ready.error();
+            }
+            if (setup_failure)
+                ::kill(-pid, SIGKILL);
+            else if (pinned_namespace.value < 0)
+                std::this_thread::sleep_for(std::chrono::milliseconds{10});
+        }
+    }
+    if (wait_failure && *wait_failure == ECHILD)
+        return std::unexpected(error{errc::io, std::strerror(*wait_failure), "waitid wrap"});
     auto status = int{};
-    if (::waitpid(pid, &status, 0) < 0)
+    while (::waitpid(pid, &status, 0) < 0) {
+        if (errno == EINTR)
+            continue;
         return std::unexpected(error{errc::io, std::strerror(errno), "waitpid wrap"});
-    return launch_result{exit_code(status), false};
+    }
+    if (wait_failure)
+        return std::unexpected(error{errc::io, std::strerror(*wait_failure), "waitid wrap"});
+    if (setup_failure)
+        return std::unexpected(std::move(*setup_failure));
+    return launch_result{exit_code(status), false, {}, request.stop.stop_requested()};
 }
 
 } // namespace liquid::sandbox_detail

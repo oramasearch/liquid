@@ -275,7 +275,8 @@ record, with the limits of each area, is the
 **Building**
 
 - **`liquid wrap`** turns an unchanged CMake, Autotools or Make build into cached, sandboxed
-  actions whose inputs are observed, not declared. [Build engine](docs/library/build-engine.md)
+  actions whose inputs are observed, not declared. Linux wrapped processes use private PID
+  namespaces. [Build engine](docs/library/build-engine.md)
 - **Reproducibility is checked, not assumed**: cached actions are re-executed in fresh
   sandboxes, and a result that diverges is quarantined.
 - **Provenance, SBOMs and ABI reports** for every build, signed.

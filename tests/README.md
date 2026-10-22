@@ -1,5 +1,8 @@
 # Tests
 
+`WrapProcesses.*` covers Linux wrap PID isolation and process supervision without requiring FUSE.
+See [the build-test inventory](build/README.md) for runtime prerequisites and skip reasons.
+
 Issue #2 regressions cover split ownership after source removal, retained historical bytes and
 identities, borrowed-store independence, nested history, and destination cleanup. `cli-split`
 replays the customer scenarios in fresh processes; see [the contract](../docs/library/split.md).

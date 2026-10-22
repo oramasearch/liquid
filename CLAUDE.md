@@ -24,6 +24,10 @@ in the same commit. This file records the repository's rules and decisions, and 
 came from is cited on its topic page under `docs/library/`; do not add status back here. The
 [reconciliation record](docs/library/readme-history.md) explains the earlier duplicate inventories.
 
+For Linux wrap launcher or process tracing changes, read the
+[process isolation contract](docs/library/build-engine.md#linux-process-isolation-447), including
+PID 1 cleanup and FUSE identity mapping.
+
 **Shape.** Code is a C++26 **libliquid** (`liquid::liquid`, static or shared, `find_package`
 works; see [`docs/library/libliquid.md`](docs/library/libliquid.md)) plus the `liquid` binary as a
 thin client of it. liquify links the same library as a pinned submodule, and Lake compiles it from

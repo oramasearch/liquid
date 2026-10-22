@@ -52,6 +52,7 @@
 #include "objects/records.hpp"
 #include "sandbox/environment.hpp"
 #include "sandbox/override.hpp"
+#include "sandbox/process_identity.h"
 #include "sandbox/sandbox.hpp"
 #include "sandbox/wrap_plan.h"
 #include "vfs/backend.hpp"
@@ -94,13 +95,36 @@ struct observation_log {
         std::optional<std::string> denied_write;
     };
 
-    std::map<std::int64_t, process_observations> processes;
+    std::map<std::string, process_observations> processes;
     std::map<std::string, digest> inputs;
     std::set<std::string> changed_inputs;
+    bool process_identity_unavailable{};
+#if defined(__linux__)
+    const std::string unscoped_namespace_prefix = [] {
+        struct stat value{};
+        return ::stat("/proc/self/ns/pid", &value) == 0 ? "0:" + std::to_string(value.st_ino) + ":"
+                                                        : std::string{};
+    }();
+#endif
 
     void record(vfs_detail::observed_request request) {
         auto lock = std::scoped_lock{mutex};
-        auto& process = processes[request.pid];
+        auto identity = std::to_string(request.pid);
+#if defined(__linux__)
+        auto token = std::array<char, 128>{};
+        if (liquid_process_identity(static_cast<long>(request.pid), token.data(), token.size()) !=
+            0) {
+            process_identity_unavailable = true;
+            return;
+        }
+        identity = token.data();
+        if (identity.starts_with("0:") && (unscoped_namespace_prefix.empty() ||
+                                           !identity.starts_with(unscoped_namespace_prefix))) {
+            process_identity_unavailable = true;
+            return;
+        }
+#endif
+        auto& process = processes[identity];
         if (request.operation == vfs_detail::observed_operation::write) {
             if (request.denied) {
                 process.denied_write = std::move(request.path);
@@ -133,8 +157,8 @@ private:
 };
 
 struct traced_process {
-    std::int64_t pid{};
-    std::int64_t parent{};
+    std::string pid;
+    std::string parent;
     std::uint64_t key{};
     std::string executable;
     std::string cwd;
@@ -876,13 +900,13 @@ auto parse_trace(const std::filesystem::path& path) -> liquid::result<std::vecto
     auto input = std::ifstream{path, std::ios::binary};
     if (!input)
         return std::unexpected(wrap_error(errc::io, "cannot read wrap process trace", path));
-    auto by_pid = std::map<std::int64_t, traced_process>{};
-    auto order = std::vector<std::int64_t>{};
+    auto by_pid = std::map<std::string, traced_process>{};
+    auto order = std::vector<std::string>{};
     auto line = std::string{};
     while (std::getline(input, line)) {
         const auto fields = split_tabs(line);
         if (fields.size() == 3 && fields[0] == "X") {
-            auto pid = std::int64_t{};
+            auto pid = std::string{};
             auto finished = std::uint64_t{};
             auto numbers =
                 std::istringstream{std::string{fields[1]} + " " + std::string{fields[2]}};
@@ -1043,16 +1067,17 @@ auto planned_commands(const std::filesystem::path& working_tree,
 }
 
 auto manifest_for(const observation_log& observed,
-                  std::int64_t pid,
+                  const std::string& pid,
                   const std::set<std::string>& written)
     -> liquid::result<std::vector<observed_input>> {
     auto lock = std::scoped_lock{observed.mutex};
     const auto found = observed.processes.find(pid);
-    const auto* process = pid >= 0 && found != observed.processes.end() ? &found->second : nullptr;
-    if (pid >= 0 && !process) {
+    const auto* process =
+        !pid.empty() && found != observed.processes.end() ? &found->second : nullptr;
+    if (!pid.empty() && !process) {
         return std::vector<observed_input>{};
     }
-    const auto& changed = pid >= 0 ? process->changed_inputs : observed.changed_inputs;
+    const auto& changed = !pid.empty() ? process->changed_inputs : observed.changed_inputs;
     const auto changed_path = std::ranges::find_if(
         changed, [&](const std::string& path) { return !written.contains(path); });
     if (changed_path != changed.end()) {
@@ -1060,7 +1085,7 @@ auto manifest_for(const observation_log& observed,
             wrap_error(errc::internal, "wrapped input changed while it was read", *changed_path));
     }
     auto output = std::vector<observed_input>{};
-    const auto& entries = pid >= 0 ? process->inputs : observed.inputs;
+    const auto& entries = !pid.empty() ? process->inputs : observed.inputs;
     for (const auto& [path, content] : entries) {
         if (written.contains(path)) {
             continue;
@@ -1071,8 +1096,8 @@ auto manifest_for(const observation_log& observed,
 }
 
 auto writes_by_process(const observation_log& observed)
-    -> std::map<std::int64_t, std::set<std::string>> {
-    auto output = std::map<std::int64_t, std::set<std::string>>{};
+    -> std::map<std::string, std::set<std::string>> {
+    auto output = std::map<std::string, std::set<std::string>>{};
     auto lock = std::scoped_lock{observed.mutex};
     for (const auto& [pid, process] : observed.processes) {
         if (!process.writes.empty()) {
@@ -1084,15 +1109,15 @@ auto writes_by_process(const observation_log& observed)
 
 auto has_writing_descendant(const traced_process& process,
                             const std::vector<traced_process>& processes,
-                            const std::map<std::int64_t, std::set<std::string>>& writes) -> bool {
-    auto parents = std::map<std::int64_t, std::int64_t>{};
+                            const std::map<std::string, std::set<std::string>>& writes) -> bool {
+    auto parents = std::map<std::string, std::string>{};
     for (const auto& item : processes)
         parents.insert_or_assign(item.pid, item.parent);
     for (const auto& [pid, paths] : writes) {
         if (paths.empty() || pid == process.pid)
             continue;
         auto current = pid;
-        auto visited = std::set<std::int64_t>{};
+        auto visited = std::set<std::string>{};
         while (parents.contains(current) && visited.insert(current).second) {
             current = parents.at(current);
             if (current == process.pid)
@@ -1344,7 +1369,7 @@ auto apply_cached_variables(std::vector<std::string>& command,
     }
 }
 
-auto probe_program_digest(const observation_log& observed, std::int64_t pid)
+auto probe_program_digest(const observation_log& observed, const std::string& pid)
     -> std::optional<digest> {
     auto lock = std::scoped_lock{observed.mutex};
     const auto found = observed.processes.find(pid);
@@ -1365,7 +1390,7 @@ auto probe_program_digest(const observation_log& observed, std::int64_t pid)
 }
 
 runtime::task<std::string>
-probe_program_text(repository& source, const observation_log& observed, std::int64_t pid) {
+probe_program_text(repository& source, const observation_log& observed, const std::string& pid) {
     const auto program = probe_program_digest(observed, pid);
     if (!program) {
         co_return std::string{};
@@ -1811,12 +1836,16 @@ auto remove_run(const std::filesystem::path& path) -> liquid::result<void> {
 
 runtime::task<sandbox_detail::launch_result>
 launch_wrapped_process(sandbox_detail::wrap_launch_request request) {
+    request.stop = co_await boost::capy::this_coro::stop_token;
     auto launched = co_await runtime::offload(
         [request = std::move(request)] { return sandbox_detail::launch_wrap(request); });
     if (!launched)
         co_return std::unexpected(launched.error());
     if (!*launched)
         co_return std::unexpected(launched->error());
+    if ((**launched).cancelled)
+        co_return std::unexpected(
+            wrap_error(errc::unavailable, "wrapped command execution was cancelled"));
     co_return std::move(**launched);
 }
 
@@ -2501,6 +2530,11 @@ execute_observed_run(repository& source,
         co_return std::unexpected(unmounted.error());
     }
     auto processes = parse_trace(trace);
+    if (observations->process_identity_unavailable) {
+        static_cast<void>(remove_run(run));
+        co_return std::unexpected(
+            wrap_error(errc::unavailable, "cannot identify an observed sandbox process", trace));
+    }
     if (!processes) {
         static_cast<void>(remove_run(run));
         co_return std::unexpected(processes.error());
@@ -2724,7 +2758,7 @@ runtime::task<void> publish_observed_run(repository& source,
             ++report.misses;
     }
     auto driver = run.processes.front();
-    driver.pid = -1;
+    driver.pid.clear();
     driver.command = command;
     driver.cwd = std::string{virtual_root};
     auto outer_saved = co_await publish_action(source,
@@ -2837,7 +2871,13 @@ runtime::task<void> publish_observed_run(repository& source,
 } // namespace
 
 objects::sandbox_record wrap_sandbox_definition(bool network) {
-    return {.mechanism = "wrap user+mount+net namespaces with exec-time hook v1",
+#if defined(__linux__)
+    constexpr auto mechanism =
+        "wrap user+mount+pid+net namespaces with private procfs and supervised exec-time hook v2";
+#else
+    constexpr auto mechanism = "wrap user+mount+net namespaces with exec-time hook v1";
+#endif
+    return {.mechanism = mechanism,
             .work_root = "/liquid/work/",
             .toolchain_root = "/usr/",
             .home_root = "/tmp/home/",
@@ -2944,6 +2984,7 @@ runtime::task<action_result> run_wrapped_action(repository& source,
                                                        .environment = std::move(environment),
                                                        .network = has_data_url(action.input.env)};
     build_detail::testing::record_sandbox_spawn();
+    request.stop = co_await boost::capy::this_coro::stop_token;
     auto launched = co_await runtime::offload(
         [request = std::move(request)] { return sandbox_detail::launch_wrap(request); });
     if (!launched || !*launched) {
@@ -2952,6 +2993,11 @@ runtime::task<action_result> run_wrapped_action(repository& source,
             co_return std::unexpected(launched.error());
         }
         co_return std::unexpected(launched->error());
+    }
+    if ((**launched).cancelled) {
+        static_cast<void>(remove_run(run));
+        co_return std::unexpected(
+            wrap_error(errc::unavailable, "wrapped command execution was cancelled"));
     }
     auto output_values = std::vector<action_output>{};
     for (const auto& declared : expected.outputs) {

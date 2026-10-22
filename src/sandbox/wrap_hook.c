@@ -11,6 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "sandbox/process_identity.h"
 #include "sandbox/wrap_plan.h"
 
 static int liquid_wrap_traced;
@@ -27,12 +28,12 @@ static void append_finished(void) {
     if (!liquid_wrap_traced) {
         return;
     }
-    char line[128];
-    const int size = snprintf(line,
-                              sizeof(line),
-                              "X\t%ld\t%llu\n",
-                              (long)getpid(),
-                              (unsigned long long)monotonic_nanoseconds());
+    char identity[128];
+    if (liquid_process_identity_at("self", identity, sizeof(identity), NULL) != 0)
+        return;
+    char line[256];
+    const int size = snprintf(
+        line, sizeof(line), "X\t%s\t%llu\n", identity, (unsigned long long)monotonic_nanoseconds());
     const char* trace_path = getenv("LIQUID_WRAP_TRACE");
     const int trace =
         open(trace_path == NULL ? "/liquid/trace" : trace_path, O_WRONLY | O_APPEND | O_CLOEXEC);
@@ -114,37 +115,6 @@ static int planned_hit(uint64_t key) {
     return status;
 }
 
-static long observed_pid(const char* path, long fallback) {
-    char status[8192];
-    const ssize_t size = read_all(path, status, sizeof(status) - 1);
-    if (size <= 0) {
-        return fallback;
-    }
-    status[size] = '\0';
-    const char* line = strstr(status, "NSpid:");
-    if (line == NULL) {
-        return fallback;
-    }
-    line += strlen("NSpid:");
-    while (*line == ' ' || *line == '\t') {
-        ++line;
-    }
-    long value = fallback;
-    for (;;) {
-        char* end = NULL;
-        const long next = strtol(line, &end, 10);
-        if (end == line) {
-            break;
-        }
-        value = next;
-        line = end;
-        while (*line == ' ' || *line == '\t') {
-            ++line;
-        }
-    }
-    return value;
-}
-
 __attribute__((constructor)) static void liquid_wrap_enter(void) {
     char executable[4096];
     char directory[4096];
@@ -164,12 +134,17 @@ __attribute__((constructor)) static void liquid_wrap_enter(void) {
     key = fnv_update(key, arguments, (size_t)argument_size);
 
     char line[81920];
-    const long pid = observed_pid("/proc/self/status", (long)getpid());
-    char parent_path[128];
-    (void)snprintf(parent_path, sizeof(parent_path), "/proc/%ld/status", (long)getppid());
-    const long parent = observed_pid(parent_path, (long)getppid());
+    char pid[128];
+    char parent[128];
+    long proc_parent = 0;
+    /* /proc/self works even if a tool creates another PID namespace without remounting proc.
+     * PPid is expressed relative to this procfs, so it also names the correct parent entry. */
+    if (liquid_process_identity_at("self", pid, sizeof(pid), &proc_parent) != 0)
+        return;
+    if (proc_parent == 0 || liquid_process_identity(proc_parent, parent, sizeof(parent)) != 0)
+        snprintf(parent, sizeof(parent), "0");
     const int prefix =
-        snprintf(line, sizeof(line), "%ld\t%ld\t%016llx\t", pid, parent, (unsigned long long)key);
+        snprintf(line, sizeof(line), "%s\t%s\t%016llx\t", pid, parent, (unsigned long long)key);
     if (prefix > 0 && (size_t)prefix < sizeof(line)) {
         size_t offset = (size_t)prefix;
         append_hex(line, &offset, executable, (size_t)executable_size);

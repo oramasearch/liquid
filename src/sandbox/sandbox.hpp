@@ -53,9 +53,13 @@ struct wrap_launch_request {
     std::map<std::string, std::string> environment;
     bool network{};
     bool network_only{};
+    std::stop_token stop;
 };
 
 [[nodiscard]] auto launch(const launch_request& request) -> result<launch_result>;
 [[nodiscard]] auto launch_wrap(const wrap_launch_request& request) -> result<launch_result>;
+#if defined(__linux__)
+[[nodiscard]] auto wrap_namespace_arguments(bool network) -> std::vector<std::string>;
+#endif
 
 } // namespace liquid::sandbox_detail

@@ -72,7 +72,7 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 
 | Page | What it contains |
 |---|---|
-| [`library/build-engine.md`](library/build-engine.md) | Action and result records, named upstream inputs, output trees and normalisation, observed reads, cache lookup, public build streams and plans, configure facts, traces, and wrapping existing builds. |
+| [`library/build-engine.md`](library/build-engine.md) | Action and result records, named upstream inputs, output trees and normalisation, observed reads, cache lookup, public build streams and plans, configure facts, traces, wrapping existing builds, and Linux PID isolation. |
 | [`library/distribution.md`](library/distribution.md) | Phase 3 design and implemented remote blob hydration, local replay, signed delta delivery, #18 scheduling, #16 REAPI interoperability, and #63's scheduler and workers. |
 | [`library/workers.md`](library/workers.md) | Scheduler and worker protocol, bounded requeue, TAAP result identity, configuration, control endpoints, and deployment shape. |
 | [`library/node-store.md`](library/node-store.md) | Per-node shared chunk storage, metadata-only image mounts, listener boundaries, accounting, budgets, and eviction. |
