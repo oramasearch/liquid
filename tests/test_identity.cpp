@@ -336,3 +336,229 @@ TEST(Identity, KeyFileProviderRequiresAnExactPrivateKeyFile) {
 #endif
     std::filesystem::remove(path);
 }
+
+namespace {
+
+auto open_signer_in(const std::filesystem::path& home) -> liquid::signer {
+    set_identity_home(home);
+    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    EXPECT_TRUE(signer) << signer.error().message;
+    return std::move(*signer);
+}
+
+} // namespace
+
+// liquid#383: a signer name is bound to a key only through that name's identity chain. A
+// signature by key B that claims to be identity A must not verify where A's chain is unknown.
+TEST(Identity, SignerNameWithoutAChainDoesNotVerify) {
+    const auto victim_home = rotation_home("unknown-victim");
+    const auto attacker_home = rotation_home("unknown-attacker");
+    const auto verifier_home = rotation_home("unknown-verifier");
+    auto victim = open_signer_in(victim_home);
+    auto attacker = open_signer_in(attacker_home);
+    const auto body = bytes("drip body");
+    auto signed_value = liquid::runtime::block_on(attacker.sign("drip", body));
+    ASSERT_TRUE(signed_value) << signed_value.error().message;
+
+    auto forged = attacker.identity();
+    forged.taap_id = victim.identity().taap_id;
+    forged.fingerprint = victim.identity().fingerprint;
+    set_identity_home(verifier_home);
+    const auto impersonation = liquid::verify(forged, "drip", body, *signed_value);
+    ASSERT_FALSE(impersonation) << "a key verified as another identity";
+    EXPECT_EQ(impersonation.error().code, liquid::errc::unauthorized);
+    EXPECT_TRUE(liquid::is_unknown_signer(impersonation.error())) << impersonation.error().message;
+    const auto stranger = liquid::verify(attacker.identity(), "drip", body, *signed_value);
+    ASSERT_FALSE(stranger) << "an unknown identity verified";
+    EXPECT_TRUE(liquid::is_unknown_signer(stranger.error())) << stranger.error().message;
+
+    // Trusting the victim's real chain does not make the attacker's key the victim's.
+    const auto victim_document = victim.document();
+    ASSERT_TRUE(victim_document) << victim_document.error().message;
+    ASSERT_TRUE(liquid::trust_identity_chain(std::array{*victim_document}));
+    const auto still_forged = liquid::verify(forged, "drip", body, *signed_value);
+    ASSERT_FALSE(still_forged);
+    EXPECT_FALSE(liquid::is_unknown_signer(still_forged.error()));
+    EXPECT_EQ(still_forged.error().message, "signing key is not in the identity chain");
+
+    // Once the attacker's own chain is trusted, its signature verifies as the attacker only.
+    const auto attacker_document = attacker.document();
+    ASSERT_TRUE(attacker_document) << attacker_document.error().message;
+    ASSERT_TRUE(liquid::trust_identity_chain(std::array{*attacker_document}));
+    const auto honest = liquid::verify(attacker.identity(), "drip", body, *signed_value);
+    ASSERT_TRUE(honest) << honest.error().message;
+    EXPECT_TRUE(*honest);
+
+    std::error_code code;
+    std::filesystem::remove_all(victim_home, code);
+    std::filesystem::remove_all(attacker_home, code);
+    std::filesystem::remove_all(verifier_home, code);
+}
+
+// A document that claims another identity's name with its own key is self-consistent and
+// self-signed, but its identifier is not derived from its key, so it binds nothing.
+TEST(Identity, InitialDocumentMustBeNamedAfterItsOwnKey) {
+    const auto victim_home = rotation_home("named-victim");
+    const auto attacker_home = rotation_home("named-attacker");
+    auto victim = open_signer_in(victim_home);
+    auto attacker = open_signer_in(attacker_home);
+    auto forged = attacker.document();
+    ASSERT_TRUE(forged) << forged.error().message;
+    forged->subject.taap_id = victim.identity().taap_id;
+    forged->subject.fingerprint = victim.identity().fingerprint;
+    auto body = liquid::identity_detail::canonical_document(*forged, false);
+    ASSERT_TRUE(body) << body.error().message;
+    auto resigned = liquid::runtime::block_on(attacker.sign("identity_document", *body));
+    ASSERT_TRUE(resigned) << resigned.error().message;
+    forged->signatures = {*resigned};
+
+    EXPECT_FALSE(liquid::verify_document(*forged));
+    expect_chain_error({*forged}, "identity_chain_identifier_not_derived_from_key");
+    EXPECT_FALSE(liquid::trust_identity_chain(std::array{*forged}));
+    const auto drip = bytes("drip body");
+    auto signed_value = liquid::runtime::block_on(attacker.sign("drip", drip));
+    ASSERT_TRUE(signed_value) << signed_value.error().message;
+    EXPECT_FALSE(liquid::verify(forged->subject, std::array{*forged}, "drip", drip, *signed_value));
+
+    std::error_code code;
+    std::filesystem::remove_all(victim_home, code);
+    std::filesystem::remove_all(attacker_home, code);
+}
+
+TEST(Identity, ChainTravelsAndIsTrustedOnlyByExtension) {
+    const auto author_home = rotation_home("travel-author");
+    const auto verifier_home = rotation_home("travel-verifier");
+    auto author = open_signer_in(author_home);
+    const auto initial = author.document();
+    ASSERT_TRUE(initial) << initial.error().message;
+    auto successor = liquid::runtime::block_on(author.rotate());
+    ASSERT_TRUE(successor) << successor.error().message;
+    auto chain = liquid::load_identity_chain(author.identity().taap_id);
+    ASSERT_TRUE(chain) << chain.error().message;
+    ASSERT_EQ(chain->size(), 2U);
+
+    auto encoded = liquid::encode_identity_chain(*chain);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::decode_identity_chain(*encoded);
+    ASSERT_TRUE(decoded) << decoded.error().message;
+    ASSERT_EQ(decoded->size(), 2U);
+    auto trailing = *encoded;
+    trailing.push_back(std::byte{0});
+    EXPECT_FALSE(liquid::decode_identity_chain(trailing));
+
+    const auto drip = bytes("drip body");
+    auto signed_value = liquid::runtime::block_on(author.sign("drip", drip));
+    ASSERT_TRUE(signed_value) << signed_value.error().message;
+
+    set_identity_home(verifier_home);
+    const auto carried = liquid::verify(author.identity(), *decoded, "drip", drip, *signed_value);
+    ASSERT_TRUE(carried) << carried.error().message;
+    EXPECT_TRUE(*carried);
+    const auto unknown = liquid::verify(author.identity(), "drip", drip, *signed_value);
+    ASSERT_FALSE(unknown);
+    EXPECT_TRUE(liquid::is_unknown_signer(unknown.error()));
+    const auto missing = liquid::load_identity_chain(author.identity().taap_id);
+    ASSERT_FALSE(missing);
+    EXPECT_TRUE(liquid::is_unknown_signer(missing.error()));
+
+    // A prefix is trusted, then extended; a shorter chain afterwards changes nothing.
+    ASSERT_TRUE(liquid::trust_identity_chain(std::array{*initial}));
+    const auto current_key_unknown = liquid::verify(author.identity(), "drip", drip, *signed_value);
+    ASSERT_FALSE(current_key_unknown);
+    EXPECT_EQ(current_key_unknown.error().message, "signing key is not in the identity chain");
+    ASSERT_TRUE(liquid::trust_identity_chain(*decoded));
+    const auto trusted = liquid::verify(author.identity(), "drip", drip, *signed_value);
+    ASSERT_TRUE(trusted) << trusted.error().message;
+    EXPECT_TRUE(*trusted);
+    ASSERT_TRUE(liquid::trust_identity_chain(std::array{*initial}));
+    auto stored = liquid::load_identity_chain(author.identity().taap_id);
+    ASSERT_TRUE(stored) << stored.error().message;
+    EXPECT_EQ(stored->size(), 2U);
+
+    std::error_code code;
+    std::filesystem::remove_all(author_home, code);
+    std::filesystem::remove_all(verifier_home, code);
+}
+
+// Two different successors to one initial document are a fork: whichever was stored first stays,
+// and the other is refused rather than silently replacing it.
+TEST(Identity, ForkedChainIsRefused) {
+    const auto author_home = rotation_home("fork-author");
+    const auto copy_home = rotation_home("fork-copy");
+    const auto verifier_home = rotation_home("fork-verifier");
+    auto author = open_signer_in(author_home);
+    std::error_code code;
+    std::filesystem::copy(author_home, copy_home, std::filesystem::copy_options::recursive, code);
+    ASSERT_FALSE(code) << code.message();
+    ASSERT_TRUE(liquid::runtime::block_on(author.rotate()));
+    auto first_chain = liquid::load_identity_chain(author.identity().taap_id);
+    ASSERT_TRUE(first_chain) << first_chain.error().message;
+
+    setenv("LIQUID_HOME", copy_home.c_str(), 1);
+    auto copy = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    ASSERT_TRUE(copy) << copy.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(copy->rotate()));
+    auto second_chain = liquid::load_identity_chain(copy->identity().taap_id);
+    ASSERT_TRUE(second_chain) << second_chain.error().message;
+    ASSERT_EQ(first_chain->front().subject.taap_id, second_chain->front().subject.taap_id);
+
+    set_identity_home(verifier_home);
+    ASSERT_TRUE(liquid::trust_identity_chain(*first_chain));
+    const auto fork = liquid::trust_identity_chain(*second_chain);
+    ASSERT_FALSE(fork);
+    EXPECT_EQ(fork.error().code, liquid::errc::conflict);
+
+    std::filesystem::remove_all(author_home, code);
+    std::filesystem::remove_all(copy_home, code);
+    std::filesystem::remove_all(verifier_home, code);
+}
+
+// A rotation that only declares the old key compromised is signed by its new key alone. Anyone can
+// write one for any public initial document, so it is never accepted from a remote chain.
+TEST(Identity, CompromiseOnlyRotationIsNotTrustedFromAnotherMachine) {
+    const auto author_home = rotation_home("compromise-author");
+    const auto verifier_home = rotation_home("compromise-verifier");
+    auto author = open_signer_in(author_home);
+    const auto initial = author.identity();
+    const auto drip = bytes("drip body");
+    auto rotated = liquid::runtime::block_on(author.rotate(
+        liquid::compromise_declaration{initial.key_fingerprint, "2099-01-01T00:00:00Z", {}}));
+    ASSERT_TRUE(rotated) << rotated.error().message;
+    auto signed_value = liquid::runtime::block_on(author.sign("drip", drip));
+    ASSERT_TRUE(signed_value) << signed_value.error().message;
+    auto chain = liquid::load_identity_chain(initial.taap_id);
+    ASSERT_TRUE(chain) << chain.error().message;
+    ASSERT_EQ(chain->size(), 2U);
+    const auto local = liquid::verify(author.identity(), "drip", drip, *signed_value);
+    ASSERT_TRUE(local) << local.error().message;
+
+    set_identity_home(verifier_home);
+    EXPECT_FALSE(liquid::verify(author.identity(), *chain, "drip", drip, *signed_value));
+    const auto refused = liquid::trust_identity_chain(*chain);
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+    EXPECT_FALSE(liquid::load_identity_chain(initial.taap_id));
+    ASSERT_TRUE(liquid::trust_identity_chain(*chain, {.accept_compromise_rotation = true}));
+    const auto accepted = liquid::verify(author.identity(), "drip", drip, *signed_value);
+    ASSERT_TRUE(accepted) << accepted.error().message;
+    EXPECT_TRUE(*accepted);
+
+    std::error_code code;
+    std::filesystem::remove_all(author_home, code);
+    std::filesystem::remove_all(verifier_home, code);
+}
+
+TEST(Identity, SignerNameIsNotAPath) {
+    const auto home = rotation_home("name-path");
+    set_identity_home(home);
+    auto value = liquid::actor{};
+    value.taap_id = "taap:1:ed25519:../../escape";
+    value.fingerprint = "../../escape";
+    const auto signed_value = liquid::signature{};
+    const auto result = liquid::verify(value, "drip", bytes("body"), signed_value);
+    ASSERT_FALSE(result);
+    EXPECT_TRUE(liquid::is_unknown_signer(result.error()));
+    EXPECT_FALSE(liquid::load_identity_chain(value.taap_id));
+    std::error_code code;
+    std::filesystem::remove_all(home, code);
+}

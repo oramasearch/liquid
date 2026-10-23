@@ -23,16 +23,20 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <random>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <variant>
 #include <vector>
 
 #include "encoding/cbor.hpp"
+#include "liquid/attestation.hpp"
 #include "liquid/drive.hpp"
+#include "liquid/identity.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
@@ -1043,6 +1047,172 @@ TEST(Sync, bad_signature_rejects_the_complete_batch) {
     auto head = liquid::runtime::block_on(destination->head());
     EXPECT_FALSE(head);
     EXPECT_EQ(head.error().code, liquid::errc::not_found);
+}
+
+class scoped_liquid_home {
+public:
+    scoped_liquid_home() {
+        if (const auto* value = std::getenv("LIQUID_HOME")) {
+            previous_ = value;
+        }
+    }
+
+    ~scoped_liquid_home() {
+        if (previous_) {
+            setenv("LIQUID_HOME", previous_->c_str(), 1);
+        } else {
+            unsetenv("LIQUID_HOME");
+        }
+    }
+
+    scoped_liquid_home(const scoped_liquid_home&) = delete;
+    scoped_liquid_home& operator=(const scoped_liquid_home&) = delete;
+
+    static auto select(const std::filesystem::path& path) -> void {
+        setenv("LIQUID_HOME", path.c_str(), 1);
+    }
+
+private:
+    std::optional<std::string> previous_;
+};
+
+auto open_local_signer() -> liquid::signer {
+    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    EXPECT_TRUE(signer) << signer.error().message;
+    return std::move(*signer);
+}
+
+// Re-signs an exported drip with `signing_key` while its body and frame name `claimed`.
+auto forge_drip(liquid::sync_item drip, liquid::signer& signing_key, const liquid::actor& claimed)
+    -> liquid::sync_item {
+    auto body = liquid::encoding::cbor::decode(drip.body);
+    EXPECT_TRUE(body) << body.error().message;
+    auto* fields = std::get_if<liquid::encoding::cbor::value::map>(&body->data);
+    EXPECT_NE(fields, nullptr);
+    for (auto& [key, value] : *fields) {
+        if (key == liquid::encoding::cbor::value{"author"}) {
+            value = liquid::encoding::cbor::value{claimed.taap_id};
+        }
+    }
+    auto encoded = liquid::encoding::cbor::encode(*body);
+    EXPECT_TRUE(encoded) << encoded.error().message;
+    auto signed_value = liquid::runtime::block_on(signing_key.sign("drip", *encoded));
+    EXPECT_TRUE(signed_value) << signed_value.error().message;
+    auto signature = liquid::encode_attestation_signature(*signed_value);
+    EXPECT_TRUE(signature) << signature.error().message;
+    drip.author = signing_key.identity();
+    drip.author.taap_id = claimed.taap_id;
+    drip.author.fingerprint = claimed.fingerprint;
+    drip.body = std::move(*encoded);
+    drip.signature = std::move(*signature);
+    return drip;
+}
+
+// liquid#383: a peer sends a drip signed by its own key that names another identity as the
+// author. The receiver does not hold that identity's chain, so the drip must be refused.
+TEST(Sync, drip_signed_by_one_key_naming_another_identity_is_refused) {
+    const auto restore = scoped_liquid_home{};
+    temporary_directory victim_home;
+    temporary_directory attacker_home;
+    temporary_directory receiver_home;
+    temporary_directory source_path;
+    temporary_directory destination_path;
+
+    scoped_liquid_home::select(victim_home.path());
+    const auto victim = open_local_signer().identity();
+
+    scoped_liquid_home::select(attacker_home.path());
+    auto attacker = open_local_signer();
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source) << source.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    auto items = export_all(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    const auto drip = std::ranges::find_if(*items, [](const liquid::sync_item& item) {
+        return item.kind == liquid::sync_item_kind::drip;
+    });
+    ASSERT_NE(drip, items->end());
+    const auto forged = std::vector{forge_drip(*drip, attacker, victim)};
+
+    scoped_liquid_home::select(receiver_home.path());
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(destination) << destination.error().message;
+    auto imported = liquid::runtime::block_on(destination->import_drips(forged));
+    ASSERT_FALSE(imported) << "a drip signed by one key was imported as another identity's work";
+    EXPECT_EQ(imported.error().code, liquid::errc::unauthorized);
+    EXPECT_TRUE(liquid::is_unknown_signer(imported.error())) << imported.error().message;
+
+    // Carrying the victim's real chain does not help: it does not contain the attacker's key.
+    scoped_liquid_home::select(victim_home.path());
+    auto victim_chain = liquid::load_identity_chain(victim.taap_id);
+    ASSERT_TRUE(victim_chain) << victim_chain.error().message;
+    auto chain_body = liquid::encode_identity_chain(*victim_chain);
+    ASSERT_TRUE(chain_body) << chain_body.error().message;
+    scoped_liquid_home::select(receiver_home.path());
+    const auto with_chain = std::vector{liquid::sync_item{.kind = liquid::sync_item_kind::identity,
+                                                          .author = victim,
+                                                          .body = *chain_body},
+                                        forged.front()};
+    auto still_refused = liquid::runtime::block_on(destination->import_drips(with_chain));
+    ASSERT_FALSE(still_refused);
+    EXPECT_EQ(still_refused.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(still_refused.error().message, "signing key is not in the identity chain");
+}
+
+// The honest case: two people on two machines. The sender's chain travels ahead of its drips and
+// change, and the receiver verifies and stores it before checking their signatures.
+TEST(Sync, author_identity_chain_travels_with_its_drips) {
+    const auto restore = scoped_liquid_home{};
+    temporary_directory author_home;
+    temporary_directory receiver_home;
+    temporary_directory source_path;
+    temporary_directory destination_path;
+
+    scoped_liquid_home::select(author_home.path());
+    const auto author = open_local_signer().identity();
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source) << source.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("first")));
+    auto items = export_all(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    ASSERT_FALSE(items->empty());
+    EXPECT_EQ(items->front().kind, liquid::sync_item_kind::identity);
+    EXPECT_EQ(items->front().author.taap_id, author.taap_id);
+
+    scoped_liquid_home::select(receiver_home.path());
+    EXPECT_FALSE(liquid::load_identity_chain(author.taap_id));
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(destination) << destination.error().message;
+    auto without_chain = std::vector<liquid::sync_item>{};
+    std::ranges::copy_if(*items, std::back_inserter(without_chain), [](const auto& item) {
+        return item.kind != liquid::sync_item_kind::identity;
+    });
+    auto refused = liquid::runtime::block_on(destination->import_drips(without_chain));
+    ASSERT_FALSE(refused);
+    EXPECT_TRUE(liquid::is_unknown_signer(refused.error())) << refused.error().message;
+
+    auto imported = liquid::runtime::block_on(destination->import_drips(*items));
+    ASSERT_TRUE(imported) << imported.error().message;
+    auto stored = liquid::load_identity_chain(author.taap_id);
+    ASSERT_TRUE(stored) << stored.error().message;
+    EXPECT_EQ(stored->front().subject.taap_id, author.taap_id);
+    auto head = liquid::runtime::block_on(destination->head());
+    ASSERT_TRUE(head) << head.error().message;
+
+    // The receiver relays the author's chain to the next machine, even from a new process home
+    // (a restarted container): the repository keeps every author's chain with its records.
+    temporary_directory restarted_home;
+    scoped_liquid_home::select(restarted_home.path());
+    EXPECT_FALSE(liquid::load_identity_chain(author.taap_id));
+    auto relayed = export_all(*destination);
+    ASSERT_TRUE(relayed) << relayed.error().message;
+    EXPECT_TRUE(std::ranges::any_of(*relayed, [&](const liquid::sync_item& item) {
+        return item.kind == liquid::sync_item_kind::identity &&
+               item.author.taap_id == author.taap_id;
+    }));
 }
 
 auto write_drive_file(const std::filesystem::path& path, std::string_view value) -> void {

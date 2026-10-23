@@ -1,9 +1,14 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <unistd.h>
 
 #include "identity/taap.hpp"
 #include "liquid/admission.hpp"
@@ -298,6 +303,48 @@ TEST(AdmissionReview, applies_all_image_decisions_without_assumption) {
     records.available = false;
     policy.mode = liquid::admission_mode::attestation;
     EXPECT_EQ(review(policy, records, verifier).reason, "attestation source unavailable");
+}
+
+// liquid#383: the policy names the issuer, but a server without the issuer's identity chain cannot
+// bind that name to the signing key, so the image is refused as signed by an unknown identity.
+TEST(AdmissionReview, refuses_an_issuer_whose_identity_chain_is_unknown) {
+    const auto* previous = std::getenv("LIQUID_HOME");
+    const auto restore = previous ? std::optional<std::string>{previous} : std::nullopt;
+    const auto issuer_home = std::filesystem::temp_directory_path() /
+                             ("liquid-admission-issuer-" + std::to_string(::getpid()));
+    const auto server_home = std::filesystem::temp_directory_path() /
+                             ("liquid-admission-server-" + std::to_string(::getpid()));
+    std::error_code code;
+    std::filesystem::remove_all(issuer_home, code);
+    std::filesystem::remove_all(server_home, code);
+    setenv("LIQUID_HOME", issuer_home.c_str(), 1);
+    auto statement = signed_image();
+    auto policy = policy_for(statement);
+    auto records = source{};
+    records.values = {statement};
+    auto verifier = log{};
+
+    setenv("LIQUID_HOME", server_home.c_str(), 1);
+    const auto refused = review(policy, records, verifier);
+    EXPECT_FALSE(refused.allowed);
+    EXPECT_EQ(refused.reason, "issuer identity unknown");
+    ASSERT_EQ(refused.considered.size(), 1U);
+    EXPECT_EQ(refused.considered.front().rule_id, "attestation.unknown_signer");
+
+    setenv("LIQUID_HOME", issuer_home.c_str(), 1);
+    auto chain = liquid::load_identity_chain(statement.issuer.taap_id);
+    ASSERT_TRUE(chain) << chain.error().message;
+    setenv("LIQUID_HOME", server_home.c_str(), 1);
+    ASSERT_TRUE(liquid::trust_identity_chain(*chain));
+    EXPECT_TRUE(review(policy, records, verifier).allowed);
+
+    if (restore) {
+        setenv("LIQUID_HOME", restore->c_str(), 1);
+    } else {
+        unsetenv("LIQUID_HOME");
+    }
+    std::filesystem::remove_all(issuer_home, code);
+    std::filesystem::remove_all(server_home, code);
 }
 
 } // namespace

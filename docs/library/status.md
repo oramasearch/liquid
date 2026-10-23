@@ -45,6 +45,15 @@ keys remain local. Combining `--document` with `--json` or rotation returns a us
 The public `signer::document()` accessor supplies the stored signed document to the existing codec
 ([`identity.md`](identity.md)).
 
+**Signer attribution (#383).** Verification fails closed: a signer's name is bound to a key only by
+that identity's document chain, which must start at the initial document named after its own key.
+`verify(actor, ...)` reads the chain from the local identity store and returns an unknown-signer
+error when there is none; `verify(actor, chain, ...)` takes a carried chain. Sync carries every
+author's chain as an `identity` frame and stores it before checking signatures; `liquid identity show
+--chain` and `liquid identity trust` move a chain by hand. Release approval, hot update, build
+policy, admission, worker results, and the build cache all refuse an unknown signer
+([`identity.md`](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)).
+
 **Public API.** The public error, digest, identity document codec, signature decoder, and release
 approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers
 ([`api-map.md`](api-map.md), [`hash-agility.md`](hash-agility.md), [`identity.md`](identity.md),
@@ -468,6 +477,11 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
 - Windows returns a documented unsupported result for the daemon until Corosio provides
   named-pipe transport, and for `wrap`, `verify`, and `replay`.
 - Lazy mounts, `wrap`, `verify`, and `replay` need libfuse3 on Linux and macFUSE on macOS.
+- A signer is attributed only through an identity chain the verifier holds (#383). Peers built
+  before #383 send no identity frames, so their records arrive as unknown signers until their
+  chain is trusted by hand. An identity that recovered from a compromise without its old key's
+  signature is trusted elsewhere only by `liquid identity trust --accept-compromise-rotation`.
+  Who may issue a release policy or a hot-update patch is still open (#384, #388).
 - The executable-aware delta algorithm id is reserved and unused.
 - The data-branch reflink fast path requires local cluster control metadata.
 - The projection page has no recorded credentialed Apple notarisation proof; image booting is

@@ -117,6 +117,7 @@ runtime::task<admission_decision> review_image(const admission_policy& policy,
     auto accepted_issuer = false;
     auto accepted_profile = false;
     auto invalid_signature = false;
+    auto unknown_signer = false;
     auto log_refusal = std::optional<admission_reason>{};
     for (const auto& statement : *attestations) {
         auto id = record_digest(statement);
@@ -145,6 +146,14 @@ runtime::task<admission_decision> review_image(const admission_policy& policy,
         }
         accepted_profile = true;
         auto verified = verify_attestation(statement);
+        if (verified && verified->unknown_signer) {
+            // The issuer is named in the policy but this server holds no identity chain for it,
+            // so the name is not bound to a key and the signature proves nothing (liquid#383).
+            evidence_reason(considered, "attestation.unknown_signer", "issuer identity unknown");
+            unknown_signer = true;
+            output.considered.push_back(std::move(considered));
+            continue;
+        }
         if (!verified || !verified->verified) {
             evidence_reason(considered, "attestation.signature_invalid", "signature invalid");
             invalid_signature = true;
@@ -195,6 +204,8 @@ runtime::task<admission_decision> review_image(const admission_policy& policy,
         refuse(output, std::move(log_refusal->rule_id), std::move(log_refusal->message));
     } else if (invalid_signature && accepted_profile) {
         refuse(output, "attestation.signature_invalid", "signature invalid");
+    } else if (unknown_signer) {
+        refuse(output, "attestation.unknown_signer", "issuer identity unknown");
     } else if (accepted_issuer) {
         refuse(output, "attestation.profile_rejected", "profile not accepted");
     } else {

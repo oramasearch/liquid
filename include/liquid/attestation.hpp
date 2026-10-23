@@ -154,11 +154,17 @@ struct LIQUID_EXPORT attestation_verification_options {
     std::chrono::sys_seconds now{};
     std::optional<attestation_status> status;
     std::vector<attribute_disclosure> disclosures;
+    // The issuer's identity chain, when it travels with the attestation. Empty means the chain is
+    // read from this machine's identity store; an issuer with no chain there is unknown and the
+    // attestation does not verify.
+    std::vector<identity_document> issuer_chain;
 };
 
 struct LIQUID_EXPORT attestation_verification {
     bool verified{};
     std::string reason;
+    // Set when no identity chain binds the issuer's name to a key (`is_unknown_signer`).
+    bool unknown_signer{};
 };
 
 class LIQUID_EXPORT attestation_profile_registry {

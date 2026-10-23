@@ -37,7 +37,12 @@ therefore places it from the established measurements while workers use the same
 and sandbox path as direct Phase 2 actions.
 
 The worker sets `action_result.worker` to its TAAP identifier and signs the result, SLSA
-provenance, and both SBOM forms with the same identity used for the lease. The scheduler rejects a
+provenance, and both SBOM forms with the same identity used for the lease. The scheduler and every
+client verify that signature only against the worker's identity chain in their own `LIQUID_HOME`
+(liquid#383), so each worker's chain is provisioned there: `liquid identity show --chain` on the
+worker, `liquid identity trust <chain>` on the scheduler and clients. A result from a worker whose
+chain is not trusted is refused with an unknown-signer error. Authenticating the worker connection
+itself is liquid#416. The scheduler rejects a
 completion whose operation, token, worker, scheduling record, or signature differs from the active
 lease. The client imports those exact signed records and verifies provenance and SBOMs; it does not
 replace the worker signature with a client signature. `liquid why` therefore shows the same
