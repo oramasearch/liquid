@@ -161,7 +161,11 @@ chain is refused as an unknown signer (`errc::unauthorized`, `is_unknown_signer`
 a key outside the author's chain is refused as `signing key is not in the identity chain`. A peer
 that sends no identity frames, such as one built before liquid#383, therefore cannot deliver another
 person's records; its own records are accepted once the receiver trusts its chain by hand
-([identity.md](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)).
+([identity.md](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)). The same
+holds for a change as for a drip: a change whose author names one identity but is signed by
+another's key is refused on import (liquid#429). The push authorizer (`sync_authorizer`) runs
+before that import, so the `author` it sees is still a claim; authorize on the authenticated
+caller.
 
 ## Chunk stream
 

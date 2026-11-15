@@ -1162,6 +1162,116 @@ TEST(Sync, drip_signed_by_one_key_naming_another_identity_is_refused) {
     EXPECT_EQ(still_refused.error().message, "signing key is not in the identity chain");
 }
 
+// liquid#429, first exploit: a member pushes a change whose author names a colleague's taap_id
+// but carries, and is signed by, the member's own key. The change is refused on import, whether
+// or not the receiver holds the colleague's chain.
+TEST(Sync, change_signed_by_one_key_naming_another_identity_is_refused) {
+    const auto restore = scoped_liquid_home{};
+    temporary_directory victim_home;
+    temporary_directory attacker_home;
+    temporary_directory receiver_home;
+    temporary_directory source_path;
+    temporary_directory destination_path;
+
+    scoped_liquid_home::select(victim_home.path());
+    const auto victim = open_local_signer().identity();
+
+    scoped_liquid_home::select(attacker_home.path());
+    auto attacker = open_local_signer();
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source) << source.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("first")));
+    auto items = export_all(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    const auto change = std::ranges::find_if(*items, [](const liquid::sync_item& item) {
+        return item.kind == liquid::sync_item_kind::change;
+    });
+    ASSERT_NE(change, items->end());
+
+    auto record = liquid::objects::decode_change(change->body);
+    ASSERT_TRUE(record) << record.error().message;
+    record->author.taap_id = victim.taap_id;
+    record->author.fingerprint = victim.fingerprint;
+    auto body = liquid::objects::encode_change_body(*record);
+    ASSERT_TRUE(body) << body.error().message;
+    auto signed_value = liquid::runtime::block_on(attacker.sign("change", *body));
+    ASSERT_TRUE(signed_value) << signed_value.error().message;
+    auto signature = liquid::encode_attestation_signature(*signed_value);
+    ASSERT_TRUE(signature) << signature.error().message;
+    record->sig = *signature;
+    auto encoded = liquid::objects::encode(*record);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    change->author = attacker.identity();
+    change->author.taap_id = victim.taap_id;
+    change->author.fingerprint = victim.fingerprint;
+    change->body = std::move(*encoded);
+    change->signature = std::move(*signature);
+
+    scoped_liquid_home::select(receiver_home.path());
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(destination) << destination.error().message;
+    auto imported = liquid::runtime::block_on(destination->import_drips(*items));
+    ASSERT_FALSE(imported) << "a change signed by one key was imported as another identity's work";
+    EXPECT_EQ(imported.error().code, liquid::errc::unauthorized);
+    EXPECT_TRUE(liquid::is_unknown_signer(imported.error())) << imported.error().message;
+
+    // Carrying the colleague's real chain does not help: it does not contain the member's key.
+    scoped_liquid_home::select(victim_home.path());
+    auto victim_chain = liquid::load_identity_chain(victim.taap_id);
+    ASSERT_TRUE(victim_chain) << victim_chain.error().message;
+    auto chain_body = liquid::encode_identity_chain(*victim_chain);
+    ASSERT_TRUE(chain_body) << chain_body.error().message;
+    scoped_liquid_home::select(receiver_home.path());
+    auto with_chain = std::vector{liquid::sync_item{
+        .kind = liquid::sync_item_kind::identity, .author = victim, .body = *chain_body}};
+    with_chain.insert(with_chain.end(), items->begin(), items->end());
+    auto still_refused = liquid::runtime::block_on(destination->import_drips(with_chain));
+    ASSERT_FALSE(still_refused);
+    EXPECT_EQ(still_refused.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(still_refused.error().message, "signing key is not in the identity chain");
+}
+
+// liquid#429: history whose author's chain this machine does not hold (for example drips and
+// changes signed before liquid#448 by an identity whose chain was never kept) is listed as
+// signed by an unverified key, never as the author it names.
+TEST(Sync, history_without_its_authors_chain_is_listed_as_unverified) {
+    const auto restore = scoped_liquid_home{};
+    temporary_directory author_home;
+    temporary_directory reader_home;
+    temporary_directory repository_path;
+
+    scoped_liquid_home::select(author_home.path());
+    {
+        auto written =
+            liquid::runtime::block_on(liquid::repository::create(repository_path.path()));
+        ASSERT_TRUE(written) << written.error().message;
+        ASSERT_TRUE(liquid::runtime::block_on(written->write("one.txt", bytes("one"))));
+        ASSERT_TRUE(liquid::runtime::block_on(written->cut("first")));
+        auto drips = liquid::runtime::block_on(written->drips());
+        ASSERT_TRUE(drips) << drips.error().message;
+        ASSERT_FALSE(drips->empty());
+        EXPECT_TRUE(std::ranges::all_of(*drips, &liquid::drip::identity_verified));
+        auto changes = liquid::runtime::block_on(written->log());
+        ASSERT_TRUE(changes) << changes.error().message;
+        ASSERT_FALSE(changes->empty());
+        EXPECT_TRUE(std::ranges::all_of(*changes, &liquid::change::identity_verified));
+    }
+
+    scoped_liquid_home::select(reader_home.path());
+    auto opened = liquid::runtime::block_on(liquid::repository::open(repository_path.path()));
+    ASSERT_TRUE(opened) << opened.error().message;
+    auto drips = liquid::runtime::block_on(opened->drips());
+    ASSERT_TRUE(drips) << drips.error().message;
+    ASSERT_FALSE(drips->empty());
+    EXPECT_TRUE(std::ranges::none_of(*drips, &liquid::drip::identity_verified));
+    auto changes = liquid::runtime::block_on(opened->log());
+    ASSERT_TRUE(changes) << changes.error().message;
+    ASSERT_FALSE(changes->empty());
+    EXPECT_TRUE(std::ranges::none_of(*changes, &liquid::change::identity_verified));
+}
+
 // The honest case: two people on two machines. The sender's chain travels ahead of its drips and
 // change, and the receiver verifies and stores it before checking their signatures.
 TEST(Sync, author_identity_chain_travels_with_its_drips) {

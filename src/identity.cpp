@@ -1072,6 +1072,26 @@ bool is_unknown_signer(const error& value) noexcept {
     return value.code == errc::unauthorized && value.message == unknown_signer_message;
 }
 
+result<signature_check> check_signature(const actor& by,
+                                        std::string_view artifact_type,
+                                        std::span<const std::byte> canonical_body,
+                                        const signature& signed_value) {
+    auto bound = verify(by, artifact_type, canonical_body, signed_value);
+    if (bound) {
+        return signature_check{.signature_valid = *bound, .identity_verified = *bound};
+    }
+    if (!is_unknown_signer(bound.error())) {
+        return std::unexpected(bound.error());
+    }
+    // No chain binds the name, so the record's own key can show only that some key signed. The
+    // identity stays unverified whatever this says (liquid#429).
+    auto key_only = verify_with_key(by, artifact_type, canonical_body, signed_value);
+    if (!key_only) {
+        return std::unexpected(key_only.error());
+    }
+    return signature_check{.signature_valid = *key_only, .identity_verified = false};
+}
+
 result<bool> verify_document(const identity_document& document) {
     if (!valid_subject(document) || document.signatures.empty() ||
         (!document.previous_document_hash && !names_its_own_key(document))) {

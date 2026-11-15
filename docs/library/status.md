@@ -52,7 +52,12 @@ error when there is none; `verify(actor, chain, ...)` takes a carried chain. Syn
 author's chain as an `identity` frame and stores it before checking signatures; `liquid identity show
 --chain` and `liquid identity trust` move a chain by hand. Release approval, hot update, build
 policy, admission, worker results, and the build cache all refuse an unknown signer
-([`identity.md`](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)).
+([`identity.md`](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)). Every
+decision that trusts an identity requires that chain (Steve, 2026-11-14; #429). A signature with no
+chain is reported by `check_signature` as signed by an unverified key, `repository::drips()` and
+`repository::log()` mark such records `identity_verified == false`, and `liquid log` shows them as
+`signed by an unverified key`, never as the name they claim
+([`identity.md`](identity.md#every-decision-that-trusts-an-identity-requires-a-verified-chain)).
 
 **Public API.** The public error, digest, identity document codec, signature decoder, and release
 approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers
@@ -534,7 +539,9 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
 - Lazy mounts, `wrap`, `verify`, and `replay` need libfuse3 on Linux and macFUSE on macOS.
 - A signer is attributed only through an identity chain the verifier holds (#383). Peers built
   before #383 send no identity frames, so their records arrive as unknown signers until their
-  chain is trusted by hand. An identity that recovered from a compromise without its old key's
+  chain is trusted by hand. History signed before #448 by an identity whose chain was never kept
+  is listed as signed by an unverified key and satisfies no policy; it is not migrated (#452). An
+  identity that recovered from a compromise without its old key's
   signature is trusted elsewhere only by `liquid identity trust --accept-compromise-rotation`.
   Who may issue a release policy or a hot-update patch is still open (#384, #388).
 - The executable-aware delta algorithm id is reserved and unused.

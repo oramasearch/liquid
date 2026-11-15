@@ -163,6 +163,9 @@ struct LIQUID_EXPORT attestation_verification_options {
 };
 
 struct LIQUID_EXPORT attestation_verification {
+    // Set only when an identity chain binds the issuer's name to the signing key, so a caller that
+    // trusts `issuer.taap_id` (an approved issuer, builder or release signer) may rely on it. An
+    // attestation signed only by the key it carries never sets it (liquid#429).
     bool verified{};
     std::string reason;
     // Set when no identity chain binds the issuer's name to a key (`is_unknown_signer`).

@@ -110,10 +110,19 @@ private:
     std::unique_ptr<impl> impl_;
 };
 
+// Every decision that trusts an identity requires a verified identity chain (Steve, 2026-11-14;
+// liquid#429): an approved issuer or builder, an admission issuer pin, a distinct release signer,
+// build provenance, and the author of an imported drip or change. The two `verify` overloads
+// below are the chain-required checks, and the only ones such a decision may use. A signature
+// checked without a chain proves only that some key signed: it is shown as
+// `unverified_signer_label`, never as the name the record claims, and never satisfies a policy.
+inline constexpr std::string_view unverified_signer_label = "signed by an unverified key";
+
 // Verifies a signature attributed to the identity named by `by.taap_id`. The name is bound to a
 // key only through that identity's document chain, read from this machine's identity store (the
 // local identity and every chain accepted by `trust_identity_chain`). Without a chain the result
 // is the unknown-signer error (`is_unknown_signer`), never `true`; `by.public_key` is not trusted.
+// A `true` result therefore means the identity was verified, not only the signature.
 [[nodiscard]] LIQUID_EXPORT result<bool> verify(const actor& by,
                                                 std::string_view artifact_type,
                                                 std::span<const std::byte> canonical_body,
@@ -131,11 +140,32 @@ private:
 
 // Checks only that `key` made the signature. It says nothing about who holds the key: use it
 // solely for a key the caller itself bound to a name, such as a session key it minted and stored.
+// A key taken from the record being checked is not bound: that signature is "signed by an
+// unverified key" and must never satisfy an identity check.
 [[nodiscard]] LIQUID_EXPORT result<bool>
 verify_key_signature(const actor& key,
                      std::string_view artifact_type,
                      std::span<const std::byte> canonical_body,
                      const signature& signed_value);
+
+// The result of checking a record's signature for display, where an unknown signer is reported
+// rather than refused. `identity_verified` is set only when an identity chain binds `by.taap_id`
+// to the signing key, exactly as `verify` requires. When no chain is known, `signature_valid`
+// may still be set: the record was signed by an unverified key, and `by.taap_id` is a claim.
+struct LIQUID_EXPORT signature_check {
+    bool signature_valid{};
+    bool identity_verified{};
+};
+
+// Checks `signed_value` as `verify` does and, when no chain binds the signer's name, falls back
+// to the record's own key so the signature can be reported as signed by an unverified key. A key
+// that a known chain does not contain, or a bad signature, is still an error. Never use the
+// result for a decision that trusts an identity unless `identity_verified` is set.
+[[nodiscard]] LIQUID_EXPORT result<signature_check>
+check_signature(const actor& by,
+                std::string_view artifact_type,
+                std::span<const std::byte> canonical_body,
+                const signature& signed_value);
 
 // True for the error `verify` returns when no identity chain binds the signer's name to a key.
 // Its code is `errc::unauthorized`, so a caller that refuses every error stays closed.

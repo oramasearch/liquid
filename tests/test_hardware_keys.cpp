@@ -38,6 +38,7 @@
 #include "liquid/runtime.hpp"
 #include "monocypher-ed25519.h"
 #include "monocypher.h"
+#include "objects/records.hpp"
 #include "temporary_directory.hpp"
 
 namespace liquid_cli {
@@ -951,6 +952,86 @@ TEST(ReleaseApproval, threshold_counts_distinct_valid_identities) {
     ASSERT_TRUE(two_result) << two_result.error().message;
     EXPECT_TRUE(two_result->satisfied);
     EXPECT_EQ(two_result->distinct_valid_signers.size(), 2U);
+}
+
+// liquid#429, second exploit: one person forges release_approval/1 statements that name two
+// listed signers, each self-signed with a throwaway key. They never count toward the threshold:
+// not while the verifier lacks the named signers' chains, not once it holds them, and not when it
+// also trusts the throwaway identities.
+TEST(ReleaseApproval, self_signed_approvals_naming_listed_signers_do_not_count) {
+    auto policy_signer = open_identity("forged-policy");
+    auto first = open_identity("forged-first");
+    auto second = open_identity("forged-second");
+    auto third = open_identity("forged-third");
+    auto throwaway_one = open_identity("forged-throwaway-one");
+    auto throwaway_two = open_identity("forged-throwaway-two");
+    const auto repository = digest_with(std::byte{0x55});
+    const auto artifact = digest_with(std::byte{0x66});
+    auto policy = liquid::runtime::block_on(liquid::make_release_policy(
+        repository,
+        "targets",
+        2,
+        {first.identity().taap_id, second.identity().taap_id, third.identity().taap_id},
+        "2099-01-01T00:00:00Z",
+        policy_signer));
+    ASSERT_TRUE(policy) << policy.error().message;
+
+    // The issuer names a listed signer; the key, and the signature, are the throwaway's.
+    const auto forge =
+        [&](liquid::signer& throwaway,
+            const liquid::actor& claimed) -> liquid::result<liquid::release_approval> {
+        auto approval =
+            liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v1", throwaway));
+        if (!approval) {
+            return std::unexpected(approval.error());
+        }
+        auto statement = approval->statement;
+        statement.issuer.taap_id = claimed.taap_id;
+        statement.issuer.fingerprint = claimed.fingerprint;
+        auto body = liquid::objects::encode_attestation_body_unchecked(statement);
+        if (!body) {
+            return std::unexpected(body.error());
+        }
+        auto signed_value = liquid::runtime::block_on(throwaway.sign("attestation", *body));
+        if (!signed_value) {
+            return std::unexpected(signed_value.error());
+        }
+        auto encoded = liquid::encode_attestation_signature(*signed_value);
+        if (!encoded) {
+            return std::unexpected(encoded.error());
+        }
+        statement.signature = std::move(*encoded);
+        return liquid::release_approval{std::move(statement)};
+    };
+    auto forged_first = forge(throwaway_one, first.identity());
+    auto forged_second = forge(throwaway_two, second.identity());
+    ASSERT_TRUE(forged_first) << forged_first.error().message;
+    ASSERT_TRUE(forged_second) << forged_second.error().message;
+    const auto forged = std::array{*forged_first, *forged_second};
+
+    select_identity_home("forged-third");
+    trust_identities({&policy_signer});
+    auto unknown = liquid::verify_release(artifact, *policy, forged);
+    ASSERT_TRUE(unknown) << unknown.error().message;
+    EXPECT_FALSE(unknown->satisfied);
+    EXPECT_TRUE(unknown->distinct_valid_signers.empty());
+
+    trust_identities({&first, &second, &throwaway_one, &throwaway_two});
+    auto known = liquid::verify_release(artifact, *policy, forged);
+    ASSERT_TRUE(known) << known.error().message;
+    EXPECT_FALSE(known->satisfied) << "self-signed approvals met a 2-of-3 threshold";
+    EXPECT_TRUE(known->distinct_valid_signers.empty());
+    EXPECT_TRUE(known->unknown_signers.empty());
+
+    // A real approval counts once; the forged one beside it still adds nothing.
+    auto real_first =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v1", first));
+    ASSERT_TRUE(real_first) << real_first.error().message;
+    const auto mixed = std::array{*real_first, *forged_second};
+    auto one = liquid::verify_release(artifact, *policy, mixed);
+    ASSERT_TRUE(one) << one.error().message;
+    EXPECT_FALSE(one->satisfied);
+    EXPECT_EQ(one->distinct_valid_signers, std::vector<std::string>{first.identity().taap_id});
 }
 
 TEST(ReleaseApproval, approval_after_declared_compromise_is_rejected) {

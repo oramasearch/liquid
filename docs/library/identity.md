@@ -145,6 +145,40 @@ identity's document chain (liquid#383).
   key the caller itself bound to a name, such as a session key it minted and stored; it is never a
   substitute for a chain.
 
+### Every decision that trusts an identity requires a verified chain
+
+Steve decided on 2026-11-14 (liquid#429, liquid#452): every decision that trusts an identity
+requires a verified identity chain, and a signature verified only against the key a record carries
+never satisfies one. The TAAP fingerprint is computed from the key *and* the identity document's
+metadata (`created_at`, `key_label`, custody), which a record's actor does not carry, so the record
+key alone can never be bound to the `taap_id` it claims. The decisions, and the chain-required
+check each one uses:
+
+| Decision | Where | Check |
+|---|---|---|
+| Approved and attestation issuers | `src/attestation/registry.cpp` | `verify_attestation`: `verified` is set only through a chain |
+| The admission issuer pin | `src/admission/review.cpp` | `verify_attestation`; an unchained issuer is `attestation.unknown_signer` |
+| Approved builders and policy counts | `src/build/policy.cpp` | `verify_attestation` |
+| Distinct release signers | `src/identity/threshold.cpp` | `verify_attestation`; an unchained signer is listed in `unknown_signers` and not counted |
+| Build provenance | `src/build/provenance.cpp` | `verify` and `verify_attestation` |
+| Authors of imported drips and changes | `src/repository/repository_impl.cpp` (`import_synced_*`) | `verify`; an unchained author is refused |
+
+A signature with no chain is reported, never trusted: **`check_signature(actor, ...)`** returns a
+`signature_check` whose `identity_verified` is set only when a chain binds the name to the signing
+key, exactly as `verify` requires. With no stored chain it falls back to the record's own key and
+reports `signature_valid` with `identity_verified == false`: the record was *signed by an unverified
+key* (`unverified_signer_label`). It is for display only. A known chain that lacks the signing key,
+or a bad signature, is still an error.
+
+`repository::drips()` and `repository::log()` set `drip::identity_verified` and
+`change::identity_verified` this way, and `liquid log` (with or without `--drips`, text and JSON)
+shows an unverified author as `signed by an unverified key`, never as the name the record claims.
+
+**History signed before liquid#448** by an identity whose chain was never kept (for example by an
+earlier lake pod's per-pod identity) is shown as signed by an unverified key and cannot satisfy any
+policy. It is not migrated: Steve decided on 2026-10-23 that repository data so far is test data
+and the affected repositories may be deleted (liquid#452).
+
 A chain reaches a verifier in one of three ways:
 
 | Path | How |
@@ -206,7 +240,12 @@ real chain does not make the other key verify. `Identity.InitialDocumentMustBeNa
 `Identity.ChainTravelsAndIsTrustedOnlyByExtension`, `Identity.ForkedChainIsRefused`,
 `Identity.CompromiseOnlyRotationIsNotTrustedFromAnotherMachine`, and `Identity.SignerNameIsNotAPath`
 cover the rules above; `Sync.drip_signed_by_one_key_naming_another_identity_is_refused` and
-`Sync.author_identity_chain_travels_with_its_drips` cover sync.
+`Sync.author_identity_chain_travels_with_its_drips` cover sync. For liquid#429,
+`Identity.SignatureWithoutAChainIsReportedAsAnUnverifiedKey` covers `check_signature`,
+`Sync.change_signed_by_one_key_naming_another_identity_is_refused` covers a forged change author on
+import, `Sync.history_without_its_authors_chain_is_listed_as_unverified` covers the listing, and
+`ReleaseApproval.self_signed_approvals_naming_listed_signers_do_not_count` covers the release
+threshold.
 
 ## CRDT commit metadata
 
