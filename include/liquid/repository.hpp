@@ -605,6 +605,10 @@ public:
     [[nodiscard]] runtime::task<std::vector<ref>> refs();
     [[nodiscard]] runtime::task<void> set_ref(std::string name, change_id id);
     [[nodiscard]] result<repository_status> status();
+    // How many leases the repository's store holds: every repository's in a shared store. Each open
+    // handle holds its own and releases them when it ends; an ended process's are collected by the
+    // next open (liquid #527).
+    [[nodiscard]] runtime::task<std::uint64_t> lease_count();
     [[nodiscard]] runtime::task<std::vector<change>> log(log_options options = {});
     [[nodiscard]] runtime::task<std::vector<drip>> drips();
     [[nodiscard]] runtime::task<stale_base_report> explain_stale(write_base base,

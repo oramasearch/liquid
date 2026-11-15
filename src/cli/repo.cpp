@@ -410,6 +410,10 @@ auto repo_status(int argc, char** argv) -> int {
     if (!current) {
         return fail(current.error());
     }
+    auto leases = liquid::runtime::block_on(repository->lease_count());
+    if (!leases) {
+        return fail(leases.error());
+    }
     auto daemon_current = std::optional<liquid::daemon_status>{};
     auto ready = ensure_daemon(std::filesystem::current_path());
     if (!ready && ready.error().code != liquid::errc::unsupported) {
@@ -432,7 +436,7 @@ auto repo_status(int argc, char** argv) -> int {
         std::println(
             "{{\"pending_drips\":{},\"remote_bytes\":{},\"paused\":{},\"conflicts\":{},\"oversized_"
             "directories\":{},\"head\":{},\"agents\":{{\"require_base\":{},\"actors\":{}}},"
-            "\"data_branches\":{},\"store_recoveries\":{},"
+            "\"data_branches\":{},\"store_recoveries\":{},\"leases\":{},"
             "\"capture\":{{\"state\":{},\"pending_drips\":{},"
             "\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}},"
             "\"flow\":{},"
@@ -451,6 +455,7 @@ auto repo_status(int argc, char** argv) -> int {
             strings_json(current->agents.actors),
             data_branches_json(current->data_branches),
             strings_json(current->store_recoveries),
+            *leases,
             json_string(daemon_current && daemon_current->capture.state ==
                                               liquid::capture_status::state::paused
                             ? "paused"
@@ -496,6 +501,7 @@ auto repo_status(int argc, char** argv) -> int {
                          liquid::to_string(branch.mechanism),
                          branch.url);
         }
+        std::println("leases={}", *leases);
         for (const auto& recovery : current->store_recoveries) {
             std::println("store_recovery={}", recovery);
         }

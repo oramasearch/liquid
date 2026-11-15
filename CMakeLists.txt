@@ -642,6 +642,7 @@ add_library(libliquid
   src/store/pack.cpp
   src/store/references.cpp
   src/store/store_impl.cpp
+  src/store/holder.cpp
   src/store/subject_index.cpp
   src/store/write_lock.cpp
   src/sync/codec.cpp

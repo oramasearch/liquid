@@ -47,6 +47,11 @@ runtime::task<void> lease::release() {
     co_return co_await store_detail::release_lease(impl_->value);
 }
 
+void lease::release_now() noexcept {
+    if (impl_)
+        store_detail::release_lease_now(impl_->value);
+}
+
 struct store::impl {
     explicit impl(std::unique_ptr<store_detail::store_backend> value) : value(std::move(value)) {}
     std::unique_ptr<store_detail::store_backend> value;

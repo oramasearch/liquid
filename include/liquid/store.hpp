@@ -233,6 +233,9 @@ public:
 
 private:
     friend class store;
+    friend struct repository_detail::store_access;
+    // Releases the lease without awaiting, for a holder that is ending (liquid #527).
+    void release_now() noexcept;
     struct impl;
     std::unique_ptr<impl> impl_;
 };

@@ -413,6 +413,9 @@ TEST(StoreWriters, DaemonCliAndLibraryClientWriteOneCheckoutTogether) {
     EXPECT_GT(acknowledged(workspace / "library-ack").size(), 0U);
     EXPECT_TRUE(exited_cleanly(liquid_cli(checkout, logs / "final-status", {"status"})))
         << file_text(logs / "final-status");
+    // liquid #527: status reports the store's leases.
+    EXPECT_NE(file_text(logs / "final-status").find("\nleases="), std::string::npos)
+        << file_text(logs / "final-status");
     EXPECT_TRUE(exited_cleanly(liquid_cli(checkout, logs / "shutdown", {"daemon", "--shutdown"})))
         << file_text(logs / "shutdown");
     const auto daemon_status = wait_for(daemon);
