@@ -41,6 +41,9 @@ add_executable(liquid-tests
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
   reapi/test_action_cache.cpp
+
+  reapi/test_request_limits.cpp
+  ${PROJECT_SOURCE_DIR}/src/reapi/client.cpp
   config/test_configuration.cpp
   import/test_spack.cpp
   resolve/test_resolution.cpp

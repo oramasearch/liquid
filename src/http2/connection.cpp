@@ -1110,6 +1110,22 @@ auto connection::receive_data(std::uint32_t stream_id) -> runtime::task<std::vec
     co_return output;
 }
 
+auto connection::receive_data_part(std::uint32_t stream_id) -> runtime::task<data_part> {
+    const auto known = streams_.find(stream_id);
+    if (known != streams_.end() && known->second.received_end_stream &&
+        !pending_.contains(stream_id)) {
+        co_return data_part{{}, true};
+    }
+    auto received = co_await next_for_stream(stream_id);
+    if (!received) {
+        co_return std::unexpected(received.error());
+    }
+    if (received->type != frame_type::data) {
+        co_return std::unexpected(protocol_error("expected DATA frame"));
+    }
+    co_return data_part{std::move(received->payload), (received->flags & flag_end_stream) != 0};
+}
+
 auto connection::cancel(std::uint32_t stream_id) -> runtime::task<void> {
     if (stream_id == 0) {
         co_return std::unexpected(protocol_error("cannot cancel connection stream zero"));

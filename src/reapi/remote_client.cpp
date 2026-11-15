@@ -41,6 +41,11 @@ constexpr auto get_action_result_method =
 constexpr auto update_action_result_method =
     "/build.bazel.remote.execution.v2.ActionCache/UpdateActionResult";
 
+// The data carried by one ByteStream WriteRequest. A server reads a Write one message at a time
+// and refuses a message over its limit (liquid#451; liquid's own allows 5 MiB), so an upload is
+// sent as many messages of this size on one stream.
+constexpr auto write_chunk_bytes = std::size_t{1024} * 1024;
+
 auto client_error(errc code, std::string message, std::string context = {}) -> error {
     return {code, std::move(message), std::move(context)};
 }
@@ -477,14 +482,33 @@ remote_client::write(std::string instance_name, digest blob, std::vector<std::by
     } else if (queried.error().code != errc::not_found) {
         co_return std::unexpected(queried.error());
     }
-    auto response = co_await unary<WriteRequest, WriteResponse>(
-        rpc_,
-        write_method,
-        WriteRequest{.resource_name = resource,
-                     .write_offset = offset,
-                     .finish_write = true,
-                     .data = std::vector<std::byte>{
-                         contents.begin() + static_cast<std::ptrdiff_t>(offset), contents.end()}});
+    // One stream, one bounded message per chunk; only the first names the resource and only
+    // the last finishes the write.
+    auto requests = std::vector<std::vector<std::byte>>{};
+    auto position = static_cast<std::size_t>(offset);
+    do {
+        const auto count = std::min(write_chunk_bytes, contents.size() - position);
+        const auto begin = contents.begin() + static_cast<std::ptrdiff_t>(position);
+        auto encoded = encode(WriteRequest{
+            .resource_name = requests.empty() ? resource : std::string{},
+            .write_offset = static_cast<std::int64_t>(position),
+            .finish_write = position + count == contents.size(),
+            .data = std::vector<std::byte>{begin, begin + static_cast<std::ptrdiff_t>(count)}});
+        if (!encoded) {
+            co_return std::unexpected(encoded.error());
+        }
+        requests.push_back(std::move(*encoded));
+        position += count;
+    } while (position < contents.size());
+    auto messages = co_await rpc_.call_messages(write_method, std::move(requests));
+    if (!messages) {
+        co_return std::unexpected(messages.error());
+    }
+    if (messages->size() != 1) {
+        co_return std::unexpected(client_error(
+            errc::corrupt, "ByteStream Write returned the wrong message count", resource));
+    }
+    auto response = decode_message<WriteResponse>(messages->front());
     if (!response) {
         co_return std::unexpected(response.error());
     }

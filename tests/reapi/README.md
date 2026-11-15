@@ -9,3 +9,8 @@ the cache root, and, against a `liquid serve reapi` child process, that `UpdateA
 `GetActionResult` refuse traversal and absolute action digests without creating or overwriting a
 file while a valid digest still caches. Fixture
 provenance and regeneration instructions live in `fixtures/`.
+
+`test_request_limits.cpp` starts `liquid serve reapi` and checks the request limits of liquid#451:
+a unary request or a Write message whose prefix declares more than 5 MiB is answered with
+`RESOURCE_EXHAUSTED` before its body is sent, a 7 MiB Write sent as 1 MiB messages on one stream
+is stored, and `grpc_client::call_messages` uploads a blob above the limit.
