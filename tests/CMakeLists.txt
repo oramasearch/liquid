@@ -1131,3 +1131,9 @@ add_test(NAME consumer-project-build
     -DLIQUID_CONSUMER_BUILD_TYPE=${CMAKE_BUILD_TYPE}
     -DLIQUID_CONSUMER_HAS_CLI=${LIQUID_BUILD_CLI}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/consumer/run.cmake)
+
+# L-11 (liquid#393): the images keep their unauthenticated control APIs on loopback.
+add_test(NAME deploy-control-listeners-loopback
+  COMMAND "${CMAKE_COMMAND}" -DLIQUID_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/deploy_control_loopback.cmake")
+
