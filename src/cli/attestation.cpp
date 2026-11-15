@@ -9,8 +9,13 @@
 #include <type_traits>
 
 #include "liquid/attestation.hpp"
+#include "liquid/identity.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
+
+#include "cli/signer.hpp"
+#include "identity/taap.hpp"
+#include "objects/records.hpp"
 
 namespace liquid_cli {
 namespace {
@@ -142,7 +147,19 @@ auto attestation(int argc, char** argv) -> int {
         std::println("subject={}", liquid::to_string(value->subject));
         std::println("subject_kind={}", liquid::to_string(value->subject_kind));
         std::println("issued_at={}", value->at.time_since_epoch().count());
-        std::println("issuer={}", value->issuer.taap_id);
+        // The issuer is named only when an identity chain verifies the signature (liquid#512):
+        // a self-signed statement claiming someone else's taap_id shows as unverified.
+        auto issuer_verified = false;
+        if (auto signed_value = liquid::identity_detail::parse_signature(value->signature)) {
+            if (auto body = liquid::objects::encode_attestation_body_unchecked(*value)) {
+                if (auto checked =
+                        liquid::check_signature(value->issuer, "attestation", *body, *signed_value)) {
+                    issuer_verified = checked->identity_verified;
+                }
+            }
+        }
+        std::println("issuer={}", liquid_cli::shown_signer(value->issuer, issuer_verified));
+        std::println("issuer_verified={}", issuer_verified ? "true" : "false");
         std::println("attributes={}", value->attributes.size());
         for (const auto& attribute : value->attributes) {
             std::println("attribute.{}={}", attribute.name, attribute_text(attribute.value));
