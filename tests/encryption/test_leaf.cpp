@@ -89,6 +89,30 @@ TEST(LeafEncryption, JsonLeavesUseFreshEnvelopesAndLeaveStructureClear) {
     EXPECT_EQ(*decrypted, *parsed);
 }
 
+// L-33 (liquid#406): a path pattern that could backtrack without bound is refused before it runs,
+// and an ordinary one still selects its leaves.
+TEST(LeafEncryption, BacktrackingPathPatternsAreRefused) {
+    key_fixture fixture;
+    auto parsed = liquid::formats::json::parse(R"({"password":"same"})");
+    ASSERT_TRUE(parsed) << parsed.error().message;
+    for (const std::string pattern : {std::string("(a+)+$"), std::string("(a*)*b"),
+                                      std::string("(x|(y+))*z"), std::string("(a)\\1"),
+                                      std::string(300, 'a')}) {
+        const liquid::encryption_detail::leaf_rule rule{"team", pattern};
+        auto refused = liquid::runtime::block_on(
+            liquid::encryption_detail::leaf_cipher::encrypt_json(*parsed, rule, fixture.keys));
+        ASSERT_FALSE(refused) << pattern;
+        EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument) << pattern;
+    }
+    for (const std::string pattern : {std::string("password$"), std::string("^(db|cache)/.*key$"),
+                                      std::string("(secret)?token")}) {
+        const liquid::encryption_detail::leaf_rule rule{"team", pattern};
+        EXPECT_TRUE(liquid::runtime::block_on(
+            liquid::encryption_detail::leaf_cipher::encrypt_json(*parsed, rule, fixture.keys)))
+            << pattern;
+    }
+}
+
 TEST(LeafEncryption, AssociatedKeyPathRejectsMovedJsonValue) {
     key_fixture fixture;
     auto parsed = liquid::formats::json::parse(R"({"first":"secret"})");
