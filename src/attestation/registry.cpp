@@ -539,22 +539,44 @@ result<void> validate_delegation(const attestation& value, const attestation* pa
         !parent_lease || !child_depth || !parent_depth) {
         return std::unexpected(invalid("delegation attributes are incomplete"));
     }
+    // Containment over the glob language sessions match (`*` and `?` never cross `/`, `**` does),
+    // decided conservatively (liquid#517): a child scope is admitted only when it equals a parent
+    // scope, the parent scope is `**`, or the parent scope is `P/**` and the child starts with
+    // `P/`. Every other pair is refused, even one that might be contained, because a prefix of a
+    // pattern with `*` or `?` says nothing about the paths it matches.
     const auto within = [](std::string_view child, std::string_view ancestor) {
         if (child == ancestor || ancestor == "**") {
             return true;
         }
-        const auto wildcard = ancestor.find_first_of("*?");
-        if (wildcard == std::string_view::npos) {
+        constexpr auto recursive = std::string_view{"/**"};
+        if (!ancestor.ends_with(recursive)) {
             return false;
         }
-        const auto prefix = ancestor.substr(0, wildcard);
-        return child.starts_with(prefix);
+        const auto directory = ancestor.substr(0, ancestor.size() - recursive.size() + 1);
+        return directory.size() > 1 && child.starts_with(directory);
     };
     for (const auto& child : *child_scopes) {
         if (std::ranges::none_of(*parent_scopes,
                                  [&](const auto& ancestor) { return within(child, ancestor); })) {
             return std::unexpected(invalid("sub-delegation broadens path scopes"));
         }
+    }
+    // The chain is linked (liquid#517): the child is issued by the agent the parent delegates to,
+    // for the same repository, no earlier than the parent and ending no later than it.
+    auto issuer_subject = delegation_subject(value.issuer);
+    if (!issuer_subject || issuer_subject->alg != parent->subject.alg ||
+        issuer_subject->bytes != parent->subject.bytes) {
+        return std::unexpected(invalid("sub-delegation is not issued by its parent's subject"));
+    }
+    const auto* child_repository = std::get_if<std::string>(attribute(value, "repository"));
+    const auto* parent_repository = std::get_if<std::string>(attribute(*parent, "repository"));
+    if (!child_repository || !parent_repository || *child_repository != *parent_repository) {
+        return std::unexpected(invalid("sub-delegation names another repository"));
+    }
+    const auto* child_end = std::get_if<std::uint64_t>(attribute(value, "not_after"));
+    const auto* parent_end = std::get_if<std::uint64_t>(attribute(*parent, "not_after"));
+    if (!child_end || !parent_end || value.at < parent->at || *child_end > *parent_end) {
+        return std::unexpected(invalid("sub-delegation is not within its parent's validity"));
     }
     if ((*child_publish && !*parent_publish) || (*child_lease && !*parent_lease)) {
         return std::unexpected(invalid("sub-delegation broadens authority"));

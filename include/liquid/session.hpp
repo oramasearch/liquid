@@ -140,10 +140,16 @@ struct LIQUID_EXPORT line_attribution {
 
 struct LIQUID_EXPORT session_options {
     liquid::actor actor;
+    // The delegation the session acts on: the last link of its chain, issued to `actor`.
     attestation delegation;
-    // Whether the delegation is revoked (liquid#514). Required: an empty resolver refuses the
-    // session. It is kept with the session and asked again before every lease and publish.
-    // `local_delegation_status()` reads this machine's revocation list.
+    // The delegations above `delegation`, root first (liquid#517). Empty when the principal
+    // delegated to `actor` directly. The root must be issued by this repository's principal, each
+    // link must be a linked attenuation of the one before it (`validate_delegation`), and every
+    // link is verified and its status asked, at fork and before every lease and publish.
+    std::vector<attestation> chain;
+    // Whether a delegation is revoked (liquid#514), asked for every link. Required: an empty
+    // resolver refuses the session. It is kept with the session and asked again before every lease
+    // and publish. `local_delegation_status()` reads this machine's revocation list.
     delegation_status_resolver status;
 };
 

@@ -1264,4 +1264,122 @@ TEST(Collaboration, fork_session_binds_the_agent_dispatcher_and_repository) {
     EXPECT_TRUE(drips->back().delegation.has_value());
 }
 
+// Runs `work` with LIQUID_HOME set to `home`, so the local identity there signs, and restores the
+// previous home afterwards.
+template <typename Work> auto in_home(const std::filesystem::path& home, Work work) {
+    const auto* previous = std::getenv("LIQUID_HOME");
+    const auto restore = previous ? std::optional<std::string>{previous} : std::nullopt;
+    setenv("LIQUID_HOME", home.c_str(), 1);
+    auto outcome = work();
+    if (restore) {
+        setenv("LIQUID_HOME", restore->c_str(), 1);
+    } else {
+        unsetenv("LIQUID_HOME");
+    }
+    return outcome;
+}
+
+// Must-nevers D5 to D7 (liquid#517): a session acts under a chain only when every link is a linked
+// attenuation of the one before it, the root is the principal's, and depth decreases; the session
+// is then attributed to the last link's agent.
+TEST(Collaboration, fork_session_validates_every_link_of_a_delegation_chain) {
+    collaboration_directory directory;
+    auto shared = forked_repository(directory.path() / "shared");
+    const auto agent_home = directory.path() / "agent-home";
+
+    // The intermediate agent has its own identity, in its own liquid home, trusted here.
+    auto agent_chain = in_home(agent_home, [] {
+        auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+        return signer ? liquid::load_identity_chain(signer->identity().taap_id)
+                      : liquid::result<std::vector<liquid::identity_document>>{
+                            std::unexpected(signer.error())};
+    });
+    ASSERT_TRUE(agent_chain) << agent_chain.error().message;
+    auto agent_signer = in_home(agent_home, [] {
+        return liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    });
+    ASSERT_TRUE(agent_signer) << agent_signer.error().message;
+    const auto agent = agent_signer->identity();
+    ASSERT_TRUE(liquid::trust_identity_chain(*agent_chain));
+
+    auto root = delegation(shared, agent, {"src/**"});
+    ASSERT_TRUE(root) << root.error().message;
+    const auto root_end = std::ranges::find(root->attributes,
+                                            std::string_view{"not_after"},
+                                            &liquid::attestation_attribute::name)
+                              ->value;
+
+    const auto subagent = liquid::actor{.taap_id = "taap:1:ed25519:subagent"};
+    const auto sub_delegation = [&](std::vector<std::string> scopes, std::uint64_t depth) {
+        return in_home(agent_home, [&] {
+            auto child = delegation(shared, subagent, std::move(scopes));
+            if (!child) {
+                return child;
+            }
+            set_attribute(*child, "depth_remaining", depth);
+            set_attribute(*child, "not_after", root_end);
+            return sign_delegation(std::move(*child));
+        });
+    };
+    const auto fork = [&](liquid::attestation leaf, std::vector<liquid::attestation> chain) {
+        return liquid::runtime::block_on(shared.fork_session({.actor = subagent,
+                                                              .delegation = std::move(leaf),
+                                                              .chain = std::move(chain),
+                                                              .status = not_revoked()}));
+    };
+
+    auto child = sub_delegation({"src/lib/**"}, 0);
+    ASSERT_TRUE(child) << child.error().message;
+    EXPECT_EQ(child->issuer.taap_id, agent.taap_id);
+
+    auto broader = sub_delegation({"**"}, 0);
+    ASSERT_TRUE(broader);
+    auto broadened = fork(*broader, {*root});
+    ASSERT_FALSE(broadened);
+    EXPECT_EQ(broadened.error().code, liquid::errc::invalid_argument);
+
+    auto undeepened = sub_delegation({"src/lib/**"}, 1);
+    ASSERT_TRUE(undeepened);
+    auto same_depth = fork(*undeepened, {*root});
+    ASSERT_FALSE(same_depth);
+    EXPECT_EQ(same_depth.error().code, liquid::errc::invalid_argument);
+
+    auto other_root =
+        delegation(shared, liquid::actor{.taap_id = "taap:1:ed25519:other"}, {"src/**"});
+    ASSERT_TRUE(other_root);
+    auto broken = fork(*child, {*other_root});
+    ASSERT_FALSE(broken);
+    EXPECT_EQ(broken.error().code, liquid::errc::invalid_argument);
+
+    auto rootless = fork(*child, {});
+    ASSERT_FALSE(rootless);
+    EXPECT_EQ(rootless.error().code, liquid::errc::unauthorized);
+
+    auto revoked_root = liquid::runtime::block_on(shared.fork_session(
+        {.actor = subagent,
+         .delegation = *child,
+         .chain = {*root},
+         .status = [root_signature = root->signature](
+                       const liquid::attestation& link,
+                       const liquid::digest&) -> liquid::result<liquid::attestation_status> {
+             return liquid::attestation_status{
+                 .revoked = link.signature == root_signature,
+                 .checked_at =
+                     std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())};
+         }}));
+    ASSERT_FALSE(revoked_root);
+    EXPECT_EQ(revoked_root.error().code, liquid::errc::unauthorized);
+
+    auto forked = fork(*child, {*root});
+    ASSERT_TRUE(forked) << forked.error().message;
+    auto agent_session = std::move(*forked);
+    ASSERT_TRUE(
+        liquid::runtime::block_on(agent_session.write("src/lib/part.cpp", bytes("int part;\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(agent_session.publish({.message = "subagent"})));
+    auto drips = liquid::runtime::block_on(shared.drips());
+    ASSERT_TRUE(drips);
+    ASSERT_FALSE(drips->empty());
+    EXPECT_EQ(drips->back().by.taap_id, subagent.taap_id);
+}
+
 } // namespace

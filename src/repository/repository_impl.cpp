@@ -8888,6 +8888,9 @@ struct session::impl {
     actor agent;
     attestation delegation;
     digest delegation_id{};
+    // The delegations above `delegation`, root first, and their digests (liquid#517).
+    std::vector<attestation> chain;
+    std::vector<digest> chain_ids;
     std::vector<std::string> scopes;
     bool may_publish{};
     bool may_lease{};
@@ -8900,6 +8903,7 @@ namespace {
 struct stored_session {
     actor agent;
     attestation delegation;
+    std::vector<attestation> chain;
     digest base_tree{};
     change_id base_change{};
     journal_cursor base_cursor;
@@ -8910,9 +8914,18 @@ auto encode_stored_session(const stored_session& value) -> result<std::vector<st
     if (!delegation) {
         return std::unexpected(delegation.error());
     }
+    auto chain = cbor::value::array{};
+    for (const auto& link : value.chain) {
+        auto encoded = encode_attestation(link);
+        if (!encoded) {
+            return std::unexpected(encoded.error());
+        }
+        chain.push_back(bytes(*encoded));
+    }
     return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
                              {"agent", actor_value(value.agent)},
                              {"delegation", bytes(*delegation)},
+                             {"chain", cbor::value{std::move(chain)}},
                              {"base_tree", digest_value(value.base_tree)},
                              {"base_change", digest_value(value.base_change.value)},
                              {"base_cursor", cbor::value{value.base_cursor.token}}}));
@@ -8935,6 +8948,24 @@ auto decode_stored_session(std::span<const std::byte> encoded) -> result<stored_
         !change_value || !cursor) {
         return std::unexpected(failure(errc::corrupt, "invalid session metadata"));
     }
+    auto chain = std::vector<attestation>{};
+    if (const auto* chain_value = find(*value, "chain")) {
+        const auto* links = std::get_if<cbor::value::array>(&chain_value->data);
+        if (!links) {
+            return std::unexpected(failure(errc::corrupt, "invalid session delegation chain"));
+        }
+        for (const auto& link : *links) {
+            const auto* encoded = std::get_if<cbor::value::bytes>(&link.data);
+            if (!encoded) {
+                return std::unexpected(failure(errc::corrupt, "invalid session delegation chain"));
+            }
+            auto decoded = decode_attestation(*encoded);
+            if (!decoded) {
+                return std::unexpected(decoded.error());
+            }
+            chain.push_back(std::move(*decoded));
+        }
+    }
     auto agent = decode_actor(*agent_value);
     auto delegation = decode_attestation(*delegation_bytes);
     auto tree = decode_digest(*tree_value);
@@ -8947,6 +8978,7 @@ auto decode_stored_session(std::span<const std::byte> encoded) -> result<stored_
     }
     return stored_session{.agent = std::move(*agent),
                           .delegation = std::move(*delegation),
+                          .chain = std::move(chain),
                           .base_tree = *tree,
                           .base_change = change_id{*change},
                           .base_cursor = journal_cursor{*cursor}};
@@ -8963,16 +8995,14 @@ auto session_path_allowed(std::span<const std::string> scopes, std::string_view 
                                [&](const auto& scope) { return glob_matches(scope, path); });
 }
 
-// Whether `delegation` may be acted on now (liquid#514): inside its validity window, revoked by
-// nothing the session's resolver reports, correctly signed, and issued by `principal`. Asked when
-// a session is forked and again before every lease and publish, so a revocation or expiry stops a
-// session that is already running. An empty resolver, or one that cannot answer, refuses.
-auto check_delegation_now(const attestation& delegation,
-                          const digest& id,
-                          std::string_view principal,
-                          const delegation_status_resolver& status) -> result<void> {
-    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    auto window = check_delegation_window(delegation, now);
+// Whether one delegation may be acted on at `now` (liquid#514): inside its validity window,
+// revoked by nothing the session's resolver reports, and correctly signed by its issuer. An empty
+// resolver, or one that cannot answer, refuses.
+auto check_link_now(const attestation& link,
+                    const digest& id,
+                    const delegation_status_resolver& status,
+                    std::chrono::sys_seconds now) -> result<void> {
+    auto window = check_delegation_window(link, now);
     if (!window) {
         return std::unexpected(window.error());
     }
@@ -8980,18 +9010,46 @@ auto check_delegation_now(const attestation& delegation,
         return std::unexpected(
             failure(errc::unauthorized, "delegation status is required", "delegation/1"));
     }
-    auto answered = status(delegation, id);
+    auto answered = status(link, id);
     if (!answered) {
         return std::unexpected(
             failure(errc::unauthorized, answered.error().message, "delegation status"));
     }
-    auto verified = verify_attestation(delegation, {.now = now, .status = *answered});
+    auto verified = verify_attestation(link, {.now = now, .status = *answered});
     if (!verified || !verified->verified) {
         return std::unexpected(failure(errc::unauthorized,
                                        verified ? verified->reason : verified.error().message,
                                        "delegation/1"));
     }
-    if (delegation.issuer.taap_id != principal) {
+    return {};
+}
+
+// Whether a session's authority may be acted on now (liquid#514, liquid#517): every link of its
+// chain (root first) and its own delegation pass `check_link_now`, and the root was issued by
+// `principal`. Asked when a session is forked and again before every lease and publish, so a
+// revocation or expiry anywhere in the chain stops a session that is already running.
+auto check_delegation_now(const attestation& delegation,
+                          const digest& id,
+                          std::span<const attestation> chain,
+                          std::span<const digest> chain_ids,
+                          std::string_view principal,
+                          const delegation_status_resolver& status) -> result<void> {
+    if (chain.size() != chain_ids.size()) {
+        return std::unexpected(failure(errc::corrupt, "session delegation chain is incomplete"));
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    for (auto index = std::size_t{}; index < chain.size(); ++index) {
+        auto checked = check_link_now(chain[index], chain_ids[index], status, now);
+        if (!checked) {
+            return std::unexpected(checked.error());
+        }
+    }
+    auto checked = check_link_now(delegation, id, status, now);
+    if (!checked) {
+        return std::unexpected(checked.error());
+    }
+    const auto& root = chain.empty() ? delegation : chain.front();
+    if (root.issuer.taap_id != principal) {
         return std::unexpected(
             failure(errc::unauthorized, "delegation was not issued by this principal"));
     }
@@ -9040,14 +9098,45 @@ runtime::task<session> repository::fork_session(session_options options) {
         co_return std::unexpected(
             failure(errc::not_found, "a session requires a recorded fork point"));
     }
-    auto delegation_valid = validate_delegation(options.delegation);
+    // Every link of the chain is a linked attenuation of the one before it, and the session's own
+    // delegation of the last link (liquid#517).
+    for (auto index = std::size_t{}; index < options.chain.size(); ++index) {
+        auto link_valid = validate_delegation(options.chain[index],
+                                              index == 0 ? nullptr : &options.chain[index - 1]);
+        if (!link_valid) {
+            co_return std::unexpected(link_valid.error());
+        }
+    }
+    auto delegation_valid = validate_delegation(
+        options.delegation, options.chain.empty() ? nullptr : &options.chain.back());
     if (!delegation_valid) {
         co_return std::unexpected(delegation_valid.error());
     }
-    auto bound = check_delegation_binding(
-        options.delegation, options.actor, node_text(impl_->current.repository));
+    const auto repository_id = node_text(impl_->current.repository);
+    for (auto index = std::size_t{}; index < options.chain.size(); ++index) {
+        const auto& delegate = index + 1 < options.chain.size() ? options.chain[index + 1].issuer
+                                                                : options.delegation.issuer;
+        auto link_bound = check_delegation_binding(options.chain[index], delegate, repository_id);
+        if (!link_bound) {
+            co_return std::unexpected(link_bound.error());
+        }
+    }
+    auto bound = check_delegation_binding(options.delegation, options.actor, repository_id);
     if (!bound) {
         co_return std::unexpected(bound.error());
+    }
+    auto chain_ids = std::vector<digest>{};
+    for (const auto& link : options.chain) {
+        auto encoded_link = encode_attestation(link);
+        if (!encoded_link) {
+            co_return std::unexpected(encoded_link.error());
+        }
+        auto link_id = co_await repository_detail::store_access::put_plain(
+            impl_->objects, std::move(*encoded_link));
+        if (!link_id) {
+            co_return std::unexpected(link_id.error());
+        }
+        chain_ids.push_back(*link_id);
     }
     auto encoded_delegation = encode_attestation(options.delegation);
     if (!encoded_delegation) {
@@ -9058,8 +9147,12 @@ runtime::task<session> repository::fork_session(session_options options) {
     if (!delegation_id) {
         co_return std::unexpected(delegation_id.error());
     }
-    auto still_valid = check_delegation_now(
-        options.delegation, *delegation_id, impl_->signing_key.identity().taap_id, options.status);
+    auto still_valid = check_delegation_now(options.delegation,
+                                            *delegation_id,
+                                            options.chain,
+                                            chain_ids,
+                                            impl_->signing_key.identity().taap_id,
+                                            options.status);
     if (!still_valid) {
         co_return std::unexpected(still_valid.error());
     }
@@ -9131,12 +9224,15 @@ runtime::task<session> repository::fork_session(session_options options) {
     implementation->agent = std::move(options.actor);
     implementation->delegation = std::move(options.delegation);
     implementation->delegation_id = *delegation_id;
+    implementation->chain = std::move(options.chain);
+    implementation->chain_ids = std::move(chain_ids);
     implementation->scopes = delegated_scopes;
     implementation->may_publish = delegated_publish;
     implementation->may_lease = delegated_lease;
     implementation->status = std::move(options.status);
     auto metadata = encode_stored_session({.agent = implementation->agent,
                                            .delegation = implementation->delegation,
+                                           .chain = implementation->chain,
                                            .base_tree = implementation->base_tree,
                                            .base_change = implementation->base_change,
                                            .base_cursor = implementation->base_cursor});
@@ -9205,6 +9301,19 @@ runtime::task<session> repository::open_session(session_id id, session_open_opti
         co_return std::unexpected(delegation_id.error());
     }
     private_repository.impl_->acting_delegation = *delegation_id;
+    auto chain_ids = std::vector<digest>{};
+    for (const auto& link : metadata->chain) {
+        auto encoded_link = encode_attestation(link);
+        if (!encoded_link) {
+            co_return std::unexpected(encoded_link.error());
+        }
+        auto link_id = co_await repository_detail::store_access::put_plain(
+            impl_->objects, std::move(*encoded_link));
+        if (!link_id) {
+            co_return std::unexpected(link_id.error());
+        }
+        chain_ids.push_back(*link_id);
+    }
     const auto* scopes =
         std::get_if<std::vector<std::string>>(delegation_attribute(metadata->delegation, "scopes"));
     const auto* may_publish =
@@ -9226,6 +9335,8 @@ runtime::task<session> repository::open_session(session_id id, session_open_opti
     implementation->agent = std::move(metadata->agent);
     implementation->delegation = std::move(metadata->delegation);
     implementation->delegation_id = *delegation_id;
+    implementation->chain = std::move(metadata->chain);
+    implementation->chain_ids = std::move(chain_ids);
     implementation->scopes = delegated_scopes;
     implementation->may_publish = delegated_publish;
     implementation->may_lease = delegated_lease;
@@ -9302,6 +9413,8 @@ runtime::task<void> session::lease(lease_claim claim, std::chrono::seconds ttl) 
     }
     auto still_valid = check_delegation_now(impl_->delegation,
                                             impl_->delegation_id,
+                                            impl_->chain,
+                                            impl_->chain_ids,
                                             impl_->shared->impl_->signing_key.identity().taap_id,
                                             impl_->status);
     if (!still_valid) {
@@ -9358,6 +9471,8 @@ runtime::task<publish_report> session::publish(publish_options options) {
     }
     auto still_valid = check_delegation_now(impl_->delegation,
                                             impl_->delegation_id,
+                                            impl_->chain,
+                                            impl_->chain_ids,
                                             impl_->shared->impl_->signing_key.identity().taap_id,
                                             impl_->status);
     if (!still_valid) {

@@ -16,7 +16,7 @@ hold, and each is filed:
 | [#514](https://github.com/oramasearch/liquid/issues/514) | `fork_session` accepts revoked and expired delegations: it made up its own "not revoked, checked now" status, and `delegation/1` had no expiry. **Fixed**: a required `not_after` and a required status resolver, asked at fork, lease and publish. |
 | [#515](https://github.com/oramasearch/liquid/issues/515) | A delegation was not bound to the agent, the dispatcher or the repository that uses it. **Fixed**: subject, dispatcher and a required `repository` attribute are checked at fork, and `liquid session start --as <agent>` acts as the delegated agent. |
 | [#516](https://github.com/oramasearch/liquid/issues/516) | `open_session` restores authority from unsigned session state without verifying it again. |
-| [#517](https://github.com/oramasearch/liquid/issues/517) | `validate_delegation` lets a sub-delegation broaden its scopes and does not link it to its parent; chains are never checked when a session acts. |
+| [#517](https://github.com/oramasearch/liquid/issues/517) | `validate_delegation` let a sub-delegation broaden its scopes and did not link it to its parent; chains were never checked when a session acts. **Fixed**: conservative containment, linked links, and `session_options::chain` validated and verified link by link. |
 
 The must-nevers that hold and had no test now have one (*Must-nevers* below).
 
@@ -100,9 +100,9 @@ Each row: the property, where it is enforced, the test that proves it, and its s
 | D2 | A delegation altered after signing, or unsigned, starts a session. | `verify_attestation` `registry.cpp:404-425`, called at `repository_impl.cpp:8742-8750` | `fork_session_refuses_altered_unsigned_and_empty_delegations` (**new**) | Holds |
 | D3 | A delegation issued by anyone but this repository's principal starts a session. | `repository_impl.cpp:8751-8754` (and the identity-chain check inside `verify_attestation`) | `fork_session_refuses_a_delegation_issued_by_another_identity` (**new**) | Holds |
 | D4 | A revoked, expired or future-dated delegation starts a session, or a running session leases or publishes after its delegation is revoked or expires. | `check_delegation_window` (required `not_after`, at most 30 days, 5 minutes of skew) and the caller's `delegation_status_resolver` (required; an error refuses), both in `check_delegation_now`, called by `fork_session`, `session::lease` and `session::publish` | `fork_session_refuses_missing_revoked_and_stale_status`, `fork_session_refuses_expired_future_and_unbounded_delegations`, `publish_and_lease_refuse_after_revocation_or_expiry`; `AttestationRegistry.delegation_window_refuses_expired_future_and_unbounded_delegations`, `local_delegation_status_reads_the_revocation_list` | Holds ([#514](https://github.com/oramasearch/liquid/issues/514)) |
-| D5 | A sub-delegation keeps or raises `depth_remaining`, delegates from depth 0, or adds `may_publish` or `may_lease`. | `registry.cpp:532-537` | `delegation_chains_only_attenuate_authority`; `sub_delegation_reduces_depth_and_never_adds_leases` (**new**) | Holds in `validate_delegation`; never applied when a session acts (D7) |
-| D6 | A sub-delegation's scopes match a path its parent's scopes do not. | `within`, `registry.cpp:515-531` | `delegation_chains_only_attenuate_authority` (disjoint case only) | **Does not hold — [#517](https://github.com/oramasearch/liquid/issues/517)**: parent `src/*.cpp` admits `src/secret/**` |
-| D7 | An unlinked chain is accepted, or a session acts on a link that was never checked against its parent. | Not enforced: no issuer/subject link in `validate_delegation`; `fork_session` passes no parent `repository_impl.cpp:8738` | No test | **Does not hold — [#517](https://github.com/oramasearch/liquid/issues/517)** |
+| D5 | A sub-delegation keeps or raises `depth_remaining`, delegates from depth 0, or adds `may_publish` or `may_lease`. | `validate_delegation`, applied by `fork_session` to every link of `session_options::chain` | `delegation_chains_only_attenuate_authority`; `sub_delegation_reduces_depth_and_never_adds_leases`; `Collaboration.fork_session_validates_every_link_of_a_delegation_chain` | Holds ([#517](https://github.com/oramasearch/liquid/issues/517)) |
+| D6 | A sub-delegation's scopes match a path its parent's scopes do not. | `within` in `validate_delegation`: a child scope must equal a parent scope or lie under a parent `P/**` or `**`; everything else is refused | `sub_delegation_scopes_are_contained_conservatively`; `fork_session_validates_every_link_of_a_delegation_chain` | Holds ([#517](https://github.com/oramasearch/liquid/issues/517)) |
+| D7 | An unlinked chain is accepted, or a session acts on a link that was never checked against its parent. | `validate_delegation(child, &parent)`: child issuer is the parent's subject, same repository, issued no earlier and ending no later; `fork_session` validates, binds, verifies and asks the status of every link, the root must be the principal's, and `check_delegation_now` repeats the verification and status for the whole chain before every lease and publish | `sub_delegation_must_be_linked_to_its_parent`; `fork_session_validates_every_link_of_a_delegation_chain` | Holds ([#517](https://github.com/oramasearch/liquid/issues/517)) |
 | D8 | A session acts as, or is attributed to, an agent other than the delegation's subject; or names a dispatcher who did not issue it. | `check_delegation_binding` in `fork_session`: `delegation.subject == delegation_subject(options.actor)` and `dispatcher == issuer.taap_id`; the CLI acts as `--as <agent>` | `fork_session_binds_the_agent_dispatcher_and_repository`; `cli-session` | Holds ([#515](https://github.com/oramasearch/liquid/issues/515)) |
 | D9 | A delegation issued for one repository authorises work in another. | `check_delegation_binding`: the required `repository` attribute equals the forked repository's id | `fork_session_binds_the_agent_dispatcher_and_repository` | Holds ([#515](https://github.com/oramasearch/liquid/issues/515)) |
 
@@ -139,7 +139,7 @@ Each row: the property, where it is enforced, the test that proves it, and its s
 | **Repudiation** of agent work | version-3 drips carry the delegation digest, signed by the principal, and name the delegation's subject (S8, D8) | Mitigated |
 | **Information disclosure** | a session reads the whole private replica, not only its scopes | Accepted: scopes limit writes, not reads (below) |
 | **Denial of service** | an in-scope lease blocks the human's writes until it expires | Accepted: leases are time-bounded; Lake can authorise them (`authorize_lease`) |
-| **Elevation of privilege** | broadening sub-delegation (D6, D7) | Open, #517 |
+| **Elevation of privilege** | broadening or unlinked sub-delegation (D6, D7) | Mitigated, #517 |
 | **Elevation of privilege** | revoked or expired delegation (D4) | Mitigated, #514: bounded window and required status at fork, lease and publish |
 
 ## Confused deputy
@@ -158,20 +158,25 @@ principal did not intend.
 - **When.** Checked (#514). A delegation is valid from `at` (5 minutes of skew) to `not_after`, at
   most 30 days, and its status comes from the caller's resolver at fork and before every lease and
   publish.
-- **Through whom.** Not checked (#517). Chains are not linked and not consumed by sessions.
+- **Through whom.** Checked (#517). A session may carry the chain above its delegation
+  (`session_options::chain`, root first); every link must be a linked attenuation of the one before
+  it, the root must be the principal's, and every link is verified and its status asked.
 
-The depth limit, which `docs/features/25` names as *the* mitigation, is therefore only as good as
-the library caller that checks a chain with `validate_delegation`, and that check over-approximates
-containment.
+The depth limit, which `docs/features/25` names as *the* mitigation, is enforced by the session
+itself for every link of the chain it acts under. An intermediate link is signed by an agent, so
+that agent's identity chain must be in this machine's identity store (`trust_identity_chain`);
+otherwise the link does not verify and the session is refused.
 
 ## Attenuation, depth, scope, expiry and revocation
 
 - **Attenuation of capabilities.** `may_publish` and `may_lease` can only be kept or dropped (D5).
 - **Depth.** A child must have strictly less `depth_remaining`, and depth 0 cannot delegate (D5).
-  No session consumes a chain, so depth bounds nothing at run time (D7).
+  `fork_session` applies this to every link of the chain a session acts under (D7, #517).
 - **Scope.** Path globs matched by `glob_matches` (`repository_impl.cpp:4022-4048`), where `*` and
   `?` do not cross `/` and `**` does. A session's own checks use this matcher exactly. Sub-delegation
-  containment uses a text-prefix approximation instead and admits broader children (D6). Scopes
+  containment is conservative (D6, #517): a child scope must equal a parent scope or lie under a
+  parent `P/**` (or `**`). A child that might be contained but is not one of these, such as
+  `src/main.cpp` under `src/*.cpp`, is refused. Scopes
   limit writes, leases and publishes, never reads.
 - **Expiry.** `delegation/1` requires `not_after` (seconds since the epoch). `check_delegation_window`
   refuses one that has expired, one issued more than 5 minutes in the future, and one valid for

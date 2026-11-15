@@ -199,6 +199,12 @@ decode_attestation(std::span<const std::byte> bytes);
 [[nodiscard]] LIQUID_EXPORT result<attestation_verification>
 verify_attestation(const attestation& value, const attestation_verification_options& options = {});
 [[nodiscard]] LIQUID_EXPORT result<bool> verify(const attestation& value);
+// Checks that `value` is a complete `delegation/1` record and, with `parent`, that it is an
+// attenuation of `parent` linked to it (liquid#517): every child scope equals a parent scope or
+// lies under a parent `P/**` (or `**`) scope, no capability is added, `depth_remaining` decreases,
+// the child's issuer is the agent the parent delegates to (`delegation_subject`), both name the
+// same repository, and the child is issued no earlier than the parent and ends no later. It does
+// not verify signatures or status; `fork_session` does that for every link of a chain.
 [[nodiscard]] LIQUID_EXPORT result<void> validate_delegation(const attestation& value,
                                                              const attestation* parent = nullptr);
 
