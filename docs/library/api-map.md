@@ -1889,14 +1889,15 @@ runtime::task<hot_update_plan> classify(repository&, result_id old, result_id ne
 runtime::task<hot_update_patch_creation> create_patch(repository&, hot_update_plan,
                                                        std::vector<std::byte> object);
 runtime::task<hot_update_patch_creation> create_patch(repository&, hot_update_plan);
-runtime::task<hot_update_patch> verify_patch(repository&, digest record);
+struct hot_update_trust { std::vector<std::string> signers; };   // liquid#388; empty refuses all
+runtime::task<hot_update_patch> verify_patch(repository&, digest record, hot_update_trust);
 runtime::task<hot_update_apply_result> apply(repository&, digest record,
-                                             std::filesystem::path endpoint);
+                                             std::filesystem::path endpoint, hot_update_trust);
 runtime::task<hot_update_apply_result> record_outcome(repository&, hot_update_plan);
 runtime::task<hot_update_apply_result> restart(repository&, hot_update_plan,
                                                std::filesystem::path working_tree,
                                                std::vector<std::string> hook);
-runtime::task<hot_update_composition> status(repository&, result_id target);
+runtime::task<hot_update_composition> status(repository&, result_id target, hot_update_trust);
 }
 ```
 

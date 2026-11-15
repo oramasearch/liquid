@@ -439,7 +439,10 @@ and `liquid symbols <path>` ([`symbols.md`](symbols.md)).
 patch and restart records, the versioned `liquid-hot` cooperative C runtime for macOS arm64 and
 Linux x86_64, sandboxed restart hooks, reconstructible base-plus-patch status, and a drip-driven
 daemon target. Tier 2 verifies the #27 descriptors referenced by both signed results and otherwise
-returns the tier-3 restart outcome ([`hot-update.md`](hot-update.md)). Issue #305 gives the tier-1
+returns the tier-3 restart outcome ([`hot-update.md`](hot-update.md)). A patch is delivered only
+when its signer is in the configured hot-update signer set (`$LIQUID_HOME/trust/hot-update-signers`
+for the CLI, the repository's own identity for the daemon) and verifies through its identity chain;
+a missing or empty set refuses every patch (#388). Issue #305 gives the tier-1
 demo a scoped, bounded socket path and makes overlong runtime endpoints report the native limit
 and path ([socket fixtures](../build/socket-fixtures.md)).
 
@@ -615,7 +618,7 @@ Git objects and protobuf. Their first runs found five defects, fixed in the same
   is listed as signed by an unverified key and satisfies no policy; it is not migrated (#452). An
   identity that recovered from a compromise without its old key's
   signature is trusted elsewhere only by `liquid identity trust --accept-compromise-rotation`.
-  Who may issue a release policy or a hot-update patch is still open (#384, #388).
+  Who may issue a release policy is still open (#384).
 - Signatures by a key later declared compromised are refused even when made before the
   declaration (#391): no signing path requests an RFC 3161 token and no drip, change, approval or
   attestation record carries one, and the CLI configures no TSA roots.

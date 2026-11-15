@@ -227,9 +227,29 @@ A chain reaches a verifier in one of three ways:
 | **By hand** | `liquid identity show --chain` prints the whole chain as unpadded base64url; `liquid identity trust <chain>` (or `-` for standard input) verifies and stores it on another machine. This is how a release verifier, an admission server, a worker scheduler, or a build-policy checker learns the identities it should accept. |
 | **With the request** | A service that receives a chain with each request, such as lake's TAAP sign-in, passes it to `verify(actor, chain, ...)` or `attestation_verification_options::issuer_chain`. |
 
-Trusting a chain answers *who signed*, not *whether that signer may do this*. Who may issue a release
-policy or a hot-update patch is a separate allow-list (liquid#384, liquid#388); build policy and
-admission policy already name the identities they accept.
+Trusting a chain answers *who signed*, not *whether that signer may do this*. Chains arrive by sync
+from anyone who writes the repository, so a held chain is never an authorization. Decisions that
+must not be controlled by a repository take their allow-list from this machine's trust files
+(below); build policy and admission policy already name the identities they accept.
+
+### Local trust files
+
+A trust anchor that a repository can never supply lives under the liquid home, in
+`$LIQUID_HOME/trust/<name>` (else `$HOME/.liquid/trust/<name>`). Nothing there is read from a
+repository, a clone, a sync peer or a log. `trust_file_path(name)` names the file and
+`load_trusted_identities(name)` reads it: one TAAP identity id per line, blank lines and text after
+`#` ignored, a repeated id kept once, and a line with two values refused. **A missing or empty file
+is an `errc::unauthorized` error naming the file to create**, so a command that needs one fails
+closed until the operator writes it. The library APIs that use these lists take them as explicit
+parameters, so lake, liquify and other libliquid callers pass their own; the `liquid` binary loads
+them from these files.
+
+| File | Who it lists | Used by |
+|---|---|---|
+| `trust/hot-update-signers` | Identities whose signed patch `liquid hot-update apply` and `status` accept | [hot-update.md](hot-update.md#who-may-sign-a-patch) (liquid#388) |
+
+Each listed identity must also have its chain in the identity store (`liquid identity trust`): the
+list says who may act, the chain proves that a signature is theirs.
 
 `signer::rotate_to(custody, compromise?)` selects `software`, `fido2`, or `piv:9c`. The successor
 document includes the custody name, changes `key_algorithm` and `key_fingerprint`, and otherwise

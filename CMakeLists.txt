@@ -627,6 +627,7 @@ add_library(libliquid
   src/install/install.cpp
   src/install/records.cpp
   src/identity/threshold.cpp
+  src/identity/trust.cpp
   src/import/spack.cpp
   src/node_store.cpp
   src/node_store/service.cpp

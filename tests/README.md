@@ -386,7 +386,12 @@ Symbol tests verify compiler-labelled definition/reference records, cross-file i
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.
 Hot-update tests classify fixture pairs across all tiers, prove that comment-only output equality is
 tier 0, require ABI evidence for tier 2, reject unsigned patches, and reconstruct a two-patch
-composition. The Unix demo drives one Capy process across a signed tier-1 replacement; its tier-3
+composition. `HotUpdate.EmptySignerSetRefusesEveryPatch` and
+`HotUpdate.PatchFromAnUnlistedSignerIsRefused` cover the hot-update signer set (liquid#388): an
+empty set refuses every patch, and an identity whose chain is held but which is not listed is
+refused while a listed one is accepted. `test_trust.cpp` (`TrustFile.*`) covers the
+`$LIQUID_HOME/trust/` loader: a missing or empty file refuses and names the file, comments and
+duplicates are handled, and a name that is not a plain file name is refused. The Unix demo drives one Capy process across a signed tier-1 replacement; its tier-3
 case verifies the sandboxed restart-hook arguments where a FUSE backend is installed.
 `test_projection.cpp` imports the committed `fixtures/projection/root` install tree and covers
 package round trips, registry recognition, deterministic compression and output, OCI layers and
