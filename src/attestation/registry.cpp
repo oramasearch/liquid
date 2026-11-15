@@ -2,6 +2,8 @@
 
 #include "liquid/attestation.hpp"
 
+#include <atomic>
+#include <cstdint>
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -428,13 +430,26 @@ verify_attestation(const attestation& value, const attestation_verification_opti
         return attestation_verification{false, schema.error().message};
     }
     const auto* profile = attestation_profile_registry::global().find(value.profile);
+    // The clock never runs behind the newest signed time this process has accepted (L-35,
+    // liquid#417): a clock rolled back cannot revive an attestation that has already expired. A
+    // caller-supplied `now` (tests, a replayed evaluation) is used as given.
+    static auto clock_floor = std::atomic<std::int64_t>{0};
+    const auto system_now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     const auto now =
         options.now == std::chrono::sys_seconds{}
-            ? std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())
+            ? std::max(system_now,
+                       std::chrono::sys_seconds{std::chrono::seconds{clock_floor.load()}})
             : options.now;
     if (profile->status_policy.kind == attestation_status_kind::max_age &&
         (value.at > now || now - value.at > profile->status_policy.maximum_age)) {
         return attestation_verification{false, "attestation is stale"};
+    }
+    // Only a time already past on this clock raises the floor: a future-dated attestation must not
+    // move it ahead and make every current one look stale.
+    if (options.now == std::chrono::sys_seconds{} && value.at <= system_now) {
+        const auto seen = static_cast<std::int64_t>(value.at.time_since_epoch().count());
+        for (auto floor = clock_floor.load(); seen > floor && !clock_floor.compare_exchange_weak(floor, seen);) {
+        }
     }
     if (profile->status_policy.kind == attestation_status_kind::revocable) {
         if (!options.status) {

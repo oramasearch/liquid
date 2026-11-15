@@ -112,7 +112,7 @@ The policy binds a repository role, threshold, allowed TAAP identities, and expi
 binds one artifact to the complete signed policy. Distinct counting, compromise-time rejection,
 and TUF alignment are specified in [release-approval.md](release-approval.md).
 
-For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
+For `max_age`, the verifier rejects a future or old attestation. Its clock never runs behind the newest signed time the process has accepted that was already past (L-35, liquid#417), so a clock rolled back cannot revive an attestation that has expired. A caller-supplied `now` is used as given. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's
 maximum status age. Status retrieval belongs to the caller, so this library remains usable
 offline and does not choose a network authority.
