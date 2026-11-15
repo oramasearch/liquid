@@ -406,4 +406,17 @@ private:
     friend class encryption_detail::leaf_cipher;
 };
 
+// Trust anchors that a repository can never supply live in this machine's liquid home, under
+// `trust/<name>` (`$LIQUID_HOME/trust/<name>`, else `$HOME/.liquid/trust/<name>`). Nothing there
+// is read from a repository, a clone, a sync peer or a log. Library callers that keep their own
+// configuration pass the identities to the API directly and need not use these files.
+[[nodiscard]] LIQUID_EXPORT std::filesystem::path trust_file_path(std::string_view name);
+
+// Reads `trust/<name>`: one TAAP identity id per line; blank lines and text after `#` are
+// ignored, and a repeated id is kept once. A missing or empty file is an `errc::unauthorized`
+// error whose message names the file to create, so a caller that refuses every error stays
+// closed. `name` is a plain file name such as `hot-update-signers`.
+[[nodiscard]] LIQUID_EXPORT result<std::vector<std::string>>
+load_trusted_identities(std::string_view name);
+
 } // namespace liquid

@@ -1,8 +1,10 @@
 #include <filesystem>
 #include <print>
 #include <string_view>
+#include <utility>
 
 #include "liquid/hot_update.hpp"
+#include "liquid/identity.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 
@@ -23,6 +25,15 @@ auto usage(std::string_view message) -> int {
 auto open_repository() -> liquid::result<liquid::repository> {
     return liquid::runtime::block_on(
         liquid::repository::open_build(std::filesystem::current_path()));
+}
+
+// liquid#388: who may sign a patch comes from this machine's liquid home, never the repository.
+auto signer_trust() -> liquid::result<liquid::hot_update_trust> {
+    auto signers = liquid::load_trusted_identities("hot-update-signers");
+    if (!signers) {
+        return std::unexpected(signers.error());
+    }
+    return liquid::hot_update_trust{std::move(*signers)};
 }
 
 auto classify(int argc, char** argv) -> int {
@@ -77,8 +88,12 @@ auto status(int argc, char** argv) -> int {
     if (!source) {
         return fail(source.error());
     }
-    auto composition =
-        liquid::runtime::block_on(liquid::hot_update::status(*source, liquid::result_id{*target}));
+    auto trust = signer_trust();
+    if (!trust) {
+        return fail(trust.error());
+    }
+    auto composition = liquid::runtime::block_on(
+        liquid::hot_update::status(*source, liquid::result_id{*target}, std::move(*trust)));
     if (!composition) {
         return fail(composition.error());
     }
@@ -112,8 +127,12 @@ auto apply(int argc, char** argv) -> int {
     if (!source) {
         return fail(source.error());
     }
-    auto applied = liquid::runtime::block_on(
-        liquid::hot_update::apply(*source, *patch, std::filesystem::path{argv[2]}));
+    auto trust = signer_trust();
+    if (!trust) {
+        return fail(trust.error());
+    }
+    auto applied = liquid::runtime::block_on(liquid::hot_update::apply(
+        *source, *patch, std::filesystem::path{argv[2]}, std::move(*trust)));
     if (!applied) {
         return fail(applied.error());
     }

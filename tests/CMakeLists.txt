@@ -38,6 +38,7 @@ add_executable(liquid-tests
   test_plugin_abi.c
   test_plugin_abi.cpp
   test_remote.cpp
+  test_trust.cpp
   reapi/test_wire.cpp
   reapi/test_messages.cpp
   reapi/test_conversion.cpp

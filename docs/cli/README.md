@@ -683,8 +683,9 @@ outside every live root is reported as due for eviction by the next collection.
 `hot-update classify <old> <new> [--json]` prints the tier, first-class outcome, changed symbols,
 evidence records, and reason. Missing frontend evidence is tier 4 rather than a command error.
 `hot-update apply <patch> --endpoint <path>` verifies the `hot_update/1` signature before sending
-the object to the program's local endpoint. `hot-update status <result> [--json]` walks the signed
-chain and lists the original artifact followed by each patch in application order. Configuration
+the object to the program's local endpoint; the signer must be listed in
+`$LIQUID_HOME/trust/hot-update-signers`, and a missing or empty file refuses every patch.
+`hot-update status <result> [--json]` walks the signed chain and lists the original artifact followed by each patch in application order. Configuration
 and safety rules are in [`../library/hot-update.md`](../library/hot-update.md).
 `sbom` accepts a produced path and exactly one output-format flag. In a liquid repository or
 wrapped project it verifies and prints the result-bound `sbom/1` attestation and its graph-derived

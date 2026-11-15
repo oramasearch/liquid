@@ -30,6 +30,7 @@
 #endif
 
 #include "build/events.hpp"
+#include "build/repository_access.hpp"
 #include "build/wrap.hpp"
 #include "daemon/fanout.hpp"
 #include "encoding/cbor.hpp"
@@ -1252,7 +1253,14 @@ private:
             if (!patch) {
                 co_return std::unexpected(patch.error());
             }
-            auto applied = co_await hot_update::apply(source, patch->record, configured.endpoint);
+            // liquid#388: the daemon delivers only the patch it just built and signed, so the
+            // one signer it trusts is the repository's own signing identity.
+            auto own = repository_detail::build_access::signer(source);
+            if (!own) {
+                co_return std::unexpected(own.error());
+            }
+            auto applied = co_await hot_update::apply(
+                source, patch->record, configured.endpoint, hot_update_trust{{own->taap_id}});
             if (!applied) {
                 co_return std::unexpected(applied.error());
             }

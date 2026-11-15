@@ -9,4 +9,5 @@ files and the custody of the identity wrapping key (liquid #402).
 `liquid/identity.hpp`; vendor SDK types and provider transport details do not cross that boundary.
 `keys/` contains the private software, CTAP2/FIDO2, and PIV signing backend interface and command
 codecs. `threshold.cpp` evaluates signed release policy and approval records by distinct TAAP
-identity.
+identity. `trust.cpp` reads the local trust files under `$LIQUID_HOME/trust/` (one TAAP identity id
+per line; missing or empty refuses).

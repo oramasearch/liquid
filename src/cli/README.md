@@ -222,7 +222,8 @@ the canonical grammar-lock digest alongside the release version.
 
 `hot_update.cpp` classifies two recorded builds from public hot-update evidence and prints the
 tier, outcome, symbols, and evidence records. Its status view verifies every signed patch before
-showing the base artifact plus its patch composition.
+showing the base artifact plus its patch composition. `apply` and `status` accept a patch only from
+a signer listed in `$LIQUID_HOME/trust/hot-update-signers`, loaded with `load_trusted_identities`.
 
 `config lower --output-record <file|-> [--package <name>]` writes a selected canonical package
 record through the public encoder, with binary stdout and no summary. `resolve` diagnoses a
