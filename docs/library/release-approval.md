@@ -16,15 +16,15 @@ digest of the complete canonical signed policy and `release:text` names the rele
 policy by digest prevents an approval from moving to a different role, threshold, signer set, or
 expiry.
 
-`verify_release(artifact, policy, approvals)` first verifies the policy signature and expiry, then
-verifies every matching approval through the normal identity-chain verifier. Both bind each signer's
-name to its key only through an identity chain the verifying machine holds (liquid#383): a policy
-whose issuer is unknown is refused with `errc::unauthorized`, and an approval from a listed identity
-whose chain is unknown does not count and is reported in `unknown_signers`. Distribute each signer's
-chain with `liquid identity show --chain` and accept it with `liquid identity trust <chain>`
-([identity.md](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)). Which
-identity may issue the policy is liquid#384. It counts distinct
-TAAP identity identifiers that appear in the policy. Repeated approvals from one identity count
+`verify_release(artifact, policy, approvals, trust)` first checks the policy against the trust root
+(next section), verifies its signature and expiry, then verifies every matching approval through
+the normal identity-chain verifier. Both bind each signer's name to its key only through an identity
+chain the verifying machine holds (liquid#383): a policy whose issuer is unknown is refused with
+`errc::unauthorized`, and an approval from a listed identity whose chain is unknown does not count
+and is reported in `unknown_signers`. Distribute each signer's chain with `liquid identity show
+--chain` and accept it with `liquid identity trust <chain>`
+([identity.md](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)). It counts
+distinct TAAP identity identifiers that appear in the policy. Repeated approvals from one identity count
 once. An approval from an unlisted identity, for another artifact or policy, or after policy
 expiry does not count, and neither does any approval by a key that a later identity document
 declares compromised: its `signed_at` is the signer's own claim, so an approval made before the
@@ -37,6 +37,36 @@ whatever `taap_id` its issuer names (Steve, 2026-11-14; liquid#429): self-signed
 them, because their keys are not in those chains. Trusting the throwaway identities' own chains
 changes nothing, since they are not the identities the policy lists. The result reports
 `satisfied`, the sorted `distinct_valid_signers`, and the policy identities still `missing`.
+
+## Trust root
+
+The policy decides who approves a release, and it travels with the repository. Whoever can write
+the repository or the release bundle could otherwise replace it with a policy they signed
+themselves (threshold one, signer themselves) and approve any artifact; a held identity chain
+proves only that the signature is theirs, and sync stores every author's chain (liquid#384). The
+trust root is therefore held by the verifier, outside the repository, as a `release_trust` record:
+
+- **`policy_issuers`**: the TAAP identity ids allowed to issue the policy. The policy's issuer must
+  be listed, and its signature must verify through that identity's chain in this machine's
+  identity store. **An empty list refuses every policy**; an unlisted issuer is refused with
+  `release policy issuer <id> is not a configured release-policy issuer`.
+- **`repository`**: the digest of the repository being released. A policy whose subject is another
+  repository is refused with `release policy is for another repository`, so a pinned issuer's
+  policy for one repository cannot authorize releases of another.
+
+`liquid release verify` reads `policy_issuers` from **`$LIQUID_HOME/trust/release-policy-issuers`**,
+one identity id per line ([identity.md](identity.md#local-trust-files)), and takes `repository`
+from the repository it runs in (the BLAKE3 digest of its id, as `release policy set` signs it). A
+missing or empty file refuses the command and names the file to create. Each listed issuer's chain
+must also be trusted with `liquid identity trust`. libliquid callers pass their own `release_trust`.
+
+**Why an issuer pin rather than a pinned policy digest.** A digest pin admits exactly one policy, so
+every legitimate change (a new signer, a new threshold, and the renewal that `not_after`, ninety
+days by default, forces) must be re-pinned by hand on every verifier, and in practice the new
+digest would be copied from the repository, the very source this trust root excludes. An issuer pin
+is the TUF root-to-targets delegation: a small set of policy owners, pinned once, may change the
+policy, their keys rotate through their identity chains without re-pinning, and the subject check
+keeps a policy to its own repository. Fewer re-pins mean fewer chances to pin the wrong thing.
 
 These are the same role and distinct-issuer semantics used by TUF metadata. Client-side TUF
 metadata verification remains liquid #186; the shared evaluator is
@@ -66,21 +96,29 @@ those canonical records, prints the distinct count and missing identities, print
 machine does not hold, and exits nonzero when the threshold is not satisfied.
 
 Policy and approval files are evidence and should be committed or distributed with the release.
-The directory is not a private-key store.
+They are not trusted because of where they are: `release verify` accepts the policy only from an
+issuer listed in `$LIQUID_HOME/trust/release-policy-issuers` (see *Trust root*). The directory is
+not a private-key store.
 
 ## Verification
 
 `ReleaseApproval.threshold_counts_distinct_valid_identities` covers one-of-three refusal,
 duplicate-identity counting, and two-of-three success.
 `ReleaseApproval.approval_after_declared_compromise_is_rejected` proves that the identity chain's
-compromise rule applies to release approvals. The threshold test first verifies with no
+compromise rule applies to release approvals.
+`ReleaseApproval.policy_from_an_unpinned_issuer_is_refused` refuses a self-signed policy from an
+identity whose chain is held but which is not a pinned issuer, and refuses every policy with an
+empty issuer list. `ReleaseApproval.policy_for_another_repository_is_refused` refuses a pinned
+issuer's policy for another repository and accepts it for its own. The threshold test first verifies with no
 other identity trusted (the policy is refused), then with only the policy issuer trusted (both
 approvals are `unknown_signers`), before trusting the approvers.
 `ReleaseApproval.self_signed_approvals_naming_listed_signers_do_not_count` forges two approvals
 naming two of three listed signers with throwaway keys and shows that neither counts toward the
 2-of-3 threshold, with and without the named signers' and the throwaway identities' chains trusted,
 and that a real approval beside a forged one counts once. `cli-release` does the same through
-`liquid identity show --chain` and `liquid identity trust`.
+`liquid identity show --chain` and `liquid identity trust`; it first proves that `release verify`
+refuses with no `trust/release-policy-issuers` file, and last that a policy replaced by a
+repository writer who is not a pinned issuer is refused.
 
 Real hardware is not required by CI. Hardware runs should record the date, token model, selected
 backend, and result here when performed.

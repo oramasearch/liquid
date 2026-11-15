@@ -939,16 +939,20 @@ struct release_verification {
   std::vector<std::string> distinct_valid_signers;
   std::vector<std::string> missing;
 };
+struct release_trust { digest repository;                       // liquid#384: held outside the
+                       std::vector<std::string> policy_issuers; }; // repository; empty refuses all
 runtime::task<release_policy> make_release_policy(digest repository, std::string role,
   std::uint64_t threshold, std::vector<std::string> signers, std::string not_after,
   signer& policy_signer);
 runtime::task<release_approval> approve_release(digest artifact, const release_policy&,
   std::string release, signer& approving_signer);
 result<release_verification> verify_release(digest artifact, const release_policy&,
-  std::span<const release_approval> approvals, std::chrono::sys_seconds now = {});
+  std::span<const release_approval> approvals, const release_trust&,
+  std::chrono::sys_seconds now = {});
 ```
 
-The policy is a verified `release_policy/1` repository-subject attestation and each approval is a
+The policy is a verified `release_policy/1` repository-subject attestation, issued by an identity
+in `release_trust::policy_issuers` and naming `release_trust::repository`, and each approval is a
 verified `release_approval/1` artifact-subject attestation. The threshold counts distinct allowed
 TAAP identity identifiers. [release-approval.md](release-approval.md) defines expiry, compromise,
 and TUF alignment.

@@ -442,7 +442,9 @@ and the signer identity.
 writes `.liquid/release/policy.cbor`. `--role` defaults to `targets`; `--not-after` accepts an RFC
 3339 UTC expiry. `release approve <artifact>` writes the current identity's approval, and `release
 verify <artifact>` counts distinct valid allowed identities, prints missing identities, and exits 1
-when the policy threshold is not met. See
+when the policy threshold is not met. It accepts the policy only from an issuer listed in
+`$LIQUID_HOME/trust/release-policy-issuers` and only for the repository it runs in; a missing or
+empty file refuses. See
 [`../library/release-approval.md`](../library/release-approval.md) for the signed profiles and trust
 models.
 `resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.

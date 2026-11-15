@@ -83,6 +83,12 @@ permissions, is written only for explicit `file` custody. Older identities keep 
 `liquid identity show` reports and warns about their custody, and `liquid identity custody --to`
 migrates them ([`identity.md`](identity.md#how-the-software-signing-key-is-protected-at-rest-liquid-402)).
 
+**Release trust root (#384).** `verify_release` takes a `release_trust` held outside the
+repository: the policy's issuer must be listed (`$LIQUID_HOME/trust/release-policy-issuers` for
+`liquid release verify`) and verify through its identity chain, and the policy's subject must be
+the repository being released. A missing or empty issuer list refuses every policy
+([`release-approval.md`](release-approval.md#trust-root)).
+
 **Public API.** The public error, digest, identity document codec, signature decoder, and release
 approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers
 ([`api-map.md`](api-map.md), [`hash-agility.md`](hash-agility.md), [`identity.md`](identity.md),
@@ -618,7 +624,6 @@ Git objects and protobuf. Their first runs found five defects, fixed in the same
   is listed as signed by an unverified key and satisfies no policy; it is not migrated (#452). An
   identity that recovered from a compromise without its old key's
   signature is trusted elsewhere only by `liquid identity trust --accept-compromise-rotation`.
-  Who may issue a release policy is still open (#384).
 - Signatures by a key later declared compromised are refused even when made before the
   declaration (#391): no signing path requests an RFC 3161 token and no drip, change, approval or
   attestation record carries one, and the CLI configures no TSA roots.
