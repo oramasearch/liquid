@@ -9,7 +9,9 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
+#include "liquid/forge.hpp"
 #include "liquid/lake.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
@@ -57,10 +59,13 @@ auto registry(const scratch& home, std::shared_ptr<liquid::lake_credential_store
     return std::move(*opened);
 }
 
+// The shape lake#1330 serves, with this liquid as the newest release.
 auto compatible_info() -> std::string {
-    return std::format(R"({{"api":"v1","name":"lake","version":"0.9.0","revision":"abc123",)"
-                       R"("sync_protocol_versions":[1],"forge_api_versions":[1],)"
-                       R"("liquid_versions":{{"oldest":"0.1.0","newest":"{}"}}}})",
+    return std::format(R"({{"ok":true,"value":{{"api":"v1","name":"lake","revision":"abc123",)"
+                       R"("liquid":{{"sync_protocol":1,)"
+                       R"("sync_media_type":"application/vnd.liquid.sync-v1","forge_api":1,)"
+                       R"("oldest_release":"0.1.0","newest_release":"{}",)"
+                       R"("version_header":"Liquid-Version"}}}},"duration_ms":0}})",
                        liquid::version_string());
 }
 
@@ -235,8 +240,8 @@ TEST(Lake, an_unnamed_url_gets_only_the_shared_token) {
 TEST(Lake, refuses_a_lake_that_reports_an_unsupported_version) {
     auto server = liquid::test::forge_double{};
     server.set_server_info(
-        R"({"ok":true,"value":{"api":"v1","version":"7.0.0","revision":"f00d",)"
-        R"("sync_protocol_versions":[3,4],"liquid_versions":{"oldest":"6.0.0","newest":"7.0.0"}}})");
+        R"({"ok":true,"value":{"api":"v1","revision":"f00d",)"
+        R"("liquid":{"sync_protocol":[3,4],"oldest_release":"6.0.0","newest_release":"7.0.0"}}})");
     scratch home;
     auto lakes = registry(home, liquid::memory_lake_credential_store());
     ASSERT_TRUE(liquid::runtime::block_on(lakes.add("future", base_of(server))));
@@ -248,8 +253,9 @@ TEST(Lake, refuses_a_lake_that_reports_an_unsupported_version) {
     EXPECT_EQ(refused.error().code, liquid::errc::unsupported);
     const auto& message = refused.error().message;
     EXPECT_NE(message.find("lake 'future'"), std::string::npos) << message;
-    EXPECT_NE(message.find("version 7.0.0"), std::string::npos) << message;
-    EXPECT_NE(message.find("sync protocol 3, 4"), std::string::npos) << message;
+    EXPECT_NE(message.find("revision f00d, sync protocol 3, 4, liquid 6.0.0 to 7.0.0"),
+              std::string::npos)
+        << message;
     EXPECT_NE(message.find(std::string{"liquid "} + std::string{liquid::version_string()} +
                            " supports sync protocol 1"),
               std::string::npos)
@@ -259,6 +265,72 @@ TEST(Lake, refuses_a_lake_that_reports_an_unsupported_version) {
     // The check is made once per lake for the life of the process.
     ASSERT_FALSE(liquid::runtime::block_on(liquid::require_compatible_lake(*target)));
     EXPECT_EQ(server.server_info_requests(), 1U);
+}
+
+TEST(Lake, reads_the_server_info_lake_serves) {
+    // Byte for byte what lake#1330's `GET /v1/server_info` answers, liquid 0.2.0 linked.
+    constexpr auto served = std::string_view{
+        R"({"ok":true,"value":{"api":"v1","name":"lake","node":"lake-0",)"
+        R"("revision":"2e6024cf9b1d4c0a8e7f6a5b4c3d2e1f00112233","billing_enabled":false,)"
+        R"("liquid":{"sync_protocol":1,"sync_media_type":"application/vnd.liquid.sync-v1",)"
+        R"("forge_api":1,"oldest_release":"0.1.0","newest_release":"0.2.0",)"
+        R"("version_header":"Liquid-Version"}},"duration_ms":0})"};
+    auto server = liquid::test::forge_double{};
+    server.set_server_info(std::string{served});
+    auto info = liquid::runtime::block_on(liquid::fetch_lake_server_info(base_of(server)));
+    ASSERT_TRUE(info) << info.error().message;
+    EXPECT_EQ(info->api, "v1");
+    EXPECT_EQ(info->revision, "2e6024cf9b1d4c0a8e7f6a5b4c3d2e1f00112233");
+    EXPECT_EQ(info->sync_protocol_versions, (std::vector<std::uint32_t>{1}));
+    EXPECT_EQ(info->forge_api_versions, (std::vector<std::uint32_t>{1}));
+    EXPECT_EQ(info->liquid_oldest, "0.1.0");
+    EXPECT_EQ(info->liquid_newest, "0.2.0");
+    auto decided = liquid::check_lake_compatibility("dev", *info);
+    EXPECT_EQ(decided.kind,
+              liquid::version_string() == "0.2.0" ? liquid::lake_compatibility_kind::compatible
+                                                  : liquid::lake_compatibility_kind::unsupported)
+        << decided.message;
+    EXPECT_NE(decided.message.find("revision 2e6024cf9b1d,"), std::string::npos) << decided.message;
+
+    // A bare object (no envelope) reads the same.
+    server.set_server_info(R"({"revision":"r","liquid":{"sync_protocol":[1,2],"forge_api":1}})");
+    auto bare = liquid::runtime::block_on(liquid::fetch_lake_server_info(base_of(server)));
+    ASSERT_TRUE(bare);
+    EXPECT_EQ(bare->sync_protocol_versions, (std::vector<std::uint32_t>{1, 2}));
+
+    // No `liquid` object: version unknown, allowed with a warning.
+    server.set_server_info(R"({"ok":true,"value":{"api":"v1","revision":"r"}})");
+    auto old = liquid::runtime::block_on(liquid::fetch_lake_server_info(base_of(server)));
+    ASSERT_TRUE(old);
+    EXPECT_EQ(liquid::check_lake_compatibility("dev", *old).kind,
+              liquid::lake_compatibility_kind::unknown);
+}
+
+TEST(Lake, a_refused_client_version_reads_the_same_on_rest_and_sync_paths) {
+    constexpr auto refusal = std::string_view{
+        "liquid 0.3.0 is newer than this Lake supports (liquid 0.1.0 to 0.2.0); use liquid 0.2.0 "
+        "or older, or ask the Lake's administrator to upgrade it"};
+    auto server = liquid::test::forge_double{};
+
+    server.fail_next("unsupported_client_version", std::string{refusal});
+    auto client = liquid::forge_client{server.url()};
+    auto listed = liquid::runtime::block_on(client.list_reviews());
+    ASSERT_FALSE(listed);
+    EXPECT_EQ(listed.error().code, liquid::errc::unsupported);
+    EXPECT_EQ(listed.error().message, refusal);
+    EXPECT_EQ(listed.error().context, "unsupported_client_version");
+
+    scratch work;
+    auto repository =
+        liquid::runtime::block_on(liquid::repository::create(work.path() / "repository"));
+    ASSERT_TRUE(repository);
+    server.fail_next("unsupported_client_version", std::string{refusal});
+    auto endpoint = liquid::sync_endpoint{server.url()};
+    auto pulled = liquid::runtime::block_on(endpoint.pull(*repository));
+    ASSERT_FALSE(pulled);
+    EXPECT_EQ(pulled.error().code, liquid::errc::unsupported);
+    EXPECT_EQ(pulled.error().message, refusal);
+    EXPECT_EQ(pulled.error().context, "unsupported_client_version");
 }
 
 TEST(Lake, a_lake_that_does_not_report_versions_is_allowed_with_a_warning) {
@@ -381,7 +453,8 @@ TEST(LakeCli, clones_by_name_syncs_without_a_url_and_moves_between_lakes) {
 
 TEST(LakeCli, refuses_an_unsupported_lake_and_says_how_to_add_one) {
     auto server = liquid::test::forge_double{};
-    server.set_server_info(R"({"version":"9.0.0","sync_protocol_versions":[9]})");
+    server.set_server_info(
+        R"({"ok":true,"value":{"revision":"abc","liquid":{"sync_protocol":9}}})");
     scratch home;
     scratch work;
     ASSERT_EQ(run_cli(home.path(), work.path(), "", "init repository").status, 0);
@@ -398,7 +471,7 @@ TEST(LakeCli, refuses_an_unsupported_lake_and_says_how_to_add_one) {
     ASSERT_EQ(run_cli(home.path(), repository, "", "lake use future test").status, 0);
     auto refused = run_cli(home.path(), repository, "LIQUID_TOKEN_FUTURE=t", "push");
     EXPECT_EQ(refused.status, 1);
-    EXPECT_NE(refused.output.find("lake 'future' (version 9.0.0, sync protocol 9)"),
+    EXPECT_NE(refused.output.find("lake 'future' (revision abc, sync protocol 9)"),
               std::string::npos)
         << refused.output;
     EXPECT_NE(refused.output.find("upgrade liquid"), std::string::npos) << refused.output;

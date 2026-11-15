@@ -82,7 +82,7 @@ auto record(state& shared, std::string kind, json value) -> json {
 }
 
 auto status_for(std::string_view code) -> boost::http::status {
-    if (code == "invalid_input") {
+    if (code == "invalid_input" || code == "unsupported_client_version") {
         return boost::http::status::bad_request;
     }
     if (code == "unauthorized" || code == "mfa_required") {
@@ -707,16 +707,35 @@ auto make_forge_router(std::shared_ptr<state> shared, liquid::sync_server& sync)
                                                  std::span{first, body.size()});
                });
     for (const auto operation : {"pull", "push", "find-missing", "chunks"}) {
-        router.add(boost::http::method::post,
-                   "/v1/repositories/test/sync/" + std::string{operation},
-                   [shared, &sync, operation](
-                       boost::http::route_params& params) -> boost::http::route_task {
-                       record_authorization(*shared, params);
-                       const auto name = std::string_view{operation} == "find-missing"
-                                             ? std::string_view{"missing"}
-                                             : std::string_view{operation};
-                       co_return co_await sync_post(sync, params, name);
-                   });
+        router.add(
+            boost::http::method::post,
+            "/v1/repositories/test/sync/" + std::string{operation},
+            [shared, &sync, operation](
+                boost::http::route_params& params) -> boost::http::route_task {
+                record_authorization(*shared, params);
+                // Lake refuses an out-of-range Liquid-Version on a sync path in the sync error
+                // body: code `unsupported`, context `unsupported_client_version` (lake#1330).
+                auto refusal = std::optional<failure>{};
+                {
+                    auto lock = std::unique_lock{shared->mutex};
+                    if (shared->next_failure &&
+                        shared->next_failure->code == "unsupported_client_version") {
+                        refusal = std::exchange(shared->next_failure, std::nullopt);
+                    }
+                }
+                if (refusal) {
+                    auto encoded = liquid::sync_server::encode_error(liquid::error{
+                        liquid::errc::unsupported, refusal->message, "unsupported_client_version"});
+                    co_return co_await send_bytes(params,
+                                                  boost::http::status::bad_request,
+                                                  "application/vnd.liquid.error-v1",
+                                                  encoded.value_or(std::vector<std::byte>{}));
+                }
+                const auto name = std::string_view{operation} == "find-missing"
+                                      ? std::string_view{"missing"}
+                                      : std::string_view{operation};
+                co_return co_await sync_post(sync, params, name);
+            });
     }
     router.add(boost::http::method::get,
                "/v1/repositories/test/sync/chunks/:digest",

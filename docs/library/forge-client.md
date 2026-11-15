@@ -85,6 +85,7 @@ preserved and `path` becomes `error::context`.
 | `not_found` | `not_found` |
 | `conflict` | `conflict` |
 | `store_unavailable` | `unavailable` |
+| `unsupported_client_version` | `unsupported`, context `unsupported_client_version`, as on a sync path ([lakes](lakes.md)) |
 | any other code | `internal` |
 
 ## Test double

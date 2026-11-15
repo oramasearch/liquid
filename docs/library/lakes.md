@@ -103,18 +103,27 @@ The answer is kept for the life of the process, so a long-running caller checks 
 Every request liquid makes also carries `Liquid-Version: <liquid version>`, so a lake can refuse
 an unsupported client with a clear error of its own.
 
-liquid reads these fields of the `server_info` object (also inside a `{"ok": true, "value": ...}`
-envelope). Lake defines them in its `docs/api/`; this is the client's expectation
-(oramasearch/lake#1324):
+liquid reads the `liquid` object of `server_info`, inside lake's `{"ok": true, "value": ...}`
+envelope or as a bare object. The contract is lake's `docs/api/liquid-clients.md`
+(oramasearch/lake#1324, served since oramasearch/lake#1330):
 
-| Field | Type | Meaning |
-|---|---|---|
-| `version` | string | The lake's release, for example `0.9.0` |
-| `revision` | string | The build revision, already served |
-| `api` | string | `v1`, already served |
-| `sync_protocol_versions` | array of integers | The sync protocol versions the lake serves (`application/vnd.liquid.sync-v1` is `1`) |
-| `forge_api_versions` | array of integers | The review (forge) API versions the lake serves |
-| `liquid_versions` | object `{oldest, newest}` of version strings | The oldest and newest liquid release the lake supports |
+```json
+{"ok": true, "value": {"api": "v1", "name": "lake", "revision": "2e6024cf...",
+ "liquid": {"sync_protocol": 1, "sync_media_type": "application/vnd.liquid.sync-v1",
+            "forge_api": 1, "oldest_release": "0.1.0", "newest_release": "0.2.0",
+            "version_header": "Liquid-Version"}}, "duration_ms": 0}
+```
+
+| Field | Read as |
+|---|---|
+| `revision` (top level) | The lake's build, shortened to 12 characters in messages |
+| `liquid.sync_protocol` | The sync protocol versions the lake serves: an integer, or an array when a lake serves several (`application/vnd.liquid.sync-v1` is `1`) |
+| `liquid.forge_api` | The review (forge) API versions, integer or array |
+| `liquid.oldest_release` | The oldest liquid release the lake supports |
+| `liquid.newest_release` | The newest liquid release the lake supports (the libliquid it links) |
+
+A top-level `version` string is shown when a lake serves one; lake#1330 does not. A lake with no
+`liquid` object is `unknown`.
 
 This liquid speaks sync protocol `1` and forge API `1` (`supported_sync_protocol_versions()`,
 `supported_forge_api_versions()`).
@@ -123,10 +132,10 @@ This liquid speaks sync protocol `1` and forge API `1` (`supported_sync_protocol
 
 | Lake reports | Result |
 |---|---|
-| none of `sync_protocol_versions`, `liquid_versions` | `unknown`: allowed, with a warning |
+| no `liquid` object (or none of its fields) | `unknown`: allowed, with a warning |
 | no sync protocol this liquid speaks | `unsupported`: upgrade the side whose newest protocol is older |
-| `liquid_versions.oldest` newer than this liquid | `unsupported`: upgrade liquid |
-| `liquid_versions.newest` older than this liquid | `unsupported`: upgrade the lake, or use a liquid it supports |
+| `oldest_release` newer than this liquid | `unsupported`: upgrade liquid |
+| `newest_release` older than this liquid | `unsupported`: upgrade the lake, or use a liquid it supports |
 | otherwise | `compatible` |
 
 A lake that does not answer `server_info` (an older lake, a plain sync server, a network error) is
@@ -135,9 +144,15 @@ request carries a token, with one message naming the lake, its version and the r
 supports:
 
 ```text
-error: unsupported: lake 'future' (version 9.0.0, sync protocol 9) does not work with this
+error: unsupported: lake 'future' (revision abc, sync protocol 9) does not work with this
 liquid (liquid 0.2.0 supports sync protocol 1): upgrade liquid (future)
 ```
+
+The lake refuses on its side too. A request whose `Liquid-Version` is outside its range gets HTTP
+400 `unsupported_client_version`. The forge client maps that REST error, and the sync client maps
+the sync error body (code `unsupported`, context `unsupported_client_version`), to the same
+`errc::unsupported` error carrying lake's message, so both print as
+`error: unsupported: <lake's message> (unsupported_client_version)`.
 
 `require_compatible_lake(target)` is `check_lake` with an `unsupported` result turned into an
 `errc::unsupported` error; the CLI uses it, and prints the `unknown` message as a warning.
@@ -154,7 +169,10 @@ sets and records the bearer on sync requests):
   the other with `write_repository_lake` and syncs with the second lake's token;
 - per-lake variables come before `LIQUID_TOKEN`, a stored token before both, and an unnamed URL
   gets only `LIQUID_TOKEN`;
+- the exact `server_info` lake#1330 serves is read field by field, a bare object and an array of
+  protocols are read too, and a lake with no `liquid` object is `unknown`;
 - a lake reporting unsupported versions is refused with the message above, and asked once;
+- lake's `unsupported_client_version` refusal reads the same from a REST call and a sync path;
 - a lake that reports nothing is allowed with a warning;
 - with the built binary: `lake add`, `clone --lake`, `pull` with no URL, `lake use` to move,
   `lake check`, the error with no lake configured, and a refused push that sent no token.

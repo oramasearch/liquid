@@ -229,22 +229,25 @@ auto versions_text(std::span<const std::uint32_t> values) -> std::string {
 
 auto lake_version_text(const lake_server_info& info) -> std::string {
     if (!info.version.empty()) {
-        return info.revision.empty() ? "version " + info.version
-                                     : "version " + info.version + ", revision " + info.revision;
+        return info.revision.empty()
+                   ? "version " + info.version
+                   : "version " + info.version + ", revision " + info.revision.substr(0, 12);
     }
     if (!info.revision.empty()) {
-        return "revision " + info.revision;
+        return "revision " + info.revision.substr(0, 12);
     }
     return "version unknown";
 }
 
+// One integer (what lake serves today) or an array of them (a lake serving several versions).
 auto unsigned_array(const json& document, std::string_view key) -> std::vector<std::uint32_t> {
     auto output = std::vector<std::uint32_t>{};
     const auto found = document.find(key);
-    if (found == document.end() || !found->is_array()) {
+    if (found == document.end()) {
         return output;
     }
-    for (const auto& item : *found) {
+    const auto items = found->is_array() ? *found : json::array({*found});
+    for (const auto& item : items) {
         if (item.is_number_unsigned() && item.get<std::uint64_t>() <= 0xffffffffULL) {
             output.push_back(static_cast<std::uint32_t>(item.get<std::uint64_t>()));
         }
@@ -705,13 +708,14 @@ runtime::task<lake_server_info> fetch_lake_server_info(std::string base_url) {
             .name = string_field(document, "name"),
             .version = string_field(document, "version"),
             .revision = string_field(document, "revision"),
-            .sync_protocol_versions = unsigned_array(document, "sync_protocol_versions"),
-            .forge_api_versions = unsigned_array(document, "forge_api_versions"),
         };
-        if (const auto range = document.find("liquid_versions");
-            range != document.end() && range->is_object()) {
-            output.liquid_oldest = string_field(*range, "oldest");
-            output.liquid_newest = string_field(*range, "newest");
+        // lake#1330: `liquid` carries sync_protocol, forge_api, oldest_release and newest_release.
+        if (const auto clients = document.find("liquid");
+            clients != document.end() && clients->is_object()) {
+            output.sync_protocol_versions = unsigned_array(*clients, "sync_protocol");
+            output.forge_api_versions = unsigned_array(*clients, "forge_api");
+            output.liquid_oldest = string_field(*clients, "oldest_release");
+            output.liquid_newest = string_field(*clients, "newest_release");
         }
         co_return output;
     } catch (const json::exception& exception) {
