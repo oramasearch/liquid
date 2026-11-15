@@ -16,8 +16,7 @@ does not, what is knowingly still broken, and how it was verified.
   `include/liquid/version.hpp`, `version_string()` in `src/version.cpp` and
   `project(liquid VERSION ...)` in `CMakeLists.txt`; move all three in the pull request into `dev`
   that adds the release page. `Version.StringMatchesStruct`, `Version.MatchesProjectVersion` and the
-  ctest `release-notes-page` fail when they disagree or the page is missing. The steps are in the
-  root `CLAUDE.md`, under *Cutting a release*.
+  ctest `release-notes-page` fail when they disagree or the page is missing.
 - **Tag the merge commit** of the release pull request (`dev` into `main`) `vX.Y.Z` and publish the
   GitHub release from the page.
 - **A first release, or one after a long gap, lists everything in it**, not a summary. Check the

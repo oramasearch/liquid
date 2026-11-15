@@ -23,8 +23,8 @@ concurrency rule are all cheap now and expensive to retrofit. The map also says 
    `std::chrono`. They may gain fields; they never lose or reorder them before 1.0 is declared.
 4. **No third-party type is visible, with one exception.** Not Zetta, ever. Not Corosio,
    automerge-cpp, zstd, BLAKE3, tree-sitter: they live behind the handles. The exception is
-   **Boost.Capy, the coroutine substrate** (Steve, 2026-09-03: "use the coroutine library that we
-   have"): its `task` and `io_result` reach clients through `liquid/runtime.hpp`, the one header
+   **Boost.Capy, the coroutine substrate** (the coroutine library the project already
+   uses): its `task` and `io_result` reach clients through `liquid/runtime.hpp`, the one header
    that names Capy, so a substrate change is a change there and nowhere else (Zetta's pattern).
 5. **Every reference carries its algorithm.** A `digest` is `(algorithm, bytes)`; its text form is
    `blake3:<hex>`, `sha256:<hex>`, or private-store `blake3k:<hex>`. Nothing in the API takes bare
@@ -1957,12 +1957,11 @@ Windows entry points return
 complete account of workspace state. The `drip_filter` insertion point between coalescing and
 journal append is intentionally a no-op until liquid #50 supplies inline secret scanning.
 
-TAAP's final object-subject syntax waits on the protocol change (liquid-bridge #1). Build
+TAAP's final object-subject syntax waits on the protocol change that specifies object subjects. Build
 provenance uses the documented interim digest subject in [provenance.md](provenance.md), and the
 `actor` type remains ready for a protocol-defined form beside it.
 
-liquid's readings of the TAAP/1 draft where it is silent (each also filed as protocol feedback on
-liquid-bridge #8): the signed bytes are the artifact body **without** its `signatures` field, domain-separated by
+liquid's readings of the TAAP/1 draft where it is silent (each also sent as protocol feedback): the signed bytes are the artifact body **without** its `signatures` field, domain-separated by
 the artifact type (§6.6); the signature object's own fields are not signed, and `signature_purpose` must equal
 the artifact type or verification fails; identity documents are self-signed as `artifact_type =
 "identity_document"` in canonical CBOR with a `signatures` array of §6.7 objects; `previous_document_hash_base64`
@@ -2038,7 +2037,7 @@ refactor.
 
 ## Open
 
-- ~~The async surface.~~ **Resolved (Steve, 2026-09-03):** coroutine-native on Capy from the
+- ~~The async surface.~~ **Resolved (2026-09-03):** coroutine-native on Capy from the
   first header; see rules 4 and 6.
 - ~~Where the automerge document boundary sits for very large trees.~~ **Resolved
   (2026-09-04):** one document per directory; see [`object-model.md`](object-model.md).

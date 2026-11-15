@@ -441,8 +441,8 @@ notary environment produces an explicit skipped result; `--no-notarize` is reser
 identities.
 
 The release notarisation gate is pending. No credentialed run, ticket ID, `spctl` result, or run
-date is recorded yet. This paragraph must be replaced with that evidence after Steve supplies the
-Developer ID and App Store Connect credentials; credential-free CI is not that gate.
+date is recorded yet. This paragraph must be replaced with that evidence once the maintainers' Developer ID and
+App Store Connect credentials are used for a run; credential-free CI is not that gate.
 
 ### Windows MSIX and winget
 
@@ -466,8 +466,8 @@ it in a request file or output.
 
 ## Signing key custody per platform
 
-No signing key or certificate password belongs in the repository. Steve controls the release
-credentials and CI may receive them only as secret environment values. Commands never print secret
+No signing key or certificate password belongs in the repository. The maintainers control the
+release credentials and CI may receive them only as secret environment values. Commands never print secret
 values, private keys, passwords, or full signer arguments.
 
 | Credential | Custody and access | What it proves | What it does not prove |

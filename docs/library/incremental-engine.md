@@ -1,7 +1,6 @@
 # The incremental engine: the query graph, the daemon, and liquify on the graph
 
-> Phase 4 of the plan ([`action-plan.md`](https://github.com/oramasearch/liquid-bridge/blob/main/docs/action-plan.md),
-> epics https://github.com/oramasearch/liquid/issues/36 and https://github.com/oramasearch/liquify/issues/13).
+> Phase 4 of the plan (epics https://github.com/oramasearch/liquid/issues/36 and https://github.com/oramasearch/liquify/issues/13).
 > Specification: [`features/04-build-engine.md`](../features/04-build-engine.md) (the model, early
 > cutoff, durability tiers, granularity, compile as you type, the daemon, correctness),
 > [`features/21-liquify-ide.md`](../features/21-liquify-ide.md) (the one architectural argument,

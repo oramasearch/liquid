@@ -240,8 +240,7 @@ they survive concurrent edits ([research](../research/24-editors-and-ide-archite
 An agent workforce operating on enterprise data needs exactly three things liquid
 provides structurally: **availability** (the data is reachable and current),
 **provenance** (what the agent did and on what basis), and **reversibility** (undo when
-it is wrong). That is the same argument as [23](23-metis-and-zetta.md), applied to the
-actors rather than the data.
+it is wrong). The argument that holds for the data holds for the actors too.
 
 Most agent tooling today has no principled answer to "what exactly did the agent change,
 under whose authority, and can I undo precisely that?" liquid does, because drips,

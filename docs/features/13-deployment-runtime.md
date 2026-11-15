@@ -14,10 +14,9 @@ update — in seconds rather than minutes.
 
 ## The distribution
 
-**Decided: a private copy of k0s, modified.** Not built from scratch, and not a public
-fork.
+**Decided: a modified copy of k0s.** Not built from scratch.
 
-[`oramasearch/k0s`](https://github.com/oramasearch/k0s) is a private copy of
+[`oramasearch/k0s`](https://github.com/oramasearch/k0s) is Orama's copy of
 [`k0sproject/k0s`](https://github.com/k0sproject/k0s) kept in sync with upstream, with
 our changes isolated on a `liquid` branch so `git diff main..liquid` is always exactly
 our delta. k0s is **Apache 2.0** (its `docs/` is CC-BY-SA-4.0), so private modification

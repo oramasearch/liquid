@@ -149,7 +149,7 @@ Full materialisation retains its separate portable tests.
 entry points remain testable with both static and shared libliquid. The shared target also compiles
 private hydration, queue, drive-settings, xattr and CBOR helpers; library visibility stays unchanged.
 
-Under [decision 41](https://github.com/oramasearch/liquid-bridge/issues/28), passing this suite means
+By decision, passing this suite means
 **"agrees with liquid's own core"**, which is weaker than **"agrees with a known-good filesystem"**.
 The **libfuse-on-Linux baseline is still owed against #299**. Direct calibration does not cancel
 that debt, replace a production backend, or allow a real backend to skip these cases.

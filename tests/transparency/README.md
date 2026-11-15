@@ -11,7 +11,7 @@ From this liquid worktree, with the lake checkout at the path named in issue #21
 with:
 
 ```sh
-LAKE_ROOT=/Users/stevesperandeo/dev/oramasearch/codex-work/lake
+LAKE_ROOT=/path/to/lake
 /opt/homebrew/opt/llvm/bin/clang++ -std=c++26 -fexperimental-library \
   -I"$LAKE_ROOT/include" \
   -Imodules/automerge-cpp/upstream/json/include \

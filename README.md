@@ -382,20 +382,15 @@ Consuming the library is covered in [libliquid](docs/library/libliquid.md), its 
 
 ## Where liquid sits
 
-liquid is an Orama project. It is one module of
-[liquid-bridge](https://github.com/oramasearch/liquid-bridge), which holds the action plan and
-the decisions, and tracks work from its
-[master epic](https://github.com/oramasearch/liquid-bridge/issues/7).
+liquid is an Orama project and part of Orama Lake, whose entry point is
+[lake-platform](https://github.com/oramasearch/lake-platform).
 
 | Project | What it is |
 |---|---|
 | **liquid** (this repository) | The tool and the library. |
 | [**lake**](docs/features/18-lake-service.md) | The hosted service: where liquid collects. Repositories, drives, deployment, identity and secrets over one store. It compiles libliquid in. |
 | [**liquify**](docs/features/21-liquify-ide.md) | The IDE, built on the same incremental graph as the build. |
-| [k0s](https://github.com/oramasearch/k0s) | A private copy of a minimal Kubernetes distribution that liquid deploys to. |
-
-How liquid relates to Orama's wider platform is mapped in
-[feature 23](docs/features/23-metis-and-zetta.md).
+| [k0s](https://github.com/oramasearch/k0s) | Orama's fork of a minimal Kubernetes distribution that liquid deploys to. |
 
 ## Documentation
 
@@ -416,16 +411,13 @@ detail, and the [documentation index](docs/README.md) lists them all.
 
 ## Contributing
 
-Read [`CLAUDE.md`](CLAUDE.md) and [`AGENTS.md`](AGENTS.md) first. They hold the repository's
-rules: the vocabulary, the document structure, the checks to run before finishing, how a
-release is cut, the recorded decisions, and the conventions inherited from
-[`oramasearch/orama-bridge`](https://github.com/oramasearch/orama-bridge).
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first: how to build, test and send a change. How a
+release is cut is in [docs/releases/README.md](docs/releases/README.md).
 
 When liquid gains or loses a capability, update the
 [implementation status](docs/library/status.md) first, then the matching line on this page.
 
 ## Licence
 
-The open-source licence has not yet been chosen
-([release decision](https://github.com/oramasearch/liquid-bridge/issues/2)).
+liquid is released under the MIT licence ([LICENSE](LICENSE)).
 Third-party notices are in [NOTICE](NOTICE).

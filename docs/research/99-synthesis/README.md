@@ -88,7 +88,7 @@ the commit.
 
 ## What "build the world" actually is
 
-Steve's complaint has four distinct causes, and only fixing all four eliminates it:
+The complaint has four distinct causes, and only fixing all four eliminates it:
 
 1. **Coarse granularity.** Nix and Spack rebuild whole packages; Docker rebuilds
    whole layers. Fix: the action is a compile, not a package.

@@ -150,7 +150,7 @@ known-output preference that won.
 
 ## Solver engine decision
 
-**Decided by Steve on 2026-09-05 (liquid-bridge decision 20): liquid builds its own CDCL solver.**
+**Decided on 2026-09-05: liquid builds its own CDCL solver.**
 Clingo is not vendored. The package encoding talks to the engine through the private
 `src/resolve/concretizer.hpp` interface so the constraint model and search machinery remain
 independently testable. The decision favours one auditable, coroutine-compatible implementation

@@ -3,7 +3,7 @@
 > Evidence: [`sources.md`](sources.md)
 >
 > **Requirement:** liquid has full-text search built in, and can *serve* search.
-> (Steve already has the libraries.)
+> (The libraries already exist.)
 
 ## The headline finding
 
@@ -164,7 +164,7 @@ every channel.
 
 7. **Serve search as a first-class service.** Same store, same auth, same
    transparency guarantees as the artifact service
-   ([12](../12-artifact-distribution/)). Steve has the libraries; the architectural
+   ([12](../12-artifact-distribution/)). The libraries exist; the architectural
    work is the occurrence model and the incremental pipeline, not the inverted
    index itself.
 

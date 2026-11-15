@@ -487,6 +487,4 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
 - The projection page has no recorded credentialed Apple notarisation proof; image booting is
   outside the projection implementation.
 - Tier B source projection is Debian-only; other distribution source-policy formats are deferred.
-- The open decisions are listed in `CLAUDE.md` under *Decisions*; the licence for liquid and
-  liquify is not yet chosen
-  ([liquid-bridge #2](https://github.com/oramasearch/liquid-bridge/issues/2)).
+- liquid is released under the MIT licence.

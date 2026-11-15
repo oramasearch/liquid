@@ -7,7 +7,7 @@ verification only: it parses strict DER, validates CMS `SignedData` and X.509 pa
 the RSA and NIST-curve ECDSA signatures used by timestamp authorities. It does not generate keys,
 certificates, or signatures. It does not add a general-purpose cryptography dependency.
 
-This is bridge decision 32, selected by Steve on 2026-09-05. Keeping the verifier in libliquid
+This was decided on 2026-09-05. Keeping the verifier in libliquid
 matches the existing decisions to own the chunk index, transport, and protobuf codec while keeping
 the public library independent of lake and Zetta.
 
@@ -124,8 +124,7 @@ configured witnesses with valid signatures over the canonical JSON body. Duplica
 not count twice, and too few distinct valid signatures fail with `checkpoint witness threshold not
 met`.
 
-Under [bridge decision 37](https://github.com/oramasearch/liquid-bridge/blob/main/docs/decisions.md),
-the `lake_checkpoint/1` body can carry `issued_at`, a nonnegative integer of Unix epoch seconds,
+The `lake_checkpoint/1` body can carry `issued_at`, a nonnegative integer of Unix epoch seconds,
 UTC, covered by the same signature, canonical body hash, and witness signatures. Older bodies
 omit it. The shared verifier authenticates the entire body without imposing an age policy;
 [admission](admission.md#authenticated-checkpoint-age) requires this field when a positive

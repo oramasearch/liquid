@@ -213,7 +213,7 @@ conversation those are *more* credible references than "blockchain," not less. P
 it as a blockchain invites "what is your consensus mechanism?", and the answer is that
 it does not need one.
 
-You get every property Steve asked for. The accurate name is the better one.
+You get every property that was asked for. The accurate name is the better one.
 
 ## Witnessing is the primary defence — not anchoring
 

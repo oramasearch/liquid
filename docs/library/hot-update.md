@@ -7,8 +7,7 @@ automatic quiescence discovery, Wasm, and deployment integration are not impleme
 
 ## Safety decision
 
-The implementation is the in-process `liquid-hot` C library chosen by Steve on 2026-09-05 in
-liquid-bridge decision 27. A participating program links that library, registers stable entry slots,
+The implementation is the in-process `liquid-hot` C library chosen on 2026-09-05. A participating program links that library, registers stable entry slots,
 and calls `liquid_hot_quiescent()` only where replacing those entries is safe. For a Capy program,
 the contract places a quiescence call between coroutine resumptions on every executor. Arbitrary
 programs must identify their own safe points; liquid does not infer them.

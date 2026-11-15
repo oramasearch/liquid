@@ -193,8 +193,7 @@ confirmed cold-cache results. Do not reuse directories between runs.
 
 ## Decision
 
-**liquid's own index, built from scratch** (Steve, 2026-09-03), recorded in `CLAUDE.md`
-*Decisions* 8. Neither engine ships inside liquid; these measurements are the **bar** the
+**liquid's own index, built from scratch** (decided 2026-09-03). Neither engine ships inside liquid; these measurements are the **bar** the
 from-scratch index must meet at 10M entries: RocksDB-tuned's insert rate (1.16M/s) and point rate
 (438k/s) and no more than its on-disk footprint (589 MB). `--engine liquid` joins this benchmark
 when the index exists so the comparison is run the same way. (An earlier decision the same day
