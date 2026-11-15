@@ -1,0 +1,1607 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.7",
+  "serialNumber": "urn:uuid:6472a3d7-dbdb-5f6c-8aef-2390b7dd1928",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-11-15T17:25:28Z",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "tools/sbom.py"
+        },
+        {
+          "type": "application",
+          "name": "syft"
+        }
+      ]
+    },
+    "supplier": {
+      "name": "OramaSearch, Inc."
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "pkg:github/c2sp/cctv@4448f2097b2daa812c91a26141f9f36c2096b9ca?package-id=Component-age-test-vectors-3009553e9b0b5952",
+      "type": "library",
+      "name": "age test vectors",
+      "version": "4448f2097b2daa812c91a26141f9f36c2096b9ca",
+      "licenses": [
+        {
+          "expression": "0BSD OR CC0-1.0 OR Unlicense"
+        }
+      ],
+      "purl": "pkg:github/c2sp/cctv@4448f2097b2daa812c91a26141f9f36c2096b9ca",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/appimage/type2-runtime@75849dce7cc37e4319b633df1f116ca895c71a12?package-id=Component-AppImage-type-2-runtime-2f95e0751b0182d8",
+      "type": "library",
+      "name": "AppImage type 2 runtime",
+      "version": "75849dce7cc37e4319b633df1f116ca895c71a12",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/appimage/type2-runtime@75849dce7cc37e4319b633df1f116ca895c71a12",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/homer6/automerge-cpp@06408d32fa7dbefdd658f3b17d518c4a681dbf0b?package-id=Component-automerge-cpp-edcad248950bb82f",
+      "type": "library",
+      "name": "automerge-cpp",
+      "version": "06408d32fa7dbefdd658f3b17d518c4a681dbf0b",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/homer6/automerge-cpp@06408d32fa7dbefdd658f3b17d518c4a681dbf0b",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/blake3-team/blake3@1.8.7?package-id=Component-BLAKE3-815c7907ad9e5ce1",
+      "type": "library",
+      "name": "BLAKE3",
+      "version": "1.8.7",
+      "licenses": [
+        {
+          "expression": "CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception"
+        }
+      ],
+      "purl": "pkg:github/blake3-team/blake3@1.8.7",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/boostorg/boost@1.91.0-1?package-id=Component-Boost-1b4f4c0e810341fd",
+      "type": "library",
+      "name": "Boost",
+      "version": "1.91.0-1",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSL-1.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/boostorg/boost@1.91.0-1",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/cppalliance/capy@ce1c7d710c4baaeeddb57fa101707c610f6eb975?package-id=Component-Boost.Capy-3bce0e447cd0e6a7",
+      "type": "library",
+      "name": "Boost.Capy",
+      "version": "ce1c7d710c4baaeeddb57fa101707c610f6eb975",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSL-1.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/cppalliance/capy@ce1c7d710c4baaeeddb57fa101707c610f6eb975",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/oramasearch/corosio@887166b82a1b7acc0a10ce9f3c61224d45ae80e4?package-id=Component-Boost.Corosio-ce423e89ec459008",
+      "type": "library",
+      "name": "Boost.Corosio",
+      "version": "887166b82a1b7acc0a10ce9f3c61224d45ae80e4",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSL-1.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/oramasearch/corosio@887166b82a1b7acc0a10ce9f3c61224d45ae80e4",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/oramasearch/http@af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4?package-id=Component-Boost.HTTP-0dbeb02a94dc16e8",
+      "type": "library",
+      "name": "Boost.HTTP",
+      "version": "af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSL-1.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/oramasearch/http@af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:golang/command-line-arguments?package-id=Package-go-module-command-line-arguments-c4ac8c1612c5d4bf",
+      "type": "library",
+      "name": "command-line-arguments",
+      "version": "UNKNOWN",
+      "purl": "pkg:golang/command-line-arguments",
+      "properties": [
+        {
+          "name": "syft:package:language",
+          "value": "go"
+        },
+        {
+          "name": "syft:package:type",
+          "value": "go-module"
+        },
+        {
+          "name": "syft:package:metadataType",
+          "value": "go-module-buildinfo-entry"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/google/googletest@v1.17.0?package-id=Component-GoogleTest-34101f2b39cec8bc",
+      "type": "library",
+      "name": "GoogleTest",
+      "version": "v1.17.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:github/google/googletest@v1.17.0",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "Component-HIP-test-patch-bde2aa61db71c664",
+      "type": "library",
+      "name": "HIP test patch",
+      "version": "NOASSERTION",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/libfuse/libfuse@as%20built%20by%20the%20runtime%20at%20the%20commit%20above?package-id=Component-libfuse-ef224ce73d2f5ba4",
+      "type": "library",
+      "name": "libfuse",
+      "version": "as built by the runtime at the commit above",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-2.1-only"
+          }
+        }
+      ],
+      "purl": "pkg:github/libfuse/libfuse@as%20built%20by%20the%20runtime%20at%20the%20commit%20above",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/libfuse/libfuse@3.x%20%28system%29?package-id=Component-libfuse3-f523f208b4691877",
+      "type": "library",
+      "name": "libfuse3",
+      "version": "3.x (system)",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-2.1-only"
+          }
+        }
+      ],
+      "purl": "pkg:github/libfuse/libfuse@3.x%20%28system%29",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "DocumentRoot",
+      "type": "library",
+      "name": "liquid",
+      "version": "21591026f2b5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/lmdb/lmdb@LMDB_0.9.36?package-id=Component-LMDB-0a7b4a90ef77b967",
+      "type": "library",
+      "name": "LMDB",
+      "version": "LMDB_0.9.36",
+      "licenses": [
+        {
+          "license": {
+            "id": "OLDAP-2.8"
+          }
+        }
+      ],
+      "purl": "pkg:github/lmdb/lmdb@LMDB_0.9.36",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "Component-macFUSE-fa5482d7ddbad991",
+      "type": "library",
+      "name": "macFUSE",
+      "version": "system install",
+      "licenses": [
+        {
+          "license": {
+            "name": "macFUSE-license-not-open-source"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "Component-Monocypher-ed4726faf758318c",
+      "type": "library",
+      "name": "Monocypher",
+      "version": "4.0.3",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause OR CC0-1.0"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/openssl/openssl@3.x%20%28system%29?package-id=Component-OpenSSL-844c5a1b29c99b9c",
+      "type": "library",
+      "name": "OpenSSL",
+      "version": "3.x (system)",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/openssl/openssl@3.x%20%28system%29",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/oramasearch/oramacore-cpp@9b74ce177f47d63024532ae6000c2cd62c73e0cd?package-id=Component-oramacore-cpp-339b170fefd1c12a",
+      "type": "library",
+      "name": "oramacore-cpp",
+      "version": "9b74ce177f47d63024532ae6000c2cd62c73e0cd",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/oramasearch/oramacore-cpp@9b74ce177f47d63024532ae6000c2cd62c73e0cd",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:docker/python@3.13.7-slim-bookworm?package-id=Image-python-7056b72e738dab8a",
+      "type": "library",
+      "name": "python",
+      "version": "3.13.7-slim-bookworm",
+      "purl": "pkg:docker/python@3.13.7-slim-bookworm",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/facebook/rocksdb@v10.10.1?package-id=Component-RocksDB-0b22b81b4ddbab86",
+      "type": "library",
+      "name": "RocksDB",
+      "version": "v10.10.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/facebook/rocksdb@v10.10.1",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/b-con/crypto-algorithms@cfbde48414baacf51fc7c74f275190881f037d32?package-id=Component-SHA-256-implementation-89caa68cc66f794d",
+      "type": "library",
+      "name": "SHA-256 implementation",
+      "version": "cfbde48414baacf51fc7c74f275190881f037d32",
+      "licenses": [
+        {
+          "license": {
+            "name": "public-domain"
+          }
+        }
+      ],
+      "purl": "pkg:github/b-con/crypto-algorithms@cfbde48414baacf51fc7c74f275190881f037d32",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/spack/spack@2bfcc69fa870d3c6919be87593f22647981b648a?package-id=Component-Spack-package-metadata-export-843d53decc088200",
+      "type": "library",
+      "name": "Spack package metadata export",
+      "version": "2bfcc69fa870d3c6919be87593f22647981b648a",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:github/spack/spack@2bfcc69fa870d3c6919be87593f22647981b648a",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/vasi/squashfuse@as%20built%20by%20the%20runtime?package-id=Component-squashfuse-a9f4ec64166b681d",
+      "type": "library",
+      "name": "squashfuse",
+      "version": "as built by the runtime",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:github/vasi/squashfuse@as%20built%20by%20the%20runtime",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:golang/stdlib@1.26.5?package-id=Package-go-module-stdlib-da3048b1e53b8a33",
+      "type": "library",
+      "name": "stdlib",
+      "version": "go1.26.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "cpe": "cpe:2.3:a:golang:go:1.26.5:-:*:*:*:*:*:*",
+      "purl": "pkg:golang/stdlib@1.26.5",
+      "properties": [
+        {
+          "name": "syft:package:language",
+          "value": "go"
+        },
+        {
+          "name": "syft:package:type",
+          "value": "go-module"
+        },
+        {
+          "name": "syft:package:metadataType",
+          "value": "go-module-buildinfo-entry"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-bash@a06c2e4415e9bc0346c6b86d401879ffb44058f7?package-id=Component-tree-sitter-grammar-bash-5b54f107c98b6047",
+      "type": "library",
+      "name": "tree-sitter grammar: bash",
+      "version": "a06c2e4415e9bc0346c6b86d401879ffb44058f7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-bash@a06c2e4415e9bc0346c6b86d401879ffb44058f7",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-c@b780e47fc780ddc8da13afa35a3f4ed5c157823d?package-id=Component-tree-sitter-grammar-c-ee87946cd9b22987",
+      "type": "library",
+      "name": "tree-sitter grammar: c",
+      "version": "b780e47fc780ddc8da13afa35a3f4ed5c157823d",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-c@b780e47fc780ddc8da13afa35a3f4ed5c157823d",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-c-sharp@9150f7d56bb47f1a809fa23623f1ba1413e93fa9?package-id=Component-tree-sitter-grammar-c-4ea55af0678f7847",
+      "type": "library",
+      "name": "tree-sitter grammar: c#",
+      "version": "9150f7d56bb47f1a809fa23623f1ba1413e93fa9",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-c-sharp@9150f7d56bb47f1a809fa23623f1ba1413e93fa9",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-cpp@8b5b49eb196bec7040441bee33b2c9a4838d6967?package-id=Component-tree-sitter-grammar-c-0e6c63c6ef78c0d9",
+      "type": "library",
+      "name": "tree-sitter grammar: c++",
+      "version": "8b5b49eb196bec7040441bee33b2c9a4838d6967",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-cpp@8b5b49eb196bec7040441bee33b2c9a4838d6967",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/uyha/tree-sitter-cmake@ca627bb5828616b6246aafdc3c3222789e728e37?package-id=Component-tree-sitter-grammar-cmake-d4da2ca2ed4c0cf5",
+      "type": "library",
+      "name": "tree-sitter grammar: cmake",
+      "version": "ca627bb5828616b6246aafdc3c3222789e728e37",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/uyha/tree-sitter-cmake@ca627bb5828616b6246aafdc3c3222789e728e37",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-css@dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f?package-id=Component-tree-sitter-grammar-css-64fc557827e8471f",
+      "type": "library",
+      "name": "tree-sitter grammar: css",
+      "version": "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-css@dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/usernobody14/tree-sitter-dart@be07cf7118d3dba06236a3f19541685a68209934?package-id=Component-tree-sitter-grammar-dart-e277022272932026",
+      "type": "library",
+      "name": "tree-sitter grammar: dart",
+      "version": "be07cf7118d3dba06236a3f19541685a68209934",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:github/usernobody14/tree-sitter-dart@be07cf7118d3dba06236a3f19541685a68209934",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/camdencheek/tree-sitter-dockerfile@971acdd908568b4531b0ba28a445bf0bb720aba5?package-id=Component-tree-sitter-grammar-dockerfile-9b405582038c14a6",
+      "type": "library",
+      "name": "tree-sitter grammar: dockerfile",
+      "version": "971acdd908568b4531b0ba28a445bf0bb720aba5",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "purl": "pkg:github/camdencheek/tree-sitter-dockerfile@971acdd908568b4531b0ba28a445bf0bb720aba5",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/elixir-lang/tree-sitter-elixir@4b0c7118760af58a2e7081bbc8396e136f820b37?package-id=Component-tree-sitter-grammar-elixir-226ad9c78004aa9f",
+      "type": "library",
+      "name": "tree-sitter grammar: elixir",
+      "version": "4b0c7118760af58a2e7081bbc8396e136f820b37",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/elixir-lang/tree-sitter-elixir@4b0c7118760af58a2e7081bbc8396e136f820b37",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/elm-tooling/tree-sitter-elm@e1e8fea161a1e66f3997855d316be2a43e4e956f?package-id=Component-tree-sitter-grammar-elm-515f9863701c1bee",
+      "type": "library",
+      "name": "tree-sitter grammar: elm",
+      "version": "e1e8fea161a1e66f3997855d316be2a43e4e956f",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/elm-tooling/tree-sitter-elm@e1e8fea161a1e66f3997855d316be2a43e4e956f",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/whatsapp/tree-sitter-erlang@6ba4c762eb3065495e3db85697ffeecdf364ce35?package-id=Component-tree-sitter-grammar-erlang-484fd4f78bb4bca0",
+      "type": "library",
+      "name": "tree-sitter grammar: erlang",
+      "version": "6ba4c762eb3065495e3db85697ffeecdf364ce35",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/whatsapp/tree-sitter-erlang@6ba4c762eb3065495e3db85697ffeecdf364ce35",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/stadelmanma/tree-sitter-fortran@7edacd2b21aa80057d9725384a1304a1c758e0f8?package-id=Component-tree-sitter-grammar-fortran-5c76394dacd9b1c9",
+      "type": "library",
+      "name": "tree-sitter grammar: fortran",
+      "version": "7edacd2b21aa80057d9725384a1304a1c758e0f8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/stadelmanma/tree-sitter-fortran@7edacd2b21aa80057d9725384a1304a1c758e0f8",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-go@2346a3ab1bb3857b48b29d779a1ef9799a248cd7?package-id=Component-tree-sitter-grammar-go-00a58e82972f59a0",
+      "type": "library",
+      "name": "tree-sitter grammar: go",
+      "version": "2346a3ab1bb3857b48b29d779a1ef9799a248cd7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-go@2346a3ab1bb3857b48b29d779a1ef9799a248cd7",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-haskell@0975ef72fc3c47b530309ca93937d7d143523628?package-id=Component-tree-sitter-grammar-haskell-3d9124ab44a3cb7b",
+      "type": "library",
+      "name": "tree-sitter grammar: haskell",
+      "version": "0975ef72fc3c47b530309ca93937d7d143523628",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-haskell@0975ef72fc3c47b530309ca93937d7d143523628",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter-grammars/tree-sitter-hcl@64ad62785d442eb4d45df3a1764962dafd5bc98b?package-id=Component-tree-sitter-grammar-hcl-421d5367c8a2683b",
+      "type": "library",
+      "name": "tree-sitter grammar: hcl",
+      "version": "64ad62785d442eb4d45df3a1764962dafd5bc98b",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter-grammars/tree-sitter-hcl@64ad62785d442eb4d45df3a1764962dafd5bc98b",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-html@73a3947324f6efddf9e17c0ea58d454843590cc0?package-id=Component-tree-sitter-grammar-html-a511c51f1239e9ad",
+      "type": "library",
+      "name": "tree-sitter grammar: html",
+      "version": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-html@73a3947324f6efddf9e17c0ea58d454843590cc0",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-java@e10607b45ff745f5f876bfa3e94fbcc6b44bdc11?package-id=Component-tree-sitter-grammar-java-b6262cabe46c9adc",
+      "type": "library",
+      "name": "tree-sitter grammar: java",
+      "version": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-java@e10607b45ff745f5f876bfa3e94fbcc6b44bdc11",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-javascript@58404d8cf191d69f2674a8fd507bd5776f46cb11?package-id=Component-tree-sitter-grammar-javascript-febae34671eaf42d",
+      "type": "library",
+      "name": "tree-sitter grammar: javascript",
+      "version": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-javascript@58404d8cf191d69f2674a8fd507bd5776f46cb11",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-json@254c42a6476413b776221e03982ac8ae159eeb72?package-id=Component-tree-sitter-grammar-json-9362833c07d2e834",
+      "type": "library",
+      "name": "tree-sitter grammar: json",
+      "version": "254c42a6476413b776221e03982ac8ae159eeb72",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-json@254c42a6476413b776221e03982ac8ae159eeb72",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-julia@e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3?package-id=Component-tree-sitter-grammar-julia-be43a7f9ff97f121",
+      "type": "library",
+      "name": "tree-sitter grammar: julia",
+      "version": "e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-julia@e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/fwcd/tree-sitter-kotlin@1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1?package-id=Component-tree-sitter-grammar-kotlin-9fbbf2ab691ac8c3",
+      "type": "library",
+      "name": "tree-sitter grammar: kotlin",
+      "version": "1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/fwcd/tree-sitter-kotlin@1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/latex-lsp/tree-sitter-latex@a6c812704b3d3e1541b0853aa0d6d561301320e1?package-id=Component-tree-sitter-grammar-latex-4a9e89d47571c065",
+      "type": "library",
+      "name": "tree-sitter grammar: latex",
+      "version": "a6c812704b3d3e1541b0853aa0d6d561301320e1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/latex-lsp/tree-sitter-latex@a6c812704b3d3e1541b0853aa0d6d561301320e1",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter-grammars/tree-sitter-lua@10fe0054734eec83049514ea2e718b2a56acd0c9?package-id=Component-tree-sitter-grammar-lua-04adb6f0efe14376",
+      "type": "library",
+      "name": "tree-sitter grammar: lua",
+      "version": "10fe0054734eec83049514ea2e718b2a56acd0c9",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter-grammars/tree-sitter-lua@10fe0054734eec83049514ea2e718b2a56acd0c9",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/alemuller/tree-sitter-make@a4b9187417d6be349ee5fd4b6e77b4172c6827dd?package-id=Component-tree-sitter-grammar-make-b2a88413c6ce2e3c",
+      "type": "library",
+      "name": "tree-sitter grammar: make",
+      "version": "a4b9187417d6be349ee5fd4b6e77b4172c6827dd",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/alemuller/tree-sitter-make@a4b9187417d6be349ee5fd4b6e77b4172c6827dd",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter-grammars/tree-sitter-markdown@a0a00f817d02412bd92c54d316f164d827b57b5c?package-id=Component-tree-sitter-grammar-markdown-5b504c25811d14a5",
+      "type": "library",
+      "name": "tree-sitter grammar: markdown",
+      "version": "a0a00f817d02412bd92c54d316f164d827b57b5c",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter-grammars/tree-sitter-markdown@a0a00f817d02412bd92c54d316f164d827b57b5c",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/nix-community/tree-sitter-nix@3d0173d903e630b6e14d17f1cf79488791379ded?package-id=Component-tree-sitter-grammar-nix-ed8e201fcb1668d4",
+      "type": "library",
+      "name": "tree-sitter grammar: nix",
+      "version": "3d0173d903e630b6e14d17f1cf79488791379ded",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/nix-community/tree-sitter-nix@3d0173d903e630b6e14d17f1cf79488791379ded",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter-grammars/tree-sitter-objc@181a81b8f23a2d593e7ab4259981f50122909fda?package-id=Component-tree-sitter-grammar-objective-c-dca64ffa837132e1",
+      "type": "library",
+      "name": "tree-sitter grammar: objective-c",
+      "version": "181a81b8f23a2d593e7ab4259981f50122909fda",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter-grammars/tree-sitter-objc@181a81b8f23a2d593e7ab4259981f50122909fda",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-ocaml@a4ce49a6c17e88e7ca8350cfb666749d9a5c6630?package-id=Component-tree-sitter-grammar-ocaml-c5af0fd7204b196e",
+      "type": "library",
+      "name": "tree-sitter grammar: ocaml",
+      "version": "a4ce49a6c17e88e7ca8350cfb666749d9a5c6630",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-ocaml@a4ce49a6c17e88e7ca8350cfb666749d9a5c6630",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/ganezdragon/tree-sitter-perl@5b97493ce70686e22ec8b9ea261437147e342b49?package-id=Component-tree-sitter-grammar-perl-069ad3e20dec8a61",
+      "type": "library",
+      "name": "tree-sitter grammar: perl",
+      "version": "5b97493ce70686e22ec8b9ea261437147e342b49",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/ganezdragon/tree-sitter-perl@5b97493ce70686e22ec8b9ea261437147e342b49",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-php@3fda2fb9577166c6399834917f9844f30370beea?package-id=Component-tree-sitter-grammar-php-5adc86c8205864b4",
+      "type": "library",
+      "name": "tree-sitter grammar: php",
+      "version": "3fda2fb9577166c6399834917f9844f30370beea",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-php@3fda2fb9577166c6399834917f9844f30370beea",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/treywood/tree-sitter-proto@e9f6b43f6844bd2189b50a422d4e2094313f6aa3?package-id=Component-tree-sitter-grammar-protocol-buffers-135e0fb0512bbabb",
+      "type": "library",
+      "name": "tree-sitter grammar: protocol-buffers",
+      "version": "e9f6b43f6844bd2189b50a422d4e2094313f6aa3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/treywood/tree-sitter-proto@e9f6b43f6844bd2189b50a422d4e2094313f6aa3",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-python@26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64?package-id=Component-tree-sitter-grammar-python-6004c55b9516739e",
+      "type": "library",
+      "name": "tree-sitter grammar: python",
+      "version": "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-python@26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/r-lib/tree-sitter-r@58a22794466c0fc15b0d3b40531db751593721e8?package-id=Component-tree-sitter-grammar-r-710be359d74d9548",
+      "type": "library",
+      "name": "tree-sitter grammar: r",
+      "version": "58a22794466c0fc15b0d3b40531db751593721e8",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/r-lib/tree-sitter-r@58a22794466c0fc15b0d3b40531db751593721e8",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-ruby@ad907a69da0c8a4f7a943a7fe012712208da6dee?package-id=Component-tree-sitter-grammar-ruby-55ec4aa20d82cba6",
+      "type": "library",
+      "name": "tree-sitter grammar: ruby",
+      "version": "ad907a69da0c8a4f7a943a7fe012712208da6dee",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-ruby@ad907a69da0c8a4f7a943a7fe012712208da6dee",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-rust@77a3747266f4d621d0757825e6b11edcbf991ca5?package-id=Component-tree-sitter-grammar-rust-0bc6dbc9bdd1f941",
+      "type": "library",
+      "name": "tree-sitter grammar: rust",
+      "version": "77a3747266f4d621d0757825e6b11edcbf991ca5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-rust@77a3747266f4d621d0757825e6b11edcbf991ca5",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-scala@db390f312a54b04b13790e1767bfac32665c17ac?package-id=Component-tree-sitter-grammar-scala-06d97d87718f804f",
+      "type": "library",
+      "name": "tree-sitter grammar: scala",
+      "version": "db390f312a54b04b13790e1767bfac32665c17ac",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-scala@db390f312a54b04b13790e1767bfac32665c17ac",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/serenadeai/tree-sitter-scss@c478c6868648eff49eb04a4df90d703dc45b312a?package-id=Component-tree-sitter-grammar-scss-146791897be5e058",
+      "type": "library",
+      "name": "tree-sitter grammar: scss",
+      "version": "c478c6868648eff49eb04a4df90d703dc45b312a",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/serenadeai/tree-sitter-scss@c478c6868648eff49eb04a4df90d703dc45b312a",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/joranhonig/tree-sitter-solidity@048fe686cb1fde267243739b8bdbec8fc3a55272?package-id=Component-tree-sitter-grammar-solidity-2f83ab943dcd033b",
+      "type": "library",
+      "name": "tree-sitter grammar: solidity",
+      "version": "048fe686cb1fde267243739b8bdbec8fc3a55272",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/joranhonig/tree-sitter-solidity@048fe686cb1fde267243739b8bdbec8fc3a55272",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/derekstride/tree-sitter-sql@84a2b208f072a2ca78fc59b5fa51cbdbf9c5aa37?package-id=Component-tree-sitter-grammar-sql-071e00681ad3dadb",
+      "type": "library",
+      "name": "tree-sitter grammar: sql",
+      "version": "84a2b208f072a2ca78fc59b5fa51cbdbf9c5aa37",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/derekstride/tree-sitter-sql@84a2b208f072a2ca78fc59b5fa51cbdbf9c5aa37",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter-grammars/tree-sitter-svelte@ae5199db47757f785e43a14b332118a5474de1a2?package-id=Component-tree-sitter-grammar-svelte-8ee5bbd0c7d20065",
+      "type": "library",
+      "name": "tree-sitter grammar: svelte",
+      "version": "ae5199db47757f785e43a14b332118a5474de1a2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter-grammars/tree-sitter-svelte@ae5199db47757f785e43a14b332118a5474de1a2",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/alex-pinkus/tree-sitter-swift@f47512c92fb3183b5b56c9ef40a442fdeb942853?package-id=Component-tree-sitter-grammar-swift-bcc6ecb668c5dc77",
+      "type": "library",
+      "name": "tree-sitter grammar: swift",
+      "version": "f47512c92fb3183b5b56c9ef40a442fdeb942853",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/alex-pinkus/tree-sitter-swift@f47512c92fb3183b5b56c9ef40a442fdeb942853",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter-grammars/tree-sitter-toml@64b56832c2cffe41758f28e05c756a3a98d16f41?package-id=Component-tree-sitter-grammar-toml-ff289d699817f5d6",
+      "type": "library",
+      "name": "tree-sitter grammar: toml",
+      "version": "64b56832c2cffe41758f28e05c756a3a98d16f41",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter-grammars/tree-sitter-toml@64b56832c2cffe41758f28e05c756a3a98d16f41",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-typescript@75b3874edb2dc714fb1fd77a32013d0f8699989f?package-id=Component-tree-sitter-grammar-tsx-0066fb0b95825860",
+      "type": "library",
+      "name": "tree-sitter grammar: tsx",
+      "version": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-typescript@75b3874edb2dc714fb1fd77a32013d0f8699989f",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter-verilog@227d277b6a1a5e2bf818d6206935722a7503de08?package-id=Component-tree-sitter-grammar-verilog-2a0efc1aab1caf9d",
+      "type": "library",
+      "name": "tree-sitter grammar: verilog",
+      "version": "227d277b6a1a5e2bf818d6206935722a7503de08",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter-verilog@227d277b6a1a5e2bf818d6206935722a7503de08",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter-grammars/tree-sitter-vue@ce8011a414fdf8091f4e4071752efc376f4afb08?package-id=Component-tree-sitter-grammar-vue-e07df47a547bc130",
+      "type": "library",
+      "name": "tree-sitter grammar: vue",
+      "version": "ce8011a414fdf8091f4e4071752efc376f4afb08",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter-grammars/tree-sitter-vue@ce8011a414fdf8091f4e4071752efc376f4afb08",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter-grammars/tree-sitter-xml@5000ae8f22d11fbe93939b05c1e37cf21117162d?package-id=Component-tree-sitter-grammar-xml-6800302a336420d8",
+      "type": "library",
+      "name": "tree-sitter grammar: xml",
+      "version": "5000ae8f22d11fbe93939b05c1e37cf21117162d",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter-grammars/tree-sitter-xml@5000ae8f22d11fbe93939b05c1e37cf21117162d",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter-grammars/tree-sitter-yaml@a1c4812a73ec5e089de8e441fdea3a921e8d5079?package-id=Component-tree-sitter-grammar-yaml-68859ec709857d97",
+      "type": "library",
+      "name": "tree-sitter grammar: yaml",
+      "version": "a1c4812a73ec5e089de8e441fdea3a921e8d5079",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter-grammars/tree-sitter-yaml@a1c4812a73ec5e089de8e441fdea3a921e8d5079",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/maxxnino/tree-sitter-zig@a80a6e9be81b33b182ce6305ae4ea28e29211bd5?package-id=Component-tree-sitter-grammar-zig-df03001e0fa14757",
+      "type": "library",
+      "name": "tree-sitter grammar: zig",
+      "version": "a80a6e9be81b33b182ce6305ae4ea28e29211bd5",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/maxxnino/tree-sitter-zig@a80a6e9be81b33b182ce6305ae4ea28e29211bd5",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/tree-sitter/tree-sitter@a467ea8502d95562171f97953a6dc5b2a8622609?package-id=Component-tree-sitter-runtime-6548358ec535ef66",
+      "type": "library",
+      "name": "tree-sitter runtime",
+      "version": "a467ea8502d95562171f97953a6dc5b2a8622609",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:github/tree-sitter/tree-sitter@a467ea8502d95562171f97953a6dc5b2a8622609",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:docker/ubuntu@24.04?package-id=Image-ubuntu-246bf0cb8a2d8764",
+      "type": "library",
+      "name": "ubuntu",
+      "version": "24.04",
+      "purl": "pkg:docker/ubuntu@24.04",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
+      "bom-ref": "Component-zlib-4c4d4a13a9590a03",
+      "type": "library",
+      "name": "zlib",
+      "version": "1.3.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "Zlib"
+          }
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:github/facebook/zstd@v1.5.7?package-id=Component-Zstandard-01bef5918314d720",
+      "type": "library",
+      "name": "Zstandard",
+      "version": "v1.5.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "purl": "pkg:github/facebook/zstd@v1.5.7",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "DocumentRoot",
+      "dependsOn": [
+        "Component-HIP-test-patch-bde2aa61db71c664",
+        "Component-Monocypher-ed4726faf758318c",
+        "Component-macFUSE-fa5482d7ddbad991",
+        "Component-zlib-4c4d4a13a9590a03",
+        "pkg:docker/python@3.13.7-slim-bookworm?package-id=Image-python-7056b72e738dab8a",
+        "pkg:docker/ubuntu@24.04?package-id=Image-ubuntu-246bf0cb8a2d8764",
+        "pkg:github/alemuller/tree-sitter-make@a4b9187417d6be349ee5fd4b6e77b4172c6827dd?package-id=Component-tree-sitter-grammar-make-b2a88413c6ce2e3c",
+        "pkg:github/alex-pinkus/tree-sitter-swift@f47512c92fb3183b5b56c9ef40a442fdeb942853?package-id=Component-tree-sitter-grammar-swift-bcc6ecb668c5dc77",
+        "pkg:github/appimage/type2-runtime@75849dce7cc37e4319b633df1f116ca895c71a12?package-id=Component-AppImage-type-2-runtime-2f95e0751b0182d8",
+        "pkg:github/b-con/crypto-algorithms@cfbde48414baacf51fc7c74f275190881f037d32?package-id=Component-SHA-256-implementation-89caa68cc66f794d",
+        "pkg:github/blake3-team/blake3@1.8.7?package-id=Component-BLAKE3-815c7907ad9e5ce1",
+        "pkg:github/boostorg/boost@1.91.0-1?package-id=Component-Boost-1b4f4c0e810341fd",
+        "pkg:github/c2sp/cctv@4448f2097b2daa812c91a26141f9f36c2096b9ca?package-id=Component-age-test-vectors-3009553e9b0b5952",
+        "pkg:github/camdencheek/tree-sitter-dockerfile@971acdd908568b4531b0ba28a445bf0bb720aba5?package-id=Component-tree-sitter-grammar-dockerfile-9b405582038c14a6",
+        "pkg:github/cppalliance/capy@ce1c7d710c4baaeeddb57fa101707c610f6eb975?package-id=Component-Boost.Capy-3bce0e447cd0e6a7",
+        "pkg:github/derekstride/tree-sitter-sql@84a2b208f072a2ca78fc59b5fa51cbdbf9c5aa37?package-id=Component-tree-sitter-grammar-sql-071e00681ad3dadb",
+        "pkg:github/elixir-lang/tree-sitter-elixir@4b0c7118760af58a2e7081bbc8396e136f820b37?package-id=Component-tree-sitter-grammar-elixir-226ad9c78004aa9f",
+        "pkg:github/elm-tooling/tree-sitter-elm@e1e8fea161a1e66f3997855d316be2a43e4e956f?package-id=Component-tree-sitter-grammar-elm-515f9863701c1bee",
+        "pkg:github/facebook/rocksdb@v10.10.1?package-id=Component-RocksDB-0b22b81b4ddbab86",
+        "pkg:github/facebook/zstd@v1.5.7?package-id=Component-Zstandard-01bef5918314d720",
+        "pkg:github/fwcd/tree-sitter-kotlin@1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1?package-id=Component-tree-sitter-grammar-kotlin-9fbbf2ab691ac8c3",
+        "pkg:github/ganezdragon/tree-sitter-perl@5b97493ce70686e22ec8b9ea261437147e342b49?package-id=Component-tree-sitter-grammar-perl-069ad3e20dec8a61",
+        "pkg:github/google/googletest@v1.17.0?package-id=Component-GoogleTest-34101f2b39cec8bc",
+        "pkg:github/homer6/automerge-cpp@06408d32fa7dbefdd658f3b17d518c4a681dbf0b?package-id=Component-automerge-cpp-edcad248950bb82f",
+        "pkg:github/joranhonig/tree-sitter-solidity@048fe686cb1fde267243739b8bdbec8fc3a55272?package-id=Component-tree-sitter-grammar-solidity-2f83ab943dcd033b",
+        "pkg:github/latex-lsp/tree-sitter-latex@a6c812704b3d3e1541b0853aa0d6d561301320e1?package-id=Component-tree-sitter-grammar-latex-4a9e89d47571c065",
+        "pkg:github/libfuse/libfuse@3.x%20%28system%29?package-id=Component-libfuse3-f523f208b4691877",
+        "pkg:github/libfuse/libfuse@as%20built%20by%20the%20runtime%20at%20the%20commit%20above?package-id=Component-libfuse-ef224ce73d2f5ba4",
+        "pkg:github/lmdb/lmdb@LMDB_0.9.36?package-id=Component-LMDB-0a7b4a90ef77b967",
+        "pkg:github/maxxnino/tree-sitter-zig@a80a6e9be81b33b182ce6305ae4ea28e29211bd5?package-id=Component-tree-sitter-grammar-zig-df03001e0fa14757",
+        "pkg:github/nix-community/tree-sitter-nix@3d0173d903e630b6e14d17f1cf79488791379ded?package-id=Component-tree-sitter-grammar-nix-ed8e201fcb1668d4",
+        "pkg:github/openssl/openssl@3.x%20%28system%29?package-id=Component-OpenSSL-844c5a1b29c99b9c",
+        "pkg:github/oramasearch/corosio@887166b82a1b7acc0a10ce9f3c61224d45ae80e4?package-id=Component-Boost.Corosio-ce423e89ec459008",
+        "pkg:github/oramasearch/http@af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4?package-id=Component-Boost.HTTP-0dbeb02a94dc16e8",
+        "pkg:github/oramasearch/oramacore-cpp@9b74ce177f47d63024532ae6000c2cd62c73e0cd?package-id=Component-oramacore-cpp-339b170fefd1c12a",
+        "pkg:github/r-lib/tree-sitter-r@58a22794466c0fc15b0d3b40531db751593721e8?package-id=Component-tree-sitter-grammar-r-710be359d74d9548",
+        "pkg:github/serenadeai/tree-sitter-scss@c478c6868648eff49eb04a4df90d703dc45b312a?package-id=Component-tree-sitter-grammar-scss-146791897be5e058",
+        "pkg:github/spack/spack@2bfcc69fa870d3c6919be87593f22647981b648a?package-id=Component-Spack-package-metadata-export-843d53decc088200",
+        "pkg:github/stadelmanma/tree-sitter-fortran@7edacd2b21aa80057d9725384a1304a1c758e0f8?package-id=Component-tree-sitter-grammar-fortran-5c76394dacd9b1c9",
+        "pkg:github/tree-sitter-grammars/tree-sitter-hcl@64ad62785d442eb4d45df3a1764962dafd5bc98b?package-id=Component-tree-sitter-grammar-hcl-421d5367c8a2683b",
+        "pkg:github/tree-sitter-grammars/tree-sitter-lua@10fe0054734eec83049514ea2e718b2a56acd0c9?package-id=Component-tree-sitter-grammar-lua-04adb6f0efe14376",
+        "pkg:github/tree-sitter-grammars/tree-sitter-markdown@a0a00f817d02412bd92c54d316f164d827b57b5c?package-id=Component-tree-sitter-grammar-markdown-5b504c25811d14a5",
+        "pkg:github/tree-sitter-grammars/tree-sitter-objc@181a81b8f23a2d593e7ab4259981f50122909fda?package-id=Component-tree-sitter-grammar-objective-c-dca64ffa837132e1",
+        "pkg:github/tree-sitter-grammars/tree-sitter-svelte@ae5199db47757f785e43a14b332118a5474de1a2?package-id=Component-tree-sitter-grammar-svelte-8ee5bbd0c7d20065",
+        "pkg:github/tree-sitter-grammars/tree-sitter-toml@64b56832c2cffe41758f28e05c756a3a98d16f41?package-id=Component-tree-sitter-grammar-toml-ff289d699817f5d6",
+        "pkg:github/tree-sitter-grammars/tree-sitter-vue@ce8011a414fdf8091f4e4071752efc376f4afb08?package-id=Component-tree-sitter-grammar-vue-e07df47a547bc130",
+        "pkg:github/tree-sitter-grammars/tree-sitter-xml@5000ae8f22d11fbe93939b05c1e37cf21117162d?package-id=Component-tree-sitter-grammar-xml-6800302a336420d8",
+        "pkg:github/tree-sitter-grammars/tree-sitter-yaml@a1c4812a73ec5e089de8e441fdea3a921e8d5079?package-id=Component-tree-sitter-grammar-yaml-68859ec709857d97",
+        "pkg:github/tree-sitter/tree-sitter-bash@a06c2e4415e9bc0346c6b86d401879ffb44058f7?package-id=Component-tree-sitter-grammar-bash-5b54f107c98b6047",
+        "pkg:github/tree-sitter/tree-sitter-c-sharp@9150f7d56bb47f1a809fa23623f1ba1413e93fa9?package-id=Component-tree-sitter-grammar-c-4ea55af0678f7847",
+        "pkg:github/tree-sitter/tree-sitter-c@b780e47fc780ddc8da13afa35a3f4ed5c157823d?package-id=Component-tree-sitter-grammar-c-ee87946cd9b22987",
+        "pkg:github/tree-sitter/tree-sitter-cpp@8b5b49eb196bec7040441bee33b2c9a4838d6967?package-id=Component-tree-sitter-grammar-c-0e6c63c6ef78c0d9",
+        "pkg:github/tree-sitter/tree-sitter-css@dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f?package-id=Component-tree-sitter-grammar-css-64fc557827e8471f",
+        "pkg:github/tree-sitter/tree-sitter-go@2346a3ab1bb3857b48b29d779a1ef9799a248cd7?package-id=Component-tree-sitter-grammar-go-00a58e82972f59a0",
+        "pkg:github/tree-sitter/tree-sitter-haskell@0975ef72fc3c47b530309ca93937d7d143523628?package-id=Component-tree-sitter-grammar-haskell-3d9124ab44a3cb7b",
+        "pkg:github/tree-sitter/tree-sitter-html@73a3947324f6efddf9e17c0ea58d454843590cc0?package-id=Component-tree-sitter-grammar-html-a511c51f1239e9ad",
+        "pkg:github/tree-sitter/tree-sitter-java@e10607b45ff745f5f876bfa3e94fbcc6b44bdc11?package-id=Component-tree-sitter-grammar-java-b6262cabe46c9adc",
+        "pkg:github/tree-sitter/tree-sitter-javascript@58404d8cf191d69f2674a8fd507bd5776f46cb11?package-id=Component-tree-sitter-grammar-javascript-febae34671eaf42d",
+        "pkg:github/tree-sitter/tree-sitter-json@254c42a6476413b776221e03982ac8ae159eeb72?package-id=Component-tree-sitter-grammar-json-9362833c07d2e834",
+        "pkg:github/tree-sitter/tree-sitter-julia@e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3?package-id=Component-tree-sitter-grammar-julia-be43a7f9ff97f121",
+        "pkg:github/tree-sitter/tree-sitter-ocaml@a4ce49a6c17e88e7ca8350cfb666749d9a5c6630?package-id=Component-tree-sitter-grammar-ocaml-c5af0fd7204b196e",
+        "pkg:github/tree-sitter/tree-sitter-php@3fda2fb9577166c6399834917f9844f30370beea?package-id=Component-tree-sitter-grammar-php-5adc86c8205864b4",
+        "pkg:github/tree-sitter/tree-sitter-python@26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64?package-id=Component-tree-sitter-grammar-python-6004c55b9516739e",
+        "pkg:github/tree-sitter/tree-sitter-ruby@ad907a69da0c8a4f7a943a7fe012712208da6dee?package-id=Component-tree-sitter-grammar-ruby-55ec4aa20d82cba6",
+        "pkg:github/tree-sitter/tree-sitter-rust@77a3747266f4d621d0757825e6b11edcbf991ca5?package-id=Component-tree-sitter-grammar-rust-0bc6dbc9bdd1f941",
+        "pkg:github/tree-sitter/tree-sitter-scala@db390f312a54b04b13790e1767bfac32665c17ac?package-id=Component-tree-sitter-grammar-scala-06d97d87718f804f",
+        "pkg:github/tree-sitter/tree-sitter-typescript@75b3874edb2dc714fb1fd77a32013d0f8699989f?package-id=Component-tree-sitter-grammar-tsx-0066fb0b95825860",
+        "pkg:github/tree-sitter/tree-sitter-verilog@227d277b6a1a5e2bf818d6206935722a7503de08?package-id=Component-tree-sitter-grammar-verilog-2a0efc1aab1caf9d",
+        "pkg:github/tree-sitter/tree-sitter@a467ea8502d95562171f97953a6dc5b2a8622609?package-id=Component-tree-sitter-runtime-6548358ec535ef66",
+        "pkg:github/treywood/tree-sitter-proto@e9f6b43f6844bd2189b50a422d4e2094313f6aa3?package-id=Component-tree-sitter-grammar-protocol-buffers-135e0fb0512bbabb",
+        "pkg:github/usernobody14/tree-sitter-dart@be07cf7118d3dba06236a3f19541685a68209934?package-id=Component-tree-sitter-grammar-dart-e277022272932026",
+        "pkg:github/uyha/tree-sitter-cmake@ca627bb5828616b6246aafdc3c3222789e728e37?package-id=Component-tree-sitter-grammar-cmake-d4da2ca2ed4c0cf5",
+        "pkg:github/vasi/squashfuse@as%20built%20by%20the%20runtime?package-id=Component-squashfuse-a9f4ec64166b681d",
+        "pkg:github/whatsapp/tree-sitter-erlang@6ba4c762eb3065495e3db85697ffeecdf364ce35?package-id=Component-tree-sitter-grammar-erlang-484fd4f78bb4bca0"
+      ]
+    },
+    {
+      "ref": "pkg:golang/command-line-arguments?package-id=Package-go-module-command-line-arguments-c4ac8c1612c5d4bf",
+      "dependsOn": [
+        "pkg:golang/stdlib@1.26.5?package-id=Package-go-module-stdlib-da3048b1e53b8a33"
+      ]
+    }
+  ]
+}
