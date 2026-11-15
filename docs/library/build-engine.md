@@ -315,7 +315,7 @@ read, so a large input tree costs nothing to set up (features/06: data movement 
 
 | Platform | Mechanism | What it guarantees |
 |---|---|---|
-| Linux | user + mount + pid + net namespaces (unprivileged `unshare`), the sandbox root bind-mounted as the only visible filesystem besides `/proc` and a private `/tmp`; a remote-eligible action adds the static read guard | an eligible read outside input/toolchain roots returns `EACCES` and the normalized path; other actions retain the namespace boundary |
+| Linux | user + mount + pid + net namespaces (unprivileged `unshare`), the sandbox root bind-mounted as the only visible filesystem besides `/proc` and a private `/tmp`; a remote-eligible action adds the static read guard | the namespaces are the enforcement. The read guard is **diagnostic**: it traces `open*` calls and reports a read outside the input and toolchain roots (`EACCES` and the normalized path); it does not stop reads made by other calls (liquid#419) |
 | macOS | `sandbox-exec` profile denying file reads outside the mount and the fixed toolchain path, denying network; the mount is the only readable tree | the same guarantee with a weaker tool; the observation layer is unchanged |
 | Windows | Phase 2: no sandbox and no mount; actions run with declared inputs only, `wrap` refuses with `errc::unsupported` and the reason; Phase 6 brings Cloud Files and a job-object sandbox | honest about the gap |
 

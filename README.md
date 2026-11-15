@@ -328,8 +328,9 @@ built:
 
 - **The build wrapper, verification, replay and lazy mounts need FUSE**: libfuse3 on Linux,
   macFUSE on macOS. Without it those commands report a documented unsupported result.
-- **Windows** builds, but returns that unsupported result for the daemon and the build
-  wrapper.
+- **Windows** builds, but has **no sandbox, no daemon and no key-file protection**: the daemon and
+  the build wrapper return the unsupported result, and a key file's permissions are not checked
+  there (liquid#419).
 - **Two exit demonstrations have not been run**: caching across two machines with attestation
   (Phase 2), and a recompile in the time a save takes (Phase 4).
 - **Git is not beaten on merit alone.** It has the network. Import and export are the on-ramp,
