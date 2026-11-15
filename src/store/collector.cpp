@@ -264,6 +264,9 @@ runtime::task<collection_report> collector::run(collection_options options) {
             co_return std::unexpected(
                 error{errc::busy, lock_error.message(), "store::collect compaction"});
         }
+        auto writes = co_await store_.hold_writes();
+        if (!writes)
+            co_return std::unexpected(writes.error());
         auto committed = co_await load_collection_manifest(store_.persistence_, store_.root_);
         if (!committed) {
             co_return std::unexpected(committed.error());
@@ -284,11 +287,19 @@ runtime::task<collection_report> collector::run(collection_options options) {
     std::map<std::string, stored_object> snapshot_objects;
     std::map<std::uint32_t, pack_contents> snapshot_packs;
     std::map<std::string, digest> snapshot_bases;
+    // Another process must not write between the snapshot and the sweep: its frames would land
+    // below a high-water mark this process never saw. The write lock is held for the whole
+    // collection (liquid #526); this handle's own writes continue under the nested hold.
+    auto writes = write_hold{};
     {
         auto [lock_error, guard] = co_await store_.mutation_.scoped_lock();
         if (lock_error)
             co_return std::unexpected(
                 error{errc::busy, lock_error.message(), "store::collect snapshot"});
+        auto held = co_await store_.hold_writes();
+        if (!held)
+            co_return std::unexpected(held.error());
+        writes = std::move(*held);
         snapshot_objects = store_.objects_;
         snapshot_packs = store_.packs_;
         snapshot_bases = store_.chunk_bases_;
@@ -707,6 +718,9 @@ runtime::task<void> collector::redact(std::span<const digest> ids) {
     if (lock_error) {
         co_return std::unexpected(error{errc::busy, lock_error.message(), "store::redact"});
     }
+    auto writes = co_await store_.hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     auto manifest = co_await load_collection_manifest(store_.persistence_, store_.root_);
     if (!manifest) {
         co_return std::unexpected(manifest.error());
@@ -748,6 +762,9 @@ runtime::task<void> collector::evict(digest id) {
     if (lock_error) {
         co_return std::unexpected(error{errc::busy, lock_error.message(), "store::evict"});
     }
+    auto writes = co_await store_.hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     auto manifest = co_await load_collection_manifest(store_.persistence_, store_.root_);
     if (!manifest) {
         co_return std::unexpected(manifest.error());

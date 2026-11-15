@@ -62,6 +62,7 @@ add_executable(liquid-tests
   sim/memory_backend.cpp
   sim/write_once_backend.cpp
   store/test_owner.cpp
+  store/test_writers.cpp
   store/test_transfer.cpp
   test_tiers.cpp
   test_temporary_directory.cpp
@@ -239,6 +240,13 @@ if(UNIX)
   add_dependencies(liquid-tests liquid-store-owner-fixture)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_STORE_OWNER_FIXTURE="$<TARGET_FILE:liquid-store-owner-fixture>")
+endif()
+if(UNIX)
+  add_executable(liquid-store-writers-fixture store/writers_fixture.cpp)
+  target_link_libraries(liquid-store-writers-fixture PRIVATE liquid::liquid)
+  add_dependencies(liquid-tests liquid-store-writers-fixture)
+  target_compile_definitions(liquid-tests PRIVATE
+    LIQUID_STORE_WRITERS_FIXTURE="$<TARGET_FILE:liquid-store-writers-fixture>")
 endif()
 if(UNIX)
   add_executable(liquid-install-crash-fixture install_crash_fixture.cpp)

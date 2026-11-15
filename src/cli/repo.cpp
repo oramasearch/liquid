@@ -432,7 +432,7 @@ auto repo_status(int argc, char** argv) -> int {
         std::println(
             "{{\"pending_drips\":{},\"remote_bytes\":{},\"paused\":{},\"conflicts\":{},\"oversized_"
             "directories\":{},\"head\":{},\"agents\":{{\"require_base\":{},\"actors\":{}}},"
-            "\"data_branches\":{},"
+            "\"data_branches\":{},\"store_recoveries\":{},"
             "\"capture\":{{\"state\":{},\"pending_drips\":{},"
             "\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}},"
             "\"flow\":{},"
@@ -450,6 +450,7 @@ auto repo_status(int argc, char** argv) -> int {
             current->agents.require_base ? "true" : "false",
             strings_json(current->agents.actors),
             data_branches_json(current->data_branches),
+            strings_json(current->store_recoveries),
             json_string(daemon_current && daemon_current->capture.state ==
                                               liquid::capture_status::state::paused
                             ? "paused"
@@ -494,6 +495,9 @@ auto repo_status(int argc, char** argv) -> int {
                          branch.database,
                          liquid::to_string(branch.mechanism),
                          branch.url);
+        }
+        for (const auto& recovery : current->store_recoveries) {
+            std::println("store_recovery={}", recovery);
         }
         std::println("daemon_available={}", daemon_current.has_value());
         std::println("capture_state={}",

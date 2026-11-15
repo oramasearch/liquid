@@ -144,6 +144,8 @@ Lake today a liquid barrier sends no request (lake#535), so they cost Lake no ro
 <root>/repositories/<id-hash>/sessions/<session-id>/…      private session state (same names)
 <root>/tmp/
 <root>/store.lock          exclusive owner lock and the owner's pid, host and start time
+<root>/store.write.lock    cross-process write lock: a generation, then the holder's pid, host and time
+<root>/recoveries.log      the last 20 repairs an open made, "<UTC time> <what>" per line
 ```
 
 The disk backend's `open` creates missing directories and refuses a marker other than format 1 with
@@ -241,7 +243,11 @@ an owned checkout repository by design and remain filesystem operations.
 format marker changes and there is nothing to refuse: a repository written before this change opens
 after it, and one written after it opens with an earlier build. A `LIQUID_REPO.tmp` left by an
 earlier release's interrupted rename is ignored. Disk replacement now goes through the backend's
-`.backend-tmp` temporary and rename.
+`.backend-tmp` temporary and rename. Since liquid #526 that temporary, like the conditional
+create's, is unique to the call (`<key>.<random>.backend-tmp`): with one fixed name, two processes
+publishing one key renamed each other's file and failed `in rename: No such file or directory`.
+A failed rename removes its temporary; open removes temporaries in `packs/`, `index/`, `gc/`,
+`leases/` and `keys/` that a killed writer left more than an hour ago.
 
 **Verify.** `tests/sim/test_repository_state.cpp`: the conditional create on both backends,
 including eight racing creators of one key; the default `unsupported`; the scoped disk `list`; a
@@ -666,8 +672,21 @@ runs. The next merge takes the same unpublished key, because `next_sequence_` co
 manifest, and its complete-object `put` replaces the torn object whole rather than rewriting
 its bytes. The old runs are unmapped and removed only after the manifest names the replacement.
 
-If the manifest or a run header is absent or corrupt, `open` reconstructs the run sets from pack
-tables. Deleting `index/` is therefore recoverable. There is no index write-ahead log.
+If the manifest or a run header is absent or corrupt, or the manifest names a run file that is
+missing or the wrong size, `open` reconstructs the run sets from pack tables. Deleting `index/` is
+therefore recoverable. There is no index write-ahead log. Before liquid #526 only a corrupt
+manifest or header was rebuilt; a missing run failed every open with `io: No such file or
+directory (…/index/run-22.idx)`. A rebuild is recorded: `store::recoveries()` returns what this open
+repaired, and the open appends `<UTC time> index rebuilt from packs: <reason>` to
+`recoveries.log`, which `liquid status` prints as `store_recovery=` lines (and `store_recoveries`
+in `--json`), because the process that repaired the store is often the daemon.
+
+**Opening writes nothing (liquid #526).** Open used to insert every frame of every pack into the
+memtable and flush it, so each open, `liquid status` included, wrote a full copy of the index as a
+new run and rewrote the manifest. Every reader was a writer, and run numbers climbed with every
+command. Open now inserts only frames the index does not already locate at one of their live
+frames (the unsealed pack's frames, or a chunk two writers stored twice), and leaves them in the
+memtable: the next writer flushes them with its own entries. A rebuild still writes.
 
 Concurrent coroutines on one store serialize mutation with the store's thread-safe
 `mutation_mutex`. Reads use immutable
@@ -693,10 +712,8 @@ root and no injected `owner` is `errc::unsupported`. The descriptor is close-on-
 The kernel releases the lock when the owner's descriptor closes, however the process ends, so a
 successor never waits on a dead owner.
 
-Opens without `exclusive_owner` take no lock and keep the single-process contract: the caller must
-ensure that no other process writes the root. Existing callers that open one repository's store
-from several handles in one process (repository reopen, the CLI beside its daemon, readers in
-tests) are unchanged.
+Opens without `exclusive_owner` do not own the root. They share it with other writers through the
+write lock in the next section.
 
 **Why (liquid #321, found by lake#467).** A store keeps its pack append position, object map,
 chunk index memtable, and delta candidates in process memory. It appends at the offset it
@@ -737,6 +754,77 @@ between its clients.
 
 `store::close()` destroys the store and then awaits the owner's release, so a predecessor can hand
 over at a known point instead of relying on destruction; the handle is empty afterwards.
+
+### Several writers without an owner
+
+**What (liquid #526).** A checkout's store is written by several processes at once: the checkout
+daemon (`liquid daemon --serve`), each CLI command, and a library client such as liquify, possibly
+of two liquid builds. None of them owns the root. Each open store handle on a disk root without an
+owner opens `<root>/store.write.lock` and takes an exclusive advisory lock on it (`flock`,
+`LockFileEx` on Windows) for the length of one mutation, never for the life of the handle:
+
+- open, while it removes leftover publications, recovers compactions and loads its state;
+- every put, chunk hydration, remote registration, lease, object-batch commit, redaction, eviction
+  and transfer step;
+- a whole collection, from its snapshot to its sweep, so no other process writes below a high-water
+  mark it never saw. The collecting handle's own writes go on under the nested hold.
+
+The file's first eight bytes are a generation. A holder whose mutations changed anything (the disk
+backend counts its puts, range writes and removals) adds one before it unlocks. A handle remembers
+the generation it last saw; when the next acquisition finds another, a different process
+published, and the handle reloads its object map, remote map, collection manifest, pending
+compactions, index and pack tables before it mutates. Objects of an object batch it has not
+published yet are kept across the reload; their chunks are in the packs the reload indexes. After
+the reload the handle appends at the pack's real end, seals or starts the pack another writer left,
+names its next index run after the manifest's, and publishes an object map that holds every other
+writer's objects. Compaction removes old runs only after the manifest that replaces them is
+published, and under the lock no other process can publish a manifest that still names them.
+
+A read that misses (`not_found`, `corrupt` or `io`, or `contains` and `has` answering not local)
+checks the generation without the lock. If it moved, the handle reloads under the lock and retries
+once, so a reader sees an object another process published after it opened, and a location another
+process's compaction moved. Holder liveness is the kernel's: the lock is released when the
+descriptor closes, however the process ends. A writer that waits ten minutes gives up with
+`errc::busy` naming the holder's pid, host and start time.
+
+A store opened with `exclusive_owner` or an injected `owner` takes no write lock: the owner already
+excludes every other writer, and lake's services keep that hand-off. A backend without a local root
+and without an owner has no lock and keeps the single-process contract.
+
+**Why the lock and not the hand-off.** The hand-off above serialises whole processes and suits a
+service that holds the root for hours. A checkout's writers each need the root for milliseconds,
+and the daemon and an IDE hold their handles open indefinitely, so an owner held for a handle's
+life would lock the others out. liquid #321 set aside per-mutation safety because it needs a lock
+around each publication and a reload of everything the writer keeps in memory; that is what this
+does, at a cost paid only when another process has written. What it does not cover:
+
+- A collection still removes an object written before its snapshot that no lease retains yet, in
+  this process or another. A writer leases what it keeps (a repository leases its checkpoint), and
+  one that loses the race stores the object again.
+- A repository's own documents (`LIQUID_REPO`, `LIQUID_JOURNAL`) are replaced whole by each
+  process from its own view, so two processes saving one repository at once can drop each other's
+  drips from the published document. Their objects stay in the store.
+- A build from before liquid #526 takes no write lock and still races.
+- A reload reads every pack table again; a store with many packs pays that each time another
+  process wrote. Reads of a handle's in-memory maps are not synchronised with a reload on another
+  thread of the same process, as they already were not with that handle's own writes.
+
+**Verify.** `tests/store/test_writers.cpp` (`StoreWriters.*`). In one process: a manifest that
+names a missing run reopens by rebuilding from the packs, says so in `recoveries()` and
+`recoveries.log`, reads every object back, and the next open repairs nothing; reopening a current
+store leaves every file under the root byte for byte as it was, apart from the lock file's holder
+record; two handles on one root writing in turn each read every object the other wrote, and every
+pack frame verifies. Across processes, with `liquid-store-writers-fixture`: four writer processes
+on one root with 128 KiB packs, each putting and leasing 48 objects plus 48 unleased ones, reading
+its own and the other writers' newest objects and reopening the store every 16 writes, while a fifth
+process runs full collections in a loop; afterwards every pack frame verifies, the store opens with
+no repair, every acknowledged object reads back byte for byte, and a full collection keeps every
+one. And the reproduction from liquify#95: `liquid init`, `liquid daemon --serve`, a library client
+opening the repository and writing a file in a loop, and the CLI appending to tracked files and
+running `liquid status` and `liquid cut` for 60 seconds (`LIQUID_STORE_STRESS_SECONDS` changes it);
+every command succeeds, the daemon shuts down cleanly, every pack frame verifies, the store opens
+with no repair, and the repository opens and walks its whole reachable graph in a dry-run
+collection. Without the lock the process cases fail (see the pull request for the counts).
 
 ### Injected owners and fencing
 

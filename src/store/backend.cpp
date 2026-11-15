@@ -3,6 +3,7 @@
 #include "backend.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <format>
 #include <limits>
@@ -68,10 +69,29 @@ public:
         return checked_path(root_, key);
     }
 
+    std::uint64_t mutations() const noexcept {
+        return mutations_.load(std::memory_order_acquire);
+    }
+
 private:
+    void count_mutation() noexcept {
+        mutations_.fetch_add(1, std::memory_order_acq_rel);
+    }
+
     std::filesystem::path root_;
     bool durable_{};
+    std::atomic<std::uint64_t> mutations_{};
 };
+
+// A temporary name no other writer can choose: two processes publishing one key at once each
+// rename their own complete file, and the later rename wins whole (liquid #526). A fixed name made
+// one writer rename the other's half-written file, or find it already renamed away.
+std::filesystem::path unique_temporary(const std::filesystem::path& destination) {
+    thread_local auto random = std::random_device{};
+    auto temporary = destination;
+    temporary += std::format(".{:08x}{:08x}.backend-tmp", random(), random());
+    return temporary;
+}
 
 runtime::task<void> write_path(std::filesystem::path path,
                                std::uint64_t offset,
@@ -124,8 +144,8 @@ runtime::task<void> disk_store_backend::put(std::string key, std::vector<std::by
     if (!destination) {
         co_return std::unexpected(destination.error());
     }
-    auto temporary = *destination;
-    temporary += ".backend-tmp";
+    count_mutation();
+    const auto temporary = unique_temporary(*destination);
     auto written = co_await write_path(temporary, 0, std::move(bytes), true, durable_);
     if (!written) {
         co_return std::unexpected(written.error());
@@ -134,7 +154,13 @@ runtime::task<void> disk_store_backend::put(std::string key, std::vector<std::by
         store_detail::visit_fault(
             {store_detail::fault_operation::rename, store_detail::fault_phase::before, temporary});
         auto renamed = co_await runtime::offload([temporary, destination = *destination] {
-            std::filesystem::rename(temporary, destination);
+            auto code = std::error_code{};
+            std::filesystem::rename(temporary, destination, code);
+            if (code) {
+                auto ignored = std::error_code{};
+                std::filesystem::remove(temporary, ignored);
+                throw std::filesystem::filesystem_error("rename", temporary, destination, code);
+            }
         });
         if (!renamed) {
             co_return std::unexpected(
@@ -158,9 +184,8 @@ runtime::task<void> disk_store_backend::put_if_absent(std::string key,
     if (!destination) {
         co_return std::unexpected(destination.error());
     }
-    auto random = std::random_device{};
-    auto temporary = *destination;
-    temporary += std::format(".{:08x}{:08x}.backend-tmp", random(), random());
+    count_mutation();
+    const auto temporary = unique_temporary(*destination);
     auto written = co_await write_path(temporary, 0, std::move(bytes), true, durable_);
     if (!written) {
         co_return std::unexpected(written.error());
@@ -202,6 +227,7 @@ disk_store_backend::put_range(std::string key, std::uint64_t offset, std::vector
     if (!destination) {
         co_return std::unexpected(destination.error());
     }
+    count_mutation();
     auto written = co_await write_path(*destination, offset, std::move(bytes), false, durable_);
     if (!written) {
         co_return std::unexpected(written.error());
@@ -266,6 +292,7 @@ runtime::task<void> disk_store_backend::remove(std::string key) {
             co_return std::unexpected(
                 backend_error(errc::not_found, "backend object was not found", key));
         }
+        count_mutation();
         store_detail::visit_fault(
             {store_detail::fault_operation::remove, store_detail::fault_phase::after, *target});
         co_return result<void>{};
@@ -282,15 +309,26 @@ runtime::task<std::vector<store_backend_entry>> disk_store_backend::list(std::st
     try {
         auto listed = co_await runtime::offload([this, prefix] {
             std::vector<store_backend_entry> entries;
+            // Another process may remove a file between the directory read and its stat (a lease
+            // renewed or released, a temporary renamed): that file is simply not listed
+            // (liquid #526).
             const auto add = [&](const std::filesystem::directory_entry& entry) {
-                if (!entry.is_regular_file()) {
+                auto code = std::error_code{};
+                if (!entry.is_regular_file(code) || code) {
                     return;
                 }
                 const auto key = entry.path().lexically_relative(root_).generic_string();
                 if (key.ends_with(".backend-tmp") || !key.starts_with(prefix)) {
                     return;
                 }
-                entries.push_back({key, entry.file_size()});
+                const auto size = std::filesystem::file_size(entry.path(), code);
+                if (code) {
+                    if (code == std::errc::no_such_file_or_directory) {
+                        return;
+                    }
+                    throw std::filesystem::filesystem_error("file_size", entry.path(), code);
+                }
+                entries.push_back({key, size});
             };
             // Every key with the prefix lies under the prefix's directory part, in an entry whose
             // name starts with its last component. Walk only those, so a backend rooted at a
@@ -369,6 +407,14 @@ backend_local_path(const std::shared_ptr<::liquid::store_backend>& backend, std:
         return std::nullopt;
     }
     return *path;
+}
+
+std::uint64_t backend_mutations(const std::shared_ptr<::liquid::store_backend>& backend) noexcept {
+    if (const auto owned = std::dynamic_pointer_cast<owned_store_backend>(backend)) {
+        return backend_mutations(owned->inner());
+    }
+    const auto disk = std::dynamic_pointer_cast<disk_store_backend>(backend);
+    return disk ? disk->mutations() : 0;
 }
 
 runtime::task<bool> backend_exists(const std::shared_ptr<::liquid::store_backend>& backend,

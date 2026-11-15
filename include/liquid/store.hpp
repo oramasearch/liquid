@@ -154,8 +154,9 @@ struct LIQUID_EXPORT store_options {
     // handle is destroyed or its process exits. Another exclusive opener then waits up to its own
     // owner_wait and fails with errc::locked naming the holder. A store kept by a long-running
     // service sets it, so a successor process can take over from a draining predecessor. Opens
-    // without it take no lock and keep the single-process contract: the caller must ensure no
-    // other process writes the root. A backend without a local root needs an injected owner.
+    // without it share a disk root with other processes: each mutation takes the root's write
+    // lock (`store.write.lock`) and first reloads what another process published (liquid #526).
+    // A backend without a local root needs an injected owner for either.
     bool exclusive_owner{};
     // How long an exclusive open waits for the current owner to release the root. Zero makes one
     // attempt. Only meaningful with exclusive_owner.
@@ -267,6 +268,9 @@ public:
     // Closes the store and then releases its owner, awaiting the release, so a waiting successor
     // can take over. Finish in-flight operations first. The handle is empty afterwards.
     [[nodiscard]] runtime::task<void> close();
+    // What open repaired, one sentence each, for example an index rebuilt from the packs and the
+    // reason (liquid #526). Empty when the store opened as it was.
+    [[nodiscard]] std::vector<std::string> recoveries() const;
 
 private:
     friend class repository;
@@ -278,6 +282,8 @@ private:
     [[nodiscard]] runtime::task<digest> put_verified(digest id, std::vector<std::byte> input);
     [[nodiscard]] result<blob> blob_for(digest id) const;
     [[nodiscard]] result<std::uint64_t> remote_bytes(digest blob_record) const;
+    // The repairs recorded in the store's recoveries.log by any process, oldest first.
+    [[nodiscard]] std::vector<std::string> recorded_recoveries() const;
     [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);
     [[nodiscard]] std::vector<digest> object_ids(std::string_view kind) const;
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);

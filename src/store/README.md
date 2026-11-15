@@ -88,6 +88,15 @@ after a barrier, only when something was appended), and the `transfer_verify_*` 
 the state keys and the lease records are in `src/repository/transfer.cpp`. See
 `docs/library/store.md#whole-repository-transfer`.
 
+`write_lock.cpp` is the cross-process write lock of a disk store opened without an owner (liquid
+#526): an exclusive `flock` (POSIX) or `LockFileEx` (Windows) on `<root>/store.write.lock`, held
+for one mutation. Its first eight bytes are a generation the holder raises when it changed the
+store; `store_impl.cpp`'s `hold_writes` takes it under the mutation mutex, nests within one handle,
+and reloads the handle's state (`refresh`, through the same `load_state` open uses) when another
+process published. The disk backend counts its own mutations (`backend_mutations`) so a hold that
+changed nothing leaves the generation alone. `store.cpp` retries a read that missed once after a
+reload. See `docs/library/store.md#several-writers-without-an-owner`.
+
 `owner.cpp` holds the injected owner of liquid #327: `owner_grant` (a fence and a shared lost
 flag), `make_disk_store_owner` (the flock above as a `store_owner` with fence zero),
 `owned_store_backend` (the wrapper around a backend's fenced view that refuses mutations, and reads
