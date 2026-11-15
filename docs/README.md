@@ -18,6 +18,7 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 | [`guides/`](guides/) | Executable user workflows for a first repository, existing builds, encryption, [packaging ordinary files](guides/project-from-files.md), and [package resolution](guides/resolve-packages.md). |
 | [`api/README.md`](api/README.md) | Server components and their public wire surfaces, including admission, scheduler, worker, and node store. |
 | [`build/`](build/README.md) | Local and continuous-integration build verification, indexed below. |
+| [`security/`](security/README.md) | Threat models for liquid's trust boundaries: assets, actors, must-nevers with where each is enforced and its test, and the defects found; first [delegation and multiplayer sessions](security/delegation-threat-model.md). |
 | [`releases/`](releases/README.md) | One page per tagged release and how a release is cut; [`v0.1.0`](releases/v0.1.0.md) is the first and lists every implemented feature and command; [`v0.2.0`](releases/v0.2.0.md) is the current one. |
 
 ## Library

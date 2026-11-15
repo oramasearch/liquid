@@ -212,6 +212,65 @@ TEST(AttestationRegistry, delegation_chains_only_attenuate_authority) {
     EXPECT_FALSE(liquid::validate_delegation(publishing, &parent));
 }
 
+// docs/security/delegation-threat-model.md, must-never D1: only a complete, unambiguous
+// delegation/1 record is delegation authority.
+TEST(AttestationRegistry, delegation_refuses_other_profiles_and_incomplete_authority) {
+    const auto other = example("authorship/1");
+    EXPECT_FALSE(liquid::validate_delegation(other));
+
+    const auto parent = example("delegation/1");
+    auto child = parent;
+    child.attributes[3].value = std::uint64_t{1};
+    EXPECT_TRUE(liquid::validate_delegation(child, &parent));
+    EXPECT_FALSE(liquid::validate_delegation(child, &other));
+
+    auto incomplete = example("delegation/1");
+    std::erase_if(incomplete.attributes,
+                  [](const auto& attribute) { return attribute.name == "may_lease"; });
+    EXPECT_FALSE(liquid::validate_delegation(incomplete));
+
+    auto duplicated = example("delegation/1");
+    duplicated.attributes.push_back({"scopes", std::vector<std::string>{"**"}});
+    EXPECT_FALSE(liquid::validate_delegation(duplicated));
+
+    auto mistyped = example("delegation/1");
+    mistyped.attributes[1].value = std::string{"true"};
+    EXPECT_FALSE(liquid::validate_delegation(mistyped));
+
+    auto wrong_subject = example("delegation/1");
+    wrong_subject.subject_kind = liquid::attestation_subject_kind::drip;
+    EXPECT_FALSE(liquid::validate_delegation(wrong_subject));
+}
+
+// docs/security/delegation-threat-model.md, must-never D5: a sub-delegation reduces
+// depth_remaining, an exhausted delegation cannot delegate, and no capability is added.
+TEST(AttestationRegistry, sub_delegation_reduces_depth_and_never_adds_leases) {
+    const auto parent = example("delegation/1");
+
+    const auto same_depth = parent;
+    EXPECT_FALSE(liquid::validate_delegation(same_depth, &parent));
+
+    auto deeper = parent;
+    deeper.attributes[3].value = std::uint64_t{3};
+    EXPECT_FALSE(liquid::validate_delegation(deeper, &parent));
+
+    auto reduced = parent;
+    reduced.attributes[3].value = std::uint64_t{1};
+    EXPECT_TRUE(liquid::validate_delegation(reduced, &parent));
+
+    auto exhausted = parent;
+    exhausted.attributes[3].value = std::uint64_t{0};
+    const auto from_exhausted = exhausted;
+    EXPECT_FALSE(liquid::validate_delegation(from_exhausted, &exhausted));
+
+    auto no_lease_parent = parent;
+    no_lease_parent.attributes[2].value = false;
+    auto leasing = reduced;
+    EXPECT_FALSE(liquid::validate_delegation(leasing, &no_lease_parent));
+    leasing.attributes[2].value = false;
+    EXPECT_TRUE(liquid::validate_delegation(leasing, &no_lease_parent));
+}
+
 TEST(AttestationRegistry, applies_maximum_age_freshness) {
     const auto now = std::chrono::sys_seconds{std::chrono::seconds{2'000'000}};
     auto stale = example("scan_result/1");

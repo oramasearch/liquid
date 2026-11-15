@@ -67,6 +67,8 @@ docs/guides/
     executable user workflows whose marked shell blocks run in CTest
 docs/releases/
     one page per tagged release: what it includes, what it does not, known issues
+docs/security/
+    threat models: must-nevers with where each is enforced, its test, and the defects filed
 third_party/appimage-runtimes/
     vendored, hash-pinned AppImage type 2 runtime inputs and their upstream licence
 ```
