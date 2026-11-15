@@ -14,6 +14,7 @@
 #include <boost/capy/error.hpp>
 #include <boost/capy/ex/this_coro.hpp>
 #include <boost/capy/read.hpp>
+#include <boost/capy/timeout.hpp>
 #include <boost/capy/write.hpp>
 #include <boost/corosio/connect.hpp>
 #include <boost/corosio/openssl_stream.hpp>
@@ -177,7 +178,10 @@ auto decode_chunked(std::string_view input) -> result<std::vector<std::byte>> {
     }
 }
 
-auto parse_response(std::string wire) -> result<response> {
+// `truncated`: the TLS peer closed without close_notify. That is accepted only for a body whose
+// length the response states (content-length or chunked), which the parse then checks; a body
+// that runs to the close could have been cut by an attacker (liquid#395).
+auto parse_response(std::string wire, bool truncated = false) -> result<response> {
     const auto header_end = wire.find("\r\n\r\n");
     if (header_end == std::string::npos) {
         return std::unexpected(client_error(errc::corrupt, "HTTP response header is truncated"));
@@ -196,6 +200,10 @@ auto parse_response(std::string wire) -> result<response> {
         return output;
     }
     const auto length_text = header_value(header_text, "content-length");
+    if (truncated && length_text.empty()) {
+        return std::unexpected(
+            client_error(errc::corrupt, "HTTP response ended without TLS close_notify"));
+    }
     if (!length_text.empty()) {
         auto length = std::uint64_t{};
         const auto parsed =
@@ -241,23 +249,34 @@ auto wire_request(const parsed_url& url, const request_options& options) -> resu
 }
 
 template <boost::capy::Stream Stream>
-auto exchange(Stream& stream, std::string wire) -> runtime::task<response> {
-    auto [write_error, written] =
-        co_await boost::capy::write(stream, boost::capy::const_buffer(wire.data(), wire.size()));
+auto exchange(Stream& stream, std::string wire, const request_options& options)
+    -> runtime::task<response> {
+    auto [write_error, written] = co_await boost::capy::timeout(
+        boost::capy::write(stream, boost::capy::const_buffer(wire.data(), wire.size())),
+        options.read_timeout);
     if (write_error || written != wire.size()) {
         co_return std::unexpected(client_error(
             errc::io, write_error ? write_error.message() : "short HTTP write", "HTTP client"));
     }
+    // At most the answer's bound plus room for its header, within the read deadline (liquid#436).
+    const auto limit = options.maximum_response_bytes + 64U * 1024U;
     auto input = std::string{};
-    auto [read_error, read] =
-        co_await boost::capy::read(stream, boost::capy::string_dynamic_buffer(&input));
+    auto [read_error, read] = co_await boost::capy::timeout(
+        boost::capy::read(stream, boost::capy::string_dynamic_buffer(&input, limit)),
+        options.read_timeout);
     static_cast<void>(read);
-    const auto clean_tls_close = !input.empty() && read_error.message() == "stream truncated";
-    if (read_error && read_error != boost::capy::error::eof && !clean_tls_close) {
+    if (input.size() >= limit) {
+        co_return std::unexpected(client_error(
+            errc::io, "HTTP response is larger than " +
+                          std::to_string(options.maximum_response_bytes) + " bytes",
+            "HTTP client"));
+    }
+    const auto truncated = !input.empty() && read_error.message() == "stream truncated";
+    if (read_error && read_error != boost::capy::error::eof && !truncated) {
         co_return std::unexpected(client_error(errc::io, read_error.message(), "HTTP client"));
     }
     try {
-        co_return parse_response(std::move(input));
+        co_return parse_response(std::move(input), truncated);
     } catch (const std::exception& exception) {
         co_return std::unexpected(
             client_error(errc::corrupt, exception.what(), "HTTP client response"));
@@ -318,7 +337,7 @@ runtime::task<response> request(request_options options) {
                 client_error(errc::unavailable, connect_error.message(), url->host));
         }
         if (!url->tls) {
-            co_return co_await exchange(socket, std::move(*wire));
+            co_return co_await exchange(socket, std::move(*wire), options);
         }
         auto context = boost::corosio::tls_context{};
         context.set_hostname(url->host);
@@ -342,7 +361,7 @@ runtime::task<response> request(request_options options) {
             co_return std::unexpected(
                 client_error(errc::unavailable, handshake_error.message(), url->host));
         }
-        auto output = co_await exchange(secure, std::move(*wire));
+        auto output = co_await exchange(secure, std::move(*wire), options);
         auto [shutdown_error] = co_await secure.shutdown();
         static_cast<void>(shutdown_error);
         co_return output;

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <chrono>
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,6 +28,10 @@ struct request_options {
     // credential, or the answer it is trusted for). It and any request with an Authorization
     // header go over plain http only where plaintext_allowed says so (L-10, liquid#392).
     bool sensitive{false};
+    // Bounds on the answer (L-24, liquid#436 and liquid#395): its size, and how long reading it may
+    // take. A larger or slower answer is an error, never an unbounded buffer or a wait forever.
+    std::size_t maximum_response_bytes{64U * 1024U * 1024U};
+    std::chrono::seconds read_timeout{120};
 };
 
 // Whether plain http may reach `host` with a sensitive request: loopback, a Kubernetes Service

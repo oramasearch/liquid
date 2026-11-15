@@ -83,6 +83,12 @@ when `LIQUID_ALLOW_INSECURE_HTTP=1` is set. Anywhere else it is refused (`invali
 name is resolved. A request with no credential, such as a digest-checked source archive, is not
 affected.
 
+**Every answer is bounded** (L-24, liquid#436 and liquid#395). A response is read for at most
+`read_timeout` (120 s) and at most `maximum_response_bytes` (64 MiB) of body, plus its header;
+past either it is an error. A TLS peer that closes without `close_notify` is accepted only when the
+response states its length (`Content-Length` or chunked), which the parse checks. A body that runs
+to the close could have been cut short, so it is `corrupt`.
+
 Lake responses use `{ok, value}` or `{ok: false, error: {code, message, path}}`. The message is
 preserved and `path` becomes `error::context`.
 
