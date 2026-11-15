@@ -271,12 +271,16 @@ class decoder {
         return value{std::move(result)};
     }
 
+    static constexpr std::size_t reserve_cap = 1024;
+
     auto read_array(std::uint64_t length) -> result<value> {
         if (length > input_.size() - position_) {
             return std::unexpected(failure("array length exceeds input"));
         }
         auto result = value::array{};
-        result.reserve(static_cast<std::size_t>(length));
+        // A length is bounded by the bytes left, but each item is a value many times a byte's
+        // size: reserve a small amount and let the vector grow as items decode (liquid#404).
+        result.reserve(std::min<std::size_t>(static_cast<std::size_t>(length), reserve_cap));
         for (std::uint64_t i = 0; i < length; ++i) {
             auto item = read();
             if (!item)
@@ -291,7 +295,7 @@ class decoder {
             return std::unexpected(failure("map length exceeds input"));
         }
         auto result = value::map{};
-        result.reserve(static_cast<std::size_t>(length));
+        result.reserve(std::min<std::size_t>(static_cast<std::size_t>(length), reserve_cap));
         auto previous = std::vector<std::byte>{};
         for (std::uint64_t i = 0; i < length; ++i) {
             const auto start = position_;

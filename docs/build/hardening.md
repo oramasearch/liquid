@@ -96,7 +96,7 @@ Each harness is `build-fuzz/fuzz/liquid-fuzz-<name>`:
 | `sync` | The sync wire framing: metadata document, object list, pack frames. |
 | `objects` | Object records: blob, tree, change, conflict, repository, attestation, action, result, action index, build trace, SBOM, ABI, execution schedule. |
 | `drip` | The drip journal record and the signed drip body history verification reads. |
-| `cbor` | Canonical CBOR, with a round-trip property. |
+| `cbor` | Canonical CBOR, with a round-trip property. The decoder nests at most 128 levels, and reserves at most 1,024 items for an array or map whatever length it states, growing as items decode (liquid#431, liquid#404). |
 | `identity` | Identity documents (with signature verification), signatures, chains across rotations, scan attestations. |
 | `http1` | The Boost.HTTP request parser as liquid's servers configure it, fed in pieces; the client's response parser and chunked decoding. |
 | `http2` | HTTP/2 frames, HPACK blocks over one dynamic table, Huffman strings, gRPC framing and status. |
