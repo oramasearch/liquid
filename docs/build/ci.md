@@ -229,9 +229,11 @@ The image's inputs are pinned (lake#1003). `ubuntu:24.04` is named by its multi-
 digest (`sha256:2198e4c6…`), and the CMake 3.31.5 installer is checked against the SHA-256 Kitware
 publishes for each architecture before it runs. The REAPI generator image (`tests/reapi/Dockerfile`)
 pins `python:3.13.7-slim-bookworm` the same way (`sha256:adafcc17…`), beside the commits it already
-pins for its proto sources. Not pinned: the LLVM apt script (`llvm.sh` installs packages signed by a
-key fetched from the same host, so a hash of the script alone would not help) and the Ubuntu and
-Debian `apt-get install` packages, which come from the archive's current state. To move a pin, read
+pins for its proto sources. clang-19 comes from the apt.llvm.org noble channel added directly, not
+by running `llvm.sh`: its signing key is trusted only when the key's fingerprint is
+`6084F3CF814B57C1CF12EFD515CF4D18AF4F7421`, and apt checks every package against it. Not pinned:
+the Ubuntu, Debian and LLVM package *versions*, which come from each archive's current state, signed
+by its key. To move a pin, read
 the new value without building and change it in a reviewed commit:
 
 ```sh
