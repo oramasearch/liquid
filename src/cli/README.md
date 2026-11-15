@@ -212,7 +212,9 @@ the public symbol record without inspecting private repository storage.
 `log.cpp` retains the repository-history form of `log` and adds the transparency verification
 subcommands. It decodes only caller-supplied base64url attestation bytes, opens repository state
 through the public API, and uses the public transparency source and client; persistence remains
-inside libliquid.
+inside libliquid. Every verifying subcommand loads the log's pin with `load_log_trust` and refuses
+without one; `log trust` shows the log's claimed key and witnesses and pins them only with
+`--confirm <fingerprint>` (liquid #389). `verify.cpp` loads the same pin for `verify --log`.
 `symbols.cpp` detects the language from the public registry's extension table, uses the compiler
 frontend when it supports that language, falls back to the locked tree-sitter grammar, and presents
 the public symbol record without inspecting private repository storage. `version --json` includes

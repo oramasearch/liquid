@@ -109,10 +109,18 @@ auto verify_log_inclusion(const std::string& url, const liquid::digest& identifi
     if (!encoded) {
         return std::unexpected(encoded.error());
     }
-    auto source = liquid::transparency::http_log_source{url};
-    auto client = liquid::transparency::log_client{source};
-    auto checked =
-        liquid::runtime::block_on(client.verify_inclusion(*repository, std::move(*encoded)));
+    auto source = liquid::transparency::http_log_source::create(url);
+    if (!source) {
+        return std::unexpected(source.error());
+    }
+    // The log's key and witness policy come from the local pin, never from the log (liquid#389).
+    auto trust = liquid::runtime::block_on(liquid::transparency::load_log_trust(url));
+    if (!trust) {
+        return std::unexpected(trust.error());
+    }
+    auto client = liquid::transparency::log_client{*source};
+    auto checked = liquid::runtime::block_on(
+        client.verify_inclusion(*repository, std::move(*encoded), *trust));
     if (!checked) {
         return std::unexpected(checked.error());
     }

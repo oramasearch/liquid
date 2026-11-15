@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify <log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> <identity>
+liquid log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify <log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> <identity> | log trust <log-url> [--confirm <fingerprint>]
 ```
 
 ## Description
 
-Show repository history, verify timestamp or transparency-log evidence, and scan log identities.
+Show repository history, verify timestamp or transparency-log evidence against the log's pin in $LIQUID_HOME/trust/transparency/, scan log identities, and pin a log.
 
 ## Options
 
@@ -19,6 +19,7 @@ Show repository history, verify timestamp or transparency-log evidence, and scan
 | `--ops` | — | Show signed drips and operation metadata. | false |
 | `--json` | — | Write stable JSON instead of text. | false |
 | `--timestamps` | — | Verify timestamp evidence after the verify subcommand. | false |
+| `--confirm` | `<fingerprint>` | Pin the log only if its key and witness policy match this fingerprint. | none |
 
 ## Availability
 

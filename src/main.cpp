@@ -163,6 +163,10 @@ constexpr auto flags_log = std::to_array<flag>({
     {"--ops", {}, "Show signed drips and operation metadata.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
     {"--timestamps", {}, "Verify timestamp evidence after the verify subcommand.", "false"},
+    {"--confirm",
+     "<fingerprint>",
+     "Pin the log only if its key and witness policy match this fingerprint.",
+     "none"},
 });
 constexpr auto flags_atomic = std::to_array<flag>({
     {"--atomic", {}, "Refuse every reference update when any update is refused.", "false"},
@@ -704,12 +708,12 @@ constexpr auto commands = std::to_array<command>({
     {"log",
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify "
      "<log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> "
-     "<identity>",
+     "<identity> | log trust <log-url> [--confirm <fingerprint>]",
      "show changes and drips, or verify timestamps and the transparency log",
      "available",
      flags_log,
-     "Show repository history, verify timestamp or transparency-log evidence, and scan log "
-     "identities.",
+     "Show repository history, verify timestamp or transparency-log evidence against the log's "
+     "pin in $LIQUID_HOME/trust/transparency/, scan log identities, and pin a log.",
      "liquid log verify https://log.example.invalid <attestation-base64url>",
      normal_exit,
      argument_policy::ordinary,

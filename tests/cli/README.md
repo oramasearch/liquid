@@ -18,8 +18,10 @@ outside the public `liquid/` header tree or the CLI's own metadata header. The `
 cache.
 
 `verify_log.cpp` uses the CLI verification handler with a completed signed reproducibility report
-and a loopback HTTP log fixture. It requires valid inclusion, rejects missing, tampered, and
-unavailable proofs, and confirms that omitting `--log` retains local-only verification.
+and a loopback HTTP log fixture. It refuses the log until it is pinned in
+`$LIQUID_HOME/trust/transparency/`, then requires valid inclusion, rejects a pin whose witness
+threshold the log cannot meet, rejects missing, tampered, and unavailable proofs, and confirms that
+omitting `--log` retains local-only verification (liquid #389).
 The target compiles the private attestation encoder and its canonical CBOR dependency directly so
 the same fixture works with hidden symbols in shared-library builds.
 `verify-log-guide.cmake` reads the transparency guide's all-actions invocation and requires the
@@ -107,7 +109,8 @@ universe diagnostics in text/JSON modes, and an exact attributed contradiction n
 bytes, OCI/RPM/APK output, Debian source changes, and explicit unsupported-input errors. Its
 public-API fixture records results in a separate build repository to preserve result-ID and
 producing-install-tree behavior, including a checkout without ordinary repository state.
-`log-url.cmake` checks malformed schemes, missing hosts, and invalid ports through `log scan`,
-`log consistency`, and `log verify`, requiring exit 2 and specific HTTP/HTTPS diagnostics.
+`log-url.cmake` checks malformed schemes, missing hosts, invalid ports, and plain `http://` to a
+host that is not loopback through `log scan`, `log consistency`, `log verify`, and `log trust`,
+requiring exit 2 and specific HTTP/HTTPS diagnostics.
 It also runs the `HttpLogSource` API cases. The existing offline runner denies networking
 on macOS and Linux; no repository or server is required.

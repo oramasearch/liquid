@@ -37,7 +37,7 @@ endif()
 message(STATUS "${api_output}")
 
 function(require_invalid_url url diagnostic)
-  foreach(verb IN ITEMS scan consistency verify)
+  foreach(verb IN ITEMS scan consistency verify trust)
     set(arguments log "${verb}" "${url}")
     if(verb STREQUAL "scan")
       list(APPEND arguments taap:1:ed25519:example)
@@ -73,4 +73,7 @@ foreach(url IN ITEMS http://127.0.0.1: https://[::1]: http://127.0.0.1:http
     https://127.0.0.1:443x http://127.0.0.1:0 https://127.0.0.1:65536
     http://127.0.0.1:-1 http://127.0.0.1:+80 http://127.0.0.1:999999999999999999999999)
   require_invalid_url("${url}" "port")
+endforeach()
+foreach(url IN ITEMS http://lake.example.invalid http://10.0.0.1:8080/log)
+  require_invalid_url("${url}" "loopback")
 endforeach()

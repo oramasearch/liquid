@@ -4,9 +4,11 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "liquid/attestation.hpp"
@@ -68,10 +70,42 @@ struct LIQUID_EXPORT log_configuration {
     std::uint64_t witness_threshold{};
 };
 
+/// The trust pin for one transparency log: the log's Ed25519 key, the witnesses whose
+/// cosignatures count, and how many distinct ones a checkpoint needs. It comes from the caller's
+/// own configuration, never from the log, a repository, or a sync peer (liquid#389).
 struct LIQUID_EXPORT log_trust {
     actor identity;
     log_configuration configuration;
 };
+
+/// Refuses a pin that cannot be used: a key other than a 32-byte Ed25519 key under a
+/// `taap:1:ed25519:` identifier, a witness without an endpoint or with a repeated key, or a
+/// threshold larger than the number of pinned witnesses.
+[[nodiscard]] LIQUID_EXPORT result<void> validate_log_trust(const log_trust& trust);
+
+/// The file name, under `$LIQUID_HOME/trust/transparency/`, that holds the pin for `log_url`.
+/// The URL is validated as `http_log_source::create` does.
+[[nodiscard]] LIQUID_EXPORT result<std::string> log_trust_file_name(std::string_view log_url);
+
+/// `$LIQUID_HOME/trust/transparency/<log_trust_file_name(log_url)>`.
+[[nodiscard]] LIQUID_EXPORT result<std::filesystem::path> log_trust_path(std::string_view log_url);
+
+/// Parses the line format of a pin file. The `log` line must name `log_url`.
+[[nodiscard]] LIQUID_EXPORT result<log_trust> parse_log_trust(std::string_view log_url,
+                                                              std::string_view text);
+
+/// Writes `trust` in the pin file's line format, the form `parse_log_trust` reads.
+[[nodiscard]] LIQUID_EXPORT result<std::string> format_log_trust(std::string_view log_url,
+                                                                 const log_trust& trust);
+
+/// Reads the pin for `log_url` from `$LIQUID_HOME/trust/transparency/`. A missing file is
+/// `errc::not_configured`, and its message names the file to create.
+[[nodiscard]] LIQUID_EXPORT runtime::task<log_trust> load_log_trust(std::string log_url);
+
+/// Writes a new pin file for `log_url`. An existing pin is never replaced: it is
+/// `errc::already_exists`, and the operator removes the file to re-pin.
+[[nodiscard]] LIQUID_EXPORT runtime::task<void> save_log_trust(std::string log_url,
+                                                               log_trust trust);
 
 struct LIQUID_EXPORT checkpoint_signature {
     std::string signer;
@@ -150,6 +184,8 @@ public:
     virtual ~log_source() = default;
 
     [[nodiscard]] virtual std::string name() const = 0;
+    /// What the log says its key and witness policy are. Untrusted: verification never reads
+    /// them. Only `liquid log trust` shows them, for an operator to confirm before pinning.
     [[nodiscard]] virtual runtime::task<actor> identity() = 0;
     [[nodiscard]] virtual runtime::task<log_configuration> configuration() = 0;
     [[nodiscard]] virtual runtime::task<checkpoint> current_checkpoint() = 0;
@@ -212,7 +248,8 @@ public:
     log_client(const log_client&) = delete;
     log_client& operator=(const log_client&) = delete;
 
-    [[nodiscard]] runtime::task<checkpoint> current_checkpoint();
+    // Every verifying operation takes the caller's pinned `log_trust`. None reads the log's own
+    // identity or configuration endpoints (liquid#389).
     [[nodiscard]] runtime::task<checkpoint> current_checkpoint(const log_trust& trust);
     [[nodiscard]] runtime::task<void> verify_tiles(checkpoint value);
     [[nodiscard]] runtime::task<checkpoint> verify_inclusion(std::vector<std::byte> attestation,
@@ -220,11 +257,13 @@ public:
     [[nodiscard]] runtime::task<checkpoint_trust>
     verify_inclusion(repository& destination,
                      std::vector<std::byte> attestation,
+                     const log_trust& trust,
                      bootstrap_policy policy = bootstrap_policy::accept_with_warning);
     [[nodiscard]] runtime::task<checkpoint_trust>
     verify_consistency(repository& destination,
+                       const log_trust& trust,
                        bootstrap_policy policy = bootstrap_policy::accept_with_warning);
-    [[nodiscard]] runtime::task<identity_scan> scan(std::string identity);
+    [[nodiscard]] runtime::task<identity_scan> scan(std::string identity, const log_trust& trust);
 
 private:
     struct impl;
