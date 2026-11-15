@@ -531,7 +531,7 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
   identity until `LIQUID_IDENTITY_KEY_CUSTODY` is set (#402); `file` is the explicit opt-in for
   file-permission-only protection. Linux has no Secret Service custody (no D-Bus client), and the
   macOS Keychain custody has no automated test.
-- Delegated sessions do not check revocation or expiry (#514), do not bind a delegation to its
+- Delegated sessions do not bind a delegation to its
   agent, dispatcher or repository (#515), trust stored session authority on reopen (#516), and
   accept sub-delegations that broaden scopes (#517); see
   [`../security/delegation-threat-model.md`](../security/delegation-threat-model.md).

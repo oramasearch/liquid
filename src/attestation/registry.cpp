@@ -3,7 +3,14 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <ranges>
+#include <string>
+#include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 
@@ -141,7 +148,8 @@ attestation_profile_registry::attestation_profile_registry()
                          field("may_lease", attestation_field_type::boolean, true),
                          field("depth_remaining", attestation_field_type::unsigned_integer, true),
                          field("model", attestation_field_type::text, false),
-                         field("dispatcher", attestation_field_type::text, true)},
+                         field("dispatcher", attestation_field_type::text, true),
+                         field("not_after", attestation_field_type::unsigned_integer, true)},
                         {attestation_subject_kind::actor},
                         attestation_status_kind::revocable,
                         std::chrono::hours{1}),
@@ -536,6 +544,83 @@ result<void> validate_delegation(const attestation& value, const attestation* pa
         return std::unexpected(invalid("sub-delegation does not reduce depth_remaining"));
     }
     return {};
+}
+
+result<void> check_delegation_window(const attestation& value, std::chrono::sys_seconds now) {
+    const auto found = std::ranges::find(
+        value.attributes, std::string_view{"not_after"}, &attestation_attribute::name);
+    const auto* seconds =
+        found == value.attributes.end() ? nullptr : std::get_if<std::uint64_t>(&found->value);
+    if (!seconds) {
+        return std::unexpected(invalid("delegation has no not_after"));
+    }
+    constexpr auto latest = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    if (*seconds > latest) {
+        return std::unexpected(invalid("delegation not_after is out of range"));
+    }
+    const auto not_after =
+        std::chrono::sys_seconds{std::chrono::seconds{static_cast<std::int64_t>(*seconds)}};
+    if (not_after <= value.at) {
+        return std::unexpected(invalid("delegation not_after is not after its issue time"));
+    }
+    if (not_after - value.at > delegation_maximum_lifetime) {
+        return std::unexpected(invalid("delegation lifetime exceeds the maximum"));
+    }
+    if (value.at > now + delegation_clock_skew) {
+        return std::unexpected(
+            error{errc::unauthorized, "delegation is issued in the future", "delegation/1"});
+    }
+    if (now >= not_after) {
+        return std::unexpected(error{errc::unauthorized, "delegation has expired", "delegation/1"});
+    }
+    return {};
+}
+
+delegation_status_resolver local_delegation_status() {
+    return [](const attestation&, const digest& id) -> result<attestation_status> {
+        const auto path = trust_file_path("delegation-revocations");
+        const auto checked_at =
+            std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        auto code = std::error_code{};
+        if (!std::filesystem::exists(path, code)) {
+            if (code) {
+                return std::unexpected(
+                    error{errc::io, "cannot read delegation revocations", path.string()});
+            }
+            return attestation_status{.revoked = false, .checked_at = checked_at};
+        }
+        auto input = std::ifstream{path};
+        if (!input) {
+            return std::unexpected(
+                error{errc::io, "cannot read delegation revocations", path.string()});
+        }
+        auto revoked = false;
+        auto line = std::string{};
+        while (std::getline(input, line)) {
+            auto entry = std::string_view{line};
+            if (const auto comment = entry.find('#'); comment != std::string_view::npos) {
+                entry = entry.substr(0, comment);
+            }
+            constexpr auto blank = std::string_view{" \t\r\n"};
+            const auto first = entry.find_first_not_of(blank);
+            if (first == std::string_view::npos) {
+                continue;
+            }
+            entry = entry.substr(first, entry.find_last_not_of(blank) - first + 1);
+            auto listed = parse_digest(entry);
+            if (!listed) {
+                return std::unexpected(error{errc::invalid_argument,
+                                             "delegation revocation is not a digest",
+                                             path.string()});
+            }
+            revoked = revoked || (listed->alg == id.alg && listed->bytes == id.bytes);
+        }
+        if (input.bad()) {
+            return std::unexpected(
+                error{errc::io, "cannot read delegation revocations", path.string()});
+        }
+        return attestation_status{.revoked = revoked, .checked_at = checked_at};
+    };
 }
 
 } // namespace liquid

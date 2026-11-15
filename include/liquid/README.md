@@ -44,6 +44,10 @@ whole-repository copy or verify between two open shared stores (liquid #328).
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
 claims, exclusive checkout rules and records, transient presence, and epoch compaction reports.
+`session_options::status` and `session_open_options::status` carry the required
+`delegation_status_resolver` (`attestation.hpp`), asked at fork and before every lease and publish
+(liquid #514); `attestation.hpp` also defines `check_delegation_window` and
+`local_delegation_status`.
 `repository.hpp` exposes lock acquisition, holder-only release, configuration, enumeration, and
 the optional connected authorization callback. `daemon.hpp` exposes lock requests and complete
 lock-set delivery to local targets.

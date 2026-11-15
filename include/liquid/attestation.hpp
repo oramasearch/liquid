@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -195,6 +196,35 @@ verify_attestation(const attestation& value, const attestation_verification_opti
 [[nodiscard]] LIQUID_EXPORT result<bool> verify(const attestation& value);
 [[nodiscard]] LIQUID_EXPORT result<void> validate_delegation(const attestation& value,
                                                              const attestation* parent = nullptr);
+
+// The validity window of a `delegation/1` (liquid#514). Every delegation carries `not_after`, in
+// seconds since the Unix epoch. A delegation is valid only when `at` is no later than `now` plus
+// `delegation_clock_skew`, `not_after` is after `at` and at most `delegation_maximum_lifetime`
+// after it, and `now` is before `not_after`.
+inline constexpr std::chrono::seconds delegation_maximum_lifetime{std::chrono::days{30}};
+inline constexpr std::chrono::seconds delegation_clock_skew{std::chrono::minutes{5}};
+
+// Refuses a delegation outside its validity window: `errc::unauthorized` when it is expired or
+// issued in the future, `errc::invalid_argument` when `not_after` is missing or the window is
+// longer than `delegation_maximum_lifetime`.
+[[nodiscard]] LIQUID_EXPORT result<void> check_delegation_window(const attestation& value,
+                                                                 std::chrono::sys_seconds now);
+
+// Answers whether a delegation is revoked, at the time it is asked (liquid#514). `id` is the
+// digest of the delegation's encoded record, the id `liquid session start` names. A session asks
+// for every delegation it acts on when it is forked, when it is opened, and before every lease and
+// publish. An empty resolver, an error, a revoked status or a status older than the profile's
+// status age (one hour for `delegation/1`) refuses: there is no default that lets a delegation
+// through unchecked.
+using delegation_status_resolver =
+    std::function<result<attestation_status>(const attestation& delegation, const digest& id)>;
+
+// The local revocation list: a resolver that reads `$LIQUID_HOME/trust/delegation-revocations`
+// (`trust_file_path`) each time it is asked. The file holds one delegation digest per line; blank
+// lines and text after `#` are ignored. A digest listed there is revoked; a missing file means no
+// local revocations. A line that is not a digest, or a file that cannot be read, is an error, so a
+// damaged list refuses every delegation instead of revoking none. The status is checked now.
+[[nodiscard]] LIQUID_EXPORT delegation_status_resolver local_delegation_status();
 [[nodiscard]] LIQUID_EXPORT runtime::task<digest>
 attest_image(std::string image_reference,
              digest tree,

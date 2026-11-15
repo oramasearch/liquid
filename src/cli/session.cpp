@@ -31,6 +31,12 @@ auto usage() -> int {
     return 2;
 }
 
+// Delegation status for every session command: this machine's revocation list
+// (`$LIQUID_HOME/trust/delegation-revocations`), read again on each use (liquid#514).
+auto revocations() -> liquid::session_open_options {
+    return {.status = liquid::local_delegation_status()};
+}
+
 auto open_repository() -> liquid::result<liquid::repository> {
     return liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
 }
@@ -76,8 +82,10 @@ auto start(liquid::repository& repository, std::string_view delegation_text) -> 
     if (!signer) {
         return fail(signer.error());
     }
-    auto created = liquid::runtime::block_on(repository.fork_session(
-        {.actor = signer->identity(), .delegation = std::move(*authority)}));
+    auto created = liquid::runtime::block_on(
+        repository.fork_session({.actor = signer->identity(),
+                                 .delegation = std::move(*authority),
+                                 .status = liquid::local_delegation_status()}));
     if (!created) {
         return fail(created.error());
     }
@@ -97,7 +105,7 @@ auto write(liquid::repository& repository, int argc, char** argv) -> int {
     if (!contents) {
         return fail(contents.error());
     }
-    auto selected = liquid::runtime::block_on(repository.open_session(*id));
+    auto selected = liquid::runtime::block_on(repository.open_session(*id, revocations()));
     if (!selected) {
         return fail(selected.error());
     }
@@ -124,7 +132,7 @@ auto publish(liquid::repository& repository, int argc, char** argv) -> int {
     if (!id) {
         return fail(id.error());
     }
-    auto selected = liquid::runtime::block_on(repository.open_session(*id));
+    auto selected = liquid::runtime::block_on(repository.open_session(*id, revocations()));
     if (!selected) {
         return fail(selected.error());
     }
@@ -141,7 +149,7 @@ auto discard(liquid::repository& repository, std::string_view id_text) -> int {
     if (!id) {
         return fail(id.error());
     }
-    auto selected = liquid::runtime::block_on(repository.open_session(*id));
+    auto selected = liquid::runtime::block_on(repository.open_session(*id, revocations()));
     if (!selected) {
         return fail(selected.error());
     }

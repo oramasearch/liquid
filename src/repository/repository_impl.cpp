@@ -8662,6 +8662,7 @@ struct session::impl {
     bool may_publish{};
     bool may_lease{};
     bool active{true};
+    delegation_status_resolver status;
 };
 
 namespace {
@@ -8732,6 +8733,41 @@ auto session_path_allowed(std::span<const std::string> scopes, std::string_view 
                                [&](const auto& scope) { return glob_matches(scope, path); });
 }
 
+// Whether `delegation` may be acted on now (liquid#514): inside its validity window, revoked by
+// nothing the session's resolver reports, correctly signed, and issued by `principal`. Asked when
+// a session is forked and again before every lease and publish, so a revocation or expiry stops a
+// session that is already running. An empty resolver, or one that cannot answer, refuses.
+auto check_delegation_now(const attestation& delegation,
+                          const digest& id,
+                          std::string_view principal,
+                          const delegation_status_resolver& status) -> result<void> {
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    auto window = check_delegation_window(delegation, now);
+    if (!window) {
+        return std::unexpected(window.error());
+    }
+    if (!status) {
+        return std::unexpected(
+            failure(errc::unauthorized, "delegation status is required", "delegation/1"));
+    }
+    auto answered = status(delegation, id);
+    if (!answered) {
+        return std::unexpected(
+            failure(errc::unauthorized, answered.error().message, "delegation status"));
+    }
+    auto verified = verify_attestation(delegation, {.now = now, .status = *answered});
+    if (!verified || !verified->verified) {
+        return std::unexpected(failure(errc::unauthorized,
+                                       verified ? verified->reason : verified.error().message,
+                                       "delegation/1"));
+    }
+    if (delegation.issuer.taap_id != principal) {
+        return std::unexpected(
+            failure(errc::unauthorized, "delegation was not issued by this principal"));
+    }
+    return {};
+}
+
 } // namespace
 
 runtime::task<session> repository::fork_session(session_options options) {
@@ -8746,18 +8782,19 @@ runtime::task<session> repository::fork_session(session_options options) {
     if (!delegation_valid) {
         co_return std::unexpected(delegation_valid.error());
     }
-    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    auto verified = verify_attestation(
-        options.delegation,
-        {.now = now, .status = attestation_status{.revoked = false, .checked_at = now}});
-    if (!verified || !verified->verified) {
-        co_return std::unexpected(failure(errc::unauthorized,
-                                          verified ? verified->reason : verified.error().message,
-                                          "delegation/1"));
+    auto encoded_delegation = encode_attestation(options.delegation);
+    if (!encoded_delegation) {
+        co_return std::unexpected(encoded_delegation.error());
     }
-    if (options.delegation.issuer.taap_id != impl_->signing_key.identity().taap_id) {
-        co_return std::unexpected(
-            failure(errc::unauthorized, "delegation was not issued by this principal"));
+    auto delegation_id = co_await repository_detail::store_access::put_plain(
+        impl_->objects, std::move(*encoded_delegation));
+    if (!delegation_id) {
+        co_return std::unexpected(delegation_id.error());
+    }
+    auto still_valid = check_delegation_now(
+        options.delegation, *delegation_id, impl_->signing_key.identity().taap_id, options.status);
+    if (!still_valid) {
+        co_return std::unexpected(still_valid.error());
     }
     const auto* scopes =
         std::get_if<std::vector<std::string>>(delegation_attribute(options.delegation, "scopes"));
@@ -8772,15 +8809,6 @@ runtime::task<session> repository::fork_session(session_options options) {
     const auto delegated_scopes = *scopes;
     const auto delegated_publish = *may_publish;
     const auto delegated_lease = *may_lease;
-    auto encoded_delegation = encode_attestation(options.delegation);
-    if (!encoded_delegation) {
-        co_return std::unexpected(encoded_delegation.error());
-    }
-    auto delegation_id = co_await repository_detail::store_access::put_plain(
-        impl_->objects, std::move(*encoded_delegation));
-    if (!delegation_id) {
-        co_return std::unexpected(delegation_id.error());
-    }
     auto encoded = encode_repository_document(impl_->current);
     if (!encoded) {
         co_return std::unexpected(encoded.error());
@@ -8839,6 +8867,7 @@ runtime::task<session> repository::fork_session(session_options options) {
     implementation->scopes = delegated_scopes;
     implementation->may_publish = delegated_publish;
     implementation->may_lease = delegated_lease;
+    implementation->status = std::move(options.status);
     auto metadata = encode_stored_session({.agent = implementation->agent,
                                            .delegation = implementation->delegation,
                                            .base_tree = implementation->base_tree,
@@ -8855,7 +8884,7 @@ runtime::task<session> repository::fork_session(session_options options) {
     co_return session{std::move(implementation)};
 }
 
-runtime::task<session> repository::open_session(session_id id) {
+runtime::task<session> repository::open_session(session_id id, session_open_options options) {
     if (!impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
@@ -8933,6 +8962,7 @@ runtime::task<session> repository::open_session(session_id id) {
     implementation->scopes = delegated_scopes;
     implementation->may_publish = delegated_publish;
     implementation->may_lease = delegated_lease;
+    implementation->status = std::move(options.status);
     co_return session{std::move(implementation)};
 }
 
@@ -9003,6 +9033,13 @@ runtime::task<void> session::lease(lease_claim claim, std::chrono::seconds ttl) 
         co_return std::unexpected(
             failure(errc::unauthorized, "delegation does not permit leases", claim.path));
     }
+    auto still_valid = check_delegation_now(impl_->delegation,
+                                            impl_->delegation_id,
+                                            impl_->shared->impl_->signing_key.identity().taap_id,
+                                            impl_->status);
+    if (!still_valid) {
+        co_return std::unexpected(still_valid.error());
+    }
     if (!session_path_allowed(impl_->scopes, claim.path)) {
         co_return std::unexpected(
             failure(errc::unauthorized, "lease is outside delegation scopes", claim.path));
@@ -9051,6 +9088,13 @@ runtime::task<publish_report> session::publish(publish_options options) {
     if (!impl_->may_publish) {
         co_return std::unexpected(
             failure(errc::unauthorized, "delegation does not permit publishing"));
+    }
+    auto still_valid = check_delegation_now(impl_->delegation,
+                                            impl_->delegation_id,
+                                            impl_->shared->impl_->signing_key.identity().taap_id,
+                                            impl_->status);
+    if (!still_valid) {
+        co_return std::unexpected(still_valid.error());
     }
     auto private_tree = co_await impl_->private_replica.root_digest();
     if (!private_tree) {

@@ -74,17 +74,21 @@ liquid::result<liquid::attestation> delegation(const liquid::actor& agent) {
         return std::unexpected(subject.error());
     }
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    auto value = liquid::attestation{.subject = *subject,
-                                     .profile = "delegation/1",
-                                     .at = now,
-                                     .issuer = signer->identity(),
-                                     .subject_kind = liquid::attestation_subject_kind::actor,
-                                     .attributes = {{"scopes", std::vector<std::string>{"**"}},
-                                                    {"may_publish", true},
-                                                    {"may_lease", true},
-                                                    {"depth_remaining", std::uint64_t{1}},
-                                                    {"model", "test-agent"},
-                                                    {"dispatcher", signer->identity().taap_id}}};
+    auto value = liquid::attestation{
+        .subject = *subject,
+        .profile = "delegation/1",
+        .at = now,
+        .issuer = signer->identity(),
+        .subject_kind = liquid::attestation_subject_kind::actor,
+        .attributes = {{"scopes", std::vector<std::string>{"**"}},
+                       {"may_publish", true},
+                       {"may_lease", true},
+                       {"depth_remaining", std::uint64_t{1}},
+                       {"model", "test-agent"},
+                       {"dispatcher", signer->identity().taap_id},
+                       {"not_after",
+                        static_cast<std::uint64_t>(
+                            (now + std::chrono::hours{1}).time_since_epoch().count())}}};
     auto body = liquid::objects::encode_attestation_body(value);
     if (!body) {
         return std::unexpected(body.error());
@@ -165,7 +169,9 @@ expected_repository build_source(liquid::store& objects, const std::filesystem::
         EXPECT_TRUE(authority) << message(authority.error());
         if (authority) {
             auto forked = liquid::runtime::block_on(
-                repository.fork_session({.actor = agent->identity(), .delegation = *authority}));
+                repository.fork_session({.actor = agent->identity(),
+                                         .delegation = *authority,
+                                         .status = liquid::local_delegation_status()}));
             EXPECT_TRUE(forked) << message(forked.error());
             if (forked) {
                 expected.session = forked->id();
@@ -275,7 +281,8 @@ void check_destination(liquid::store& objects, const expected_repository& expect
     ASSERT_TRUE(cursor->has_value());
     EXPECT_EQ((*cursor)->token, "7:0");
     if (!expected.session_file.empty()) {
-        auto session = liquid::runtime::block_on(opened->open_session(expected.session));
+        auto session = liquid::runtime::block_on(
+            opened->open_session(expected.session, {.status = liquid::local_delegation_status()}));
         ASSERT_TRUE(session) << message(session.error());
         auto read = liquid::runtime::block_on(session->read("drafts/session.txt"));
         ASSERT_TRUE(read) << message(read.error());

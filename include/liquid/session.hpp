@@ -136,6 +136,15 @@ struct LIQUID_EXPORT line_attribution {
 struct LIQUID_EXPORT session_options {
     liquid::actor actor;
     attestation delegation;
+    // Whether the delegation is revoked (liquid#514). Required: an empty resolver refuses the
+    // session. It is kept with the session and asked again before every lease and publish.
+    // `local_delegation_status()` reads this machine's revocation list.
+    delegation_status_resolver status;
+};
+
+struct LIQUID_EXPORT session_open_options {
+    // As `session_options::status`, for a session reopened by id. Required.
+    delegation_status_resolver status;
 };
 
 struct LIQUID_EXPORT publish_options {
