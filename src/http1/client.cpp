@@ -36,6 +36,25 @@ auto client_error(errc code, std::string message, std::string context = {}) -> e
     return {code, std::move(message), std::move(context)};
 }
 
+} // namespace
+
+auto plaintext_allowed(std::string_view host) -> bool {
+    auto lower = std::string{host};
+    std::ranges::transform(lower, lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (lower == "localhost" || lower == "::1" || lower.starts_with("127.")) {
+        return true;
+    }
+    if (lower.ends_with(".svc") || lower.ends_with(".svc.cluster.local")) {
+        return true;
+    }
+    const auto* allowed = std::getenv("LIQUID_ALLOW_INSECURE_HTTP");
+    return allowed != nullptr && std::string_view{allowed} == "1";
+}
+
+namespace {
+
 auto parse_url(std::string_view input) -> result<parsed_url> {
     auto output = parsed_url{};
     if (input.starts_with("https://")) {
@@ -259,6 +278,25 @@ runtime::task<response> request(request_options options) {
     auto url = parse_url(options.url);
     if (!url) {
         co_return std::unexpected(url.error());
+    }
+    // Plain http only where no network attacker sits between (L-10, liquid#392): this machine,
+    // a Kubernetes Service inside the cluster, or anywhere LIQUID_ALLOW_INSECURE_HTTP=1 allows.
+    // Elsewhere it would carry a bearer, a custody data key or a sealing key in the clear, so it
+    // is refused before anything is sent.
+    const bool authorized = std::ranges::any_of(options.headers, [](const auto& header) {
+        auto name = header.first;
+        std::ranges::transform(name, name.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return name == "authorization";
+    });
+    if (!url->tls && (options.sensitive || authorized) && !plaintext_allowed(url->host)) {
+        co_return std::unexpected(client_error(
+            errc::invalid_argument,
+            "refusing plain http to " + url->host +
+                ": use https (plain http is only for loopback, an in-cluster Service, or with "
+                "LIQUID_ALLOW_INSECURE_HTTP=1)",
+            url->host));
     }
     auto wire = wire_request(*url, options);
     if (!wire) {

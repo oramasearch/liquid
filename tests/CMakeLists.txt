@@ -22,6 +22,7 @@ add_executable(liquid-tests
   test_error.cpp
   test_forge.cpp
   test_hash.cpp
+  test_plaintext_http.cpp
   test_hot_update.cpp
   http2/test_codecs.cpp
   test_identity.cpp

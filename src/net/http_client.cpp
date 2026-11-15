@@ -26,6 +26,9 @@ auto perform_request(http_request request) -> runtime::task<http_response> {
         .suffix = std::move(request.target),
         .headers = std::move(headers),
         .body = std::move(request.body),
+        // A Lake API answer is trusted (a sealing key, a custody reply), so it never travels in
+        // the clear off loopback, with or without a bearer (liquid#392).
+        .sensitive = true,
     });
     if (!response) {
         co_return std::unexpected(

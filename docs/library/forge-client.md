@@ -71,8 +71,17 @@ does not assume those capabilities.
 The private HTTP client parses HTTP and HTTPS URLs, resolves and connects on the calling executor,
 validates TLS peers, decodes content-length or chunked responses, and adds
 `Authorization: Bearer <token>` when configured. `SSL_CERT_FILE` selects an explicit trust bundle;
-otherwise platform default trust paths are used. The bearer is a header only: it is never placed in
+otherwise platform default trust paths are used. `SSL_CERT_FILE` *replaces* the trust store, so
+whoever sets it decides which servers are trusted. The bearer is a header only: it is never placed in
 a URL, diagnostic, or command output.
+
+**Plain http only where no network attacker sits between** (L-10, liquid#392). A request that
+carries an `Authorization` header, or is marked sensitive (every Lake API call, so a sealing key or a
+custody reply cannot be swapped, and every custody wrap or unwrap), goes over `http://` only to
+loopback, to a Kubernetes Service inside the cluster (`*.svc`, `*.svc.cluster.local`), or anywhere
+when `LIQUID_ALLOW_INSECURE_HTTP=1` is set. Anywhere else it is refused (`invalid_argument`) before a
+name is resolved. A request with no credential, such as a digest-checked source archive, is not
+affected.
 
 Lake responses use `{ok, value}` or `{ok: false, error: {code, message, path}}`. The message is
 preserved and `path` becomes `error::context`.
