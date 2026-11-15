@@ -90,9 +90,28 @@ on disk.
 `{ key_fingerprint_base32, declared_at, reason? }`: the fingerprint is unpadded uppercase base32
 of SHA-512/256 over the key's canonical public-key object, `declared_at` is an RFC 3339 UTC time,
 and `reason` is optional. A successor may omit the old-key signature only when its own
-`compromised_keys` names the predecessor key. A signature from that key at or after `declared_at`
-is invalid; one made before it is valid but the resulting `verified_identity` reports compromised
-history.
+`compromised_keys` names the predecessor key, and the resulting `verified_identity` reports
+compromised history.
+
+A key named in a compromise declaration verifies **no** signature through `verify`, whatever the
+signature's `signed_at` says (liquid #391). `signed_at` is chosen by the signer, so whoever holds
+the compromised key can set it before `declared_at`; comparing the two, as liquid did before #391,
+let a thief backdate signatures. Such a signature is accepted only by `verify_with_trusted_time`,
+and only when its `signature_timestamp` evidence proves by third-party time that it existed strictly
+before `declared_at`: an RFC 3161 TimeStampToken, or an RFC 4998 evidence record whose initial
+archive timestamp covers it, with a message imprint of SHA-256 over the signature bytes, verified
+by liquid's TSA verifier ([transparency](transparency.md)) against timestamp-authority roots the
+caller supplies. `trusted_signature_time` returns that time. A signature made before the compromise
+without such evidence is refused: re-sign the artifact with the new key, or timestamp signatures
+when they are made. Signatures by a key that was never declared compromised need no evidence.
+
+What is not wired yet: no signing path requests an RFC 3161 token, and no record format (drip,
+change, release approval, attestation) carries one beside its signature, so today every signature
+by a declared-compromised key is refused. The CLI configures no timestamp-authority roots. A
+transparency-log inclusion proof cannot serve as trusted time: liquid's checkpoints carry no
+integrated time. Test: `Identity.BackdatedSignatureByCompromisedKeyIsRefused` (stored and carried
+chain, invalid evidence) and `TransparencyTimestamp.SignatureTrustedTimeComesOnlyFromVerifiedEvidence`
+(the evidence check against the TSA fixture).
 
 Documents are retained as canonical CBOR at
 `$LIQUID_HOME/identity/<identity-fingerprint>/documents/NNN.cbor`; the legacy current-document

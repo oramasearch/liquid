@@ -66,6 +66,12 @@ DER record plus the decoded checkpoint signature value. It requires lake's versi
 one-chain shape and verifies the first token over that signature value. Every later token is
 verified over the complete preserved DER of its immediate `ArchiveTimeStamp` predecessor.
 
+The same two operations date TAAP signatures for compromised keys (liquid #391):
+`liquid::trusted_signature_time` in `liquid/identity.hpp` passes a signature's bytes as the covered
+value and returns the token's (or the initial archive timestamp's) generation time, and
+`verify_with_trusted_time` accepts a signature by a declared-compromised key only when that time is
+strictly before the declaration ([identity.md](identity.md#rotation)).
+
 ## Command line
 
 `liquid log timestamps <log-url>` fetches the current checkpoint and its lake-produced timestamp

@@ -67,6 +67,13 @@ authenticated pusher, never to a record's claimed author (#508).
 double-hashed form is rejected. Proof is independent OpenSSL vectors and protocol-conforming doubles;
 no physical authenticator run exists yet ([`identity.md`](identity.md)).
 
+**Compromised keys (#391).** A key named in a compromise declaration verifies no signature through
+`verify`: its `signed_at` is the signer's own claim and can be backdated. `verify_with_trusted_time`
+accepts one only with an RFC 3161 token or RFC 4998 evidence record over the signature that a
+caller-trusted TSA dates before the declaration. No record format carries such evidence yet, so
+every signature by a declared-compromised key is refused today
+([`identity.md`](identity.md#rotation)).
+
 **Identity key custody (#402).** Every identity file is created owner-only and atomically (mode
 0600 through `open(O_CREAT|O_EXCL|O_NOFOLLOW)`, or an owner-only DACL on Windows, then a rename).
 A new software identity seals its wrapping key under a passphrase (`LIQUID_IDENTITY_PASSPHRASE_FILE`
@@ -603,6 +610,9 @@ Git objects and protobuf. Their first runs found five defects, fixed in the same
   identity that recovered from a compromise without its old key's
   signature is trusted elsewhere only by `liquid identity trust --accept-compromise-rotation`.
   Who may issue a release policy or a hot-update patch is still open (#384, #388).
+- Signatures by a key later declared compromised are refused even when made before the
+  declaration (#391): no signing path requests an RFC 3161 token and no drip, change, approval or
+  attestation record carries one, and the CLI configures no TSA roots.
 - A host without a terminal, a passphrase file or another custody cannot create a software
   identity until `LIQUID_IDENTITY_KEY_CUSTODY` is set (#402); `file` is the explicit opt-in for
   file-permission-only protection. Linux has no Secret Service custody (no D-Bus client), and the

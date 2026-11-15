@@ -276,6 +276,50 @@ TEST(TransparencyTimestamp, RejectsWrongImprintAndNamesUnsupportedDigest) {
     EXPECT_NE(unsupported.error().message.find("SHA-256 required"), std::string::npos);
 }
 
+// The trusted time of a signature comes only from evidence a configured timestamp authority signed
+// over the signature bytes (liquid #391). The fixture's initial archive timestamp covers
+// `checkpoint-signature.bin`, so a signature with those bytes has trusted time
+// 2026-09-05T19:45:21Z, and only that evidence, against those roots, proves it.
+TEST(TransparencyTimestamp, SignatureTrustedTimeComesOnlyFromVerifiedEvidence) {
+    auto signed_value = liquid::signature{};
+    signed_value.bytes = read_bytes(fixture("checkpoint-signature.bin"));
+    signed_value.signed_at = "2000-01-01T00:00:00Z";
+    auto evidence = liquid::signature_timestamp{};
+    evidence.evidence_record = read_bytes(fixture("lake-initial.ers"));
+    evidence.trust = fixture_trust();
+    const auto trusted = liquid::trusted_signature_time(signed_value, evidence);
+    ASSERT_TRUE(trusted) << trusted.error().message;
+    EXPECT_EQ(*trusted, "2026-09-05T19:45:21Z");
+    // A declaration at or before the trusted time leaves the signature after the compromise;
+    // `verify_with_trusted_time` compares the same RFC 3339 strings strictly.
+    EXPECT_FALSE(*trusted < std::string{"2026-09-05T19:45:21Z"});
+    EXPECT_TRUE(*trusted < std::string{"2026-09-05T19:45:22Z"});
+
+    auto renewed = evidence;
+    renewed.evidence_record = read_bytes(fixture("lake-renewed.ers"));
+    const auto renewed_time = liquid::trusted_signature_time(signed_value, renewed);
+    ASSERT_TRUE(renewed_time) << renewed_time.error().message;
+    EXPECT_EQ(*renewed_time, "2026-09-05T19:45:21Z");
+
+    auto other_signature = signed_value;
+    other_signature.bytes.front() ^= std::byte{1};
+    const auto other = liquid::trusted_signature_time(other_signature, evidence);
+    ASSERT_FALSE(other);
+    EXPECT_EQ(other.error().code, liquid::errc::unauthorized);
+
+    auto untrusted = evidence;
+    untrusted.trust = liquid::x509::trust_anchor_set{};
+    const auto no_roots = liquid::trusted_signature_time(signed_value, untrusted);
+    ASSERT_FALSE(no_roots);
+    EXPECT_EQ(no_roots.error().code, liquid::errc::unauthorized);
+
+    auto both = evidence;
+    both.rfc3161_token = {std::byte{0x30}};
+    const auto ambiguous = liquid::trusted_signature_time(signed_value, both);
+    ASSERT_FALSE(ambiguous);
+    EXPECT_EQ(ambiguous.error().code, liquid::errc::invalid_argument);
+}
+
 TEST(TransparencyTimestamp, RejectsCertificateWithoutTimestampPurpose) {
     auto record = read_bytes(fixture("lake-initial.ers"));
     const auto checkpoint_signature = read_bytes(fixture("checkpoint-signature.bin"));
