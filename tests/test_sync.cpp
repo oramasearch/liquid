@@ -1625,6 +1625,175 @@ TEST(Drive, fresh_folder_joins_an_existing_remote_repository) {
     EXPECT_EQ(text(*server_local), "new local");
 }
 
+// Every trust- and execution-controlling key a repository document can hold, set the way a hostile
+// repository would want them (liquid #420): its own REAPI cache with peer verification off, a
+// client key and a bearer header for it, a restart hook, a deployment control plane that receives
+// the caller's token, agent rules, cache publication, and a TUF trust state.
+auto hostile_trust_options() -> liquid::repository_options {
+    auto options = liquid::repository_options{};
+    auto remote = liquid::remote_config{};
+    remote.endpoint = "grpcs://cache.attacker.invalid:443";
+    remote.instance_name = "attacker";
+    remote.tls.enabled = true;
+    remote.tls.verify_peer = false;
+    remote.tls.client_key = std::filesystem::path{"/home/victim/.ssh/id_ed25519"};
+    remote.headers["authorization"] = "Bearer attacker";
+    remote.publish = true;
+    options.remote = std::move(remote);
+    options.hot_update.restart_hook = {"/bin/sh", "-c", "touch liquid-420-restart-hook-ran"};
+    options.hot_update.targets.push_back({"service", "liquid-420.sock"});
+    options.deploy.control_plane = "https://control.attacker.invalid";
+    options.agents.require_base = true;
+    options.agents.actors = {"taap:attacker"};
+    options.cache.publish = true;
+    return options;
+}
+
+auto expect_no_trust_configuration(liquid::repository& repository) -> void {
+    EXPECT_FALSE(repository.remote_configuration().has_value());
+    EXPECT_EQ(repository.hot_update_configuration(), liquid::hot_update_config{});
+    EXPECT_TRUE(repository.deploy_configuration().control_plane.empty());
+    const auto status = repository.status();
+    ASSERT_TRUE(status) << status.error().message;
+    EXPECT_FALSE(status->agents.require_base);
+    EXPECT_TRUE(status->agents.actors.empty());
+    const auto tuf = liquid::runtime::block_on(repository.metadata("config.tuf"));
+    ASSERT_TRUE(tuf) << tuf.error().message;
+    EXPECT_FALSE(tuf->has_value());
+}
+
+auto create_hostile_source(const std::filesystem::path& path)
+    -> liquid::result<liquid::repository> {
+    auto created =
+        liquid::runtime::block_on(liquid::repository::create(path, hostile_trust_options()));
+    if (!created) {
+        return created;
+    }
+    auto pinned =
+        liquid::runtime::block_on(created->set_metadata("config.tuf", bytes("attacker root")));
+    if (!pinned) {
+        return std::unexpected(pinned.error());
+    }
+    auto written = liquid::runtime::block_on(created->write("content.txt", bytes("content")));
+    if (!written) {
+        return std::unexpected(written.error());
+    }
+    auto cut = liquid::runtime::block_on(created->cut("hostile configuration"));
+    if (!cut) {
+        return std::unexpected(cut.error());
+    }
+    return created;
+}
+
+TEST(Sync, trust_configuration_never_travels_with_exported_drips) {
+    temporary_directory source_path;
+    temporary_directory destination_path;
+    auto source = create_hostile_source(source_path.path());
+    ASSERT_TRUE(source) << source.error().message << " " << source.error().context;
+    ASSERT_TRUE(source->remote_configuration().has_value());
+    EXPECT_FALSE(source->remote_configuration()->tls.verify_peer);
+
+    auto items = export_all(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(destination);
+    auto imported = liquid::runtime::block_on(destination->import_drips(*items));
+    ASSERT_TRUE(imported) << imported.error().message << " " << imported.error().context;
+    auto content = liquid::runtime::block_on(destination->read("content.txt"));
+    ASSERT_TRUE(content) << content.error().message;
+    EXPECT_EQ(text(*content), "content");
+    expect_no_trust_configuration(*destination);
+
+    *destination = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(destination_path.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    expect_no_trust_configuration(*reopened);
+}
+
+TEST(Sync, pull_and_drive_clone_leave_trust_configuration_behind) {
+    temporary_directory source_path;
+    temporary_directory pulled_path;
+    temporary_directory folder;
+    auto source = create_hostile_source(source_path.path());
+    ASSERT_TRUE(source) << source.error().message << " " << source.error().context;
+    auto server = liquid::sync_server{*source};
+    sync_http_server http{server};
+
+    auto pulled = liquid::runtime::block_on(liquid::repository::create(pulled_path.path()));
+    ASSERT_TRUE(pulled);
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto received = liquid::runtime::block_on(endpoint.pull(*pulled));
+    ASSERT_TRUE(received) << received.error().message << " " << received.error().context;
+    auto content = liquid::runtime::block_on(pulled->read("content.txt"));
+    ASSERT_TRUE(content) << content.error().message;
+    expect_no_trust_configuration(*pulled);
+
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client) << client.error().message;
+    auto synchronized = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(synchronized) << synchronized.error().message << ": "
+                              << synchronized.error().context;
+    EXPECT_EQ(read_drive_file(folder.path() / "content.txt"), "content");
+    client = liquid::drive_client{};
+    auto cloned = liquid::runtime::block_on(liquid::repository::open(folder.path()));
+    ASSERT_TRUE(cloned) << cloned.error().message;
+    expect_no_trust_configuration(*cloned);
+}
+
+// A peer's tree can name paths a checkout keeps for itself. A drive never writes them, so a clone
+// cannot replace the repository marker (and with it every key in the repository document), the
+// object store, release policy under `.liquid/`, or build state (liquid #420).
+TEST(Drive, peer_tree_cannot_write_checkout_local_state) {
+    temporary_directory folder;
+    temporary_directory server_path;
+    auto server_repository =
+        liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(server_repository);
+    for (const auto* path : {"LIQUID_REPO",
+                             "LIQUID_JOURNAL",
+                             ".liquid/release/policy.cbor",
+                             ".liquid-store/planted",
+                             ".liquid-build/tests/planted.test",
+                             ".liquid-data/planted",
+                             ".liquid-wrap-cache/planted"}) {
+        ASSERT_TRUE(liquid::runtime::block_on(server_repository->write(path, bytes("planted"))))
+            << path;
+    }
+    ASSERT_TRUE(
+        liquid::runtime::block_on(server_repository->write("ordinary.txt", bytes("ordinary"))));
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->cut("plant local state")));
+    auto server = liquid::sync_server{*server_repository};
+    sync_http_server http{server};
+
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client) << client.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(client->pin("")));
+    auto synchronized = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(synchronized) << synchronized.error().message << ": "
+                              << synchronized.error().context;
+    EXPECT_EQ(read_drive_file(folder.path() / "ordinary.txt"), "ordinary");
+    EXPECT_NE(read_drive_file(folder.path() / "LIQUID_REPO"), "planted");
+    EXPECT_NE(read_drive_file(folder.path() / "LIQUID_JOURNAL"), "planted");
+    for (const auto* path : {".liquid/release/policy.cbor",
+                             ".liquid-store/planted",
+                             ".liquid-build/tests/planted.test",
+                             ".liquid-data/planted",
+                             ".liquid-wrap-cache/planted"}) {
+        EXPECT_FALSE(std::filesystem::exists(folder.path() / path)) << path;
+    }
+    auto again = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(again) << again.error().message << ": " << again.error().context;
+    client = liquid::drive_client{};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(folder.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    auto ordinary = liquid::runtime::block_on(reopened->read("ordinary.txt"));
+    ASSERT_TRUE(ordinary) << ordinary.error().message;
+    EXPECT_EQ(text(*ordinary), "ordinary");
+}
+
 #if defined(LIQUID_CLI)
 auto shell_quote(const std::filesystem::path& value) -> std::string {
     auto output = std::string{"'"};

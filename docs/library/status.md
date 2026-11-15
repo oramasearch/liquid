@@ -159,7 +159,12 @@ historical diff. Whole-file encryption remains the fallback
 negotiation, the public sync server with change and graph-derived per-reference authorization,
 mixed and atomic push outcomes, and the shared HTTP/1.1 client, `serve sync` adapter, and lake
 forge review client with its polling event stream and installable double are implemented
-([`sync.md`](sync.md), [`forge-client.md`](forge-client.md)).
+([`sync.md`](sync.md), [`forge-client.md`](forge-client.md)). Issue #420 confirms that no
+trust-controlling repository configuration (the REAPI remote and its TLS, key and header settings,
+the hot-update restart hook, policy, deployment, TUF state) travels with clone, sync or composition,
+and makes checkout-local paths (`LIQUID_REPO`, `.liquid/`, `.liquid-store/` and liquid's other
+state directories) impossible to import into a tree or to write from a peer's tree
+([`sync.md`](sync.md#trust-configuration-stays-with-the-checkout-that-set-it)).
 
 **Drive.** Issue #195 adds the persisted three-tree drive client, named concurrent conflict values,
 interrupted-transfer resume, per-reference refusal reporting, stable-node path history and restore,

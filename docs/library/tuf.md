@@ -21,7 +21,9 @@ if (!pinned) {
 ```
 
 Pinning replaces the repository's existing TUF state. It is therefore an explicit operator action,
-not part of ordinary metadata refresh.
+not part of ordinary metadata refresh. `config.tuf` is never exported by sync, so a clone or pull
+starts with no pinned root and a remote repository cannot replace one (liquid #420,
+[sync.md](sync.md#trust-configuration-stays-with-the-checkout-that-set-it)).
 
 The command-line forms operate on the repository found from the current directory:
 

@@ -149,6 +149,11 @@ remain in the tree; rebuilding status does not itself count as resolution.
 
 Pull imports signed repository and tree metadata into the remote view and registers content chunks
 against a retained `sync_endpoint`; payload bytes remain remote until policy or a read needs them.
+Checkout-local paths (`LIQUID_REPO`, `LIQUID_JOURNAL`, `.liquid/`, `.liquid-store/`,
+`.liquid-build/`, `.liquid-data/`, `.liquid-wrap-cache/`, `.liquid-capture-cookie-*`) are dropped
+from every flattened tree and are never written to the folder, so a peer's tree cannot replace the
+repository marker, the store, or release policy (liquid #420,
+[sync.md](sync.md#trust-configuration-stays-with-the-checkout-that-set-it)).
 Reconciliation then applies repository operations. Pinned files and online-only files at or below
 the threshold are published to the synchronized folder. Larger online-only paths remain virtual
 placeholders in the FUSE namespace, and later full walks retain their repository entries while

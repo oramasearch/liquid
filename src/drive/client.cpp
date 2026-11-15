@@ -19,6 +19,7 @@
 #include "encoding/cbor.hpp"
 #include "liquid/repository.hpp"
 #include "repository/drive_access.hpp"
+#include "repository/local_state.hpp"
 
 namespace liquid {
 namespace {
@@ -191,10 +192,11 @@ auto repository_text(std::span<const std::byte> value) -> std::string {
     return {reinterpret_cast<const char*>(value.data()), value.size()};
 }
 
+// Checkout-local state (liquid #420) and the drive's own temporary files are never synchronised in
+// either direction: the local walk skips them, and every flattened tree drops them, so a peer's
+// tree can never write the repository marker, the store, or trust state kept under `.liquid/`.
 auto excluded_path(std::string_view path) -> bool {
-    return path == "LIQUID_REPO" || path == "LIQUID_JOURNAL" || path == ".liquid" ||
-           path.starts_with(".liquid/") || path == ".liquid-store" ||
-           path.starts_with(".liquid-store/") || path.ends_with(".liquid-drive-tmp");
+    return repository_detail::local_state_path(path) || path.ends_with(".liquid-drive-tmp");
 }
 
 auto within_path(std::string_view path, std::string_view parent) -> bool {
@@ -262,6 +264,9 @@ runtime::task<void> flatten(repository& source, digest root, std::string prefix,
     }
     for (auto entry : value->entries) {
         const auto path = prefix.empty() ? entry.name : prefix + "/" + entry.name;
+        if (excluded_path(path)) {
+            continue;
+        }
         if (entry.kind == node_kind::tree) {
             auto nested = co_await flatten(source, entry.ref, path, output);
             if (!nested) {
@@ -841,6 +846,10 @@ runtime::task<void> materialise(repository& source,
                                 const file_value& value,
                                 const std::filesystem::path& folder,
                                 bool durable) {
+    if (excluded_path(value.path)) {
+        co_return std::unexpected(drive_error(
+            errc::unauthorized, "drive refuses to write checkout-local state", value.path));
+    }
     const auto destination = folder / value.path;
     auto prepared = co_await runtime::offload([parent = destination.parent_path()] {
         auto code = std::error_code{};

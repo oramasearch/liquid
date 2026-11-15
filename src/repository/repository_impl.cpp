@@ -44,6 +44,7 @@
 #include "repository/diff.hpp"
 #include "repository/drive_access.hpp"
 #include "repository/git_access.hpp"
+#include "repository/local_state.hpp"
 #include "repository/merge.hpp"
 #include "repository/store_access.hpp"
 #include "repository/sync_access.hpp"
@@ -5873,6 +5874,12 @@ struct repository::impl {
         co_return result<void>{};
     }
     auto ignored(std::string_view path, const import_options& options) const -> bool {
+        // Checkout-local state is never repository content, and no `!` pattern re-includes it
+        // (liquid #420): otherwise a pushed tree would carry release policy or a repository marker
+        // that a later clone materialises.
+        if (repository_detail::local_state_path(path)) {
+            return true;
+        }
         auto ignored = false;
         for (const auto& configured : options.ignore_patterns) {
             auto pattern = std::string_view{configured};

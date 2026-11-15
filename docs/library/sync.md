@@ -296,6 +296,71 @@ after receipt, and a later store or VFS read hydrates through the registered sou
 returns `bytes_remote` in its report. Callers retain and register that endpoint under the repository
 URL before allowing later reads.
 
+## Trust configuration stays with the checkout that set it
+
+**What (liquid #420).** A repository document holds keys that decide whom a checkout trusts and
+what it runs. None of them travels with a clone, a pull, a push, a drive sync or a composition. A
+peer can neither set them nor lower them; a value that matters is always one the local user, or
+the libliquid caller, set on this checkout.
+
+| Key | Controls | Travels? | Where a local value comes from |
+|---|---|---|---|
+| `config.remote` (`endpoint`, `instance_name`, `backend`, `tls.enabled`, `tls.verify_peer`, `tls.certificate_authority`, `tls.client_certificate`, `tls.client_key`, `headers`, `publish`) | which REAPI cache or scheduler builds trust, whether its certificate is checked, which client key and bearer headers it receives, and whether results are published to it | no | `repository_options::remote` at creation; `wrap` keeps it in its cache repository under `$XDG_CACHE_HOME/liquid/wrap/` or `~/.cache/liquid/wrap/` ([reapi.md](reapi.md#configuration-and-cli)) |
+| `config.hot_update` (`restart_hook`, `targets`) | a command the daemon runs and the sockets it delivers patches to | no | `repository_options::hot_update` at creation ([hot-update.md](hot-update.md#restart-contract-and-daemon)) |
+| `config.policy` (`approved_builders`, `rules`) | which builders and attestation authorities a build input must satisfy | no | `repository_options::policy` and `repository::set_policy` |
+| `config.deploy` (`control_plane`, environments) | where `liquid deploy` sends `LIQUID_TOKEN` | no | `repository_options::deploy` at creation |
+| `config.agents`, `config.encrypt` path rules, `config.cache.publish`, `config.verify`, `config.flow`, `config.retention`, `config.data` | base enforcement for agents, which paths are encrypted, cache publication, reproducibility sampling, rate limits, retention, and data-branch database URLs | no | `repository_options` at creation |
+| `config.tuf` (repository metadata) | the pinned TUF root and rollback counters | no | `liquid registry trust pin` after the operator compares the root's SHA-256 out of band ([tuf.md](tuf.md#trust-bootstrap)) |
+| `drive.*` (repository metadata) | the drive remote URL, state and device settings | no | `drive_client::open` and the drive settings commands |
+| `liquid.identity-chain.<id>` (repository metadata) | an author's key history | yes, by design | each chain is self-verifying from its identifier and is re-verified on receipt; trust decisions stay in the local identity store |
+| Lock rules and locks | exclusive-checkout coordination | yes, by design, as signed version-4 drips | they restrict writes and never grant trust or run anything |
+| Tracked `.liquid` configuration files | packages, targets, sources, generators, lock rules | yes, as repository content | a build or test runs them only when the user asks for one; `liquid init` reads only their lock rules |
+
+Release policy (`.liquid/release/policy.cbor`), approvals, daemon, capture, index and replication
+state are files under the checkout's `.liquid/` directory, so they follow the checkout-local path
+rule below.
+
+**Why each one is local-only.** Sync carries only drips, changes, directory documents, refs,
+presence and identity chains (`repository::export_drips` in `src/repository/repository_impl.cpp`).
+`repository::import_drips` starts its candidate from the local document and changes only the
+working tree, refs, `head`, conflict values, drips, locks and identity-chain metadata, so every
+other configuration field and every other metadata key is the local value after an import.
+`liquid clone` is a drive client over a freshly created local repository (`src/cli/clone.cpp`),
+so a clone starts from default configuration and keeps it. Composition (`nest`, `combine`) copies a
+tree and its history into the destination, and `split` creates a fresh repository; neither copies
+the source's configuration. The CRDT root schema reserves an empty `config` map that nothing reads,
+so a peer that writes into it changes nothing.
+
+**Checkout-local paths are never repository content.** The repository marker and journal, the
+object store, and liquid's state directories live inside the checkout: `LIQUID_REPO`,
+`LIQUID_JOURNAL`, `.liquid/`, `.liquid-store/`, `.liquid-build/`, `.liquid-data/`,
+`.liquid-wrap-cache/` and `.liquid-capture-cookie-*` (`src/repository/local_state.hpp`). Tree
+import never records them, whatever the caller's `!` patterns say, so a push cannot carry them. A
+peer can still name them in a tree it builds by hand, so a drive drops them from every tree it
+flattens and refuses to write one, and a clone can never replace the local repository marker (and
+with it every key above), the store, or release policy. Before liquid #420 a drive published
+these paths from a peer's tree like any other file.
+
+**Existing repositories.** Every value in a repository document was set through the local API
+(`repository_options`, `set_policy`, `set_metadata`, `registry trust pin`), because no import path
+writes configuration, so existing values keep working without migration. The one way a remote
+value could have reached a checkout was a drive writing a peer's `LIQUID_REPO` over the local one;
+a checkout synchronized from an untrusted drive remote before this change should be cloned again.
+
+**Repository transfer is not a clone.** `repository::transfer` copies a repository between two
+stores of the same owner, configuration included, because it moves one repository rather than
+receiving another ([store.md](store.md#whole-repository-transfer)).
+
+**Tests.** `Sync.trust_configuration_never_travels_with_exported_drips` sets `config.remote` with
+peer verification off, a client key and a bearer header, a restart hook and target, a deployment
+control plane, agent rules, cache publication and a `config.tuf` state on a source, imports its
+complete export into an empty repository, and checks that none of them arrived, before and after
+reopening. The other configuration fields take the same path through the document.
+`Sync.pull_and_drive_clone_leave_trust_configuration_behind` does the same through `sync_server`
+over HTTP with a pull and with a drive clone. `Drive.peer_tree_cannot_write_checkout_local_state`
+serves a tree that names every checkout-local path and checks that a drive writes none of them.
+`Repository.import_tree_never_records_checkout_local_state` checks the import side.
+
 ## Local server command
 
 `liquid serve sync <path>` opens an existing repository and serves the five routes above with the
