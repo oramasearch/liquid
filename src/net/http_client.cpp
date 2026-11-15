@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "http1/client.hpp"
+#include "liquid/version.hpp"
 
 namespace liquid::net_detail {
 
@@ -17,6 +18,8 @@ auto perform_request(http_request request) -> runtime::task<http_response> {
     if (!request.content_type.empty()) {
         headers.emplace_back("Content-Type", std::move(request.content_type));
     }
+    // Lake reads this to refuse a liquid outside the range it supports (docs/library/lakes.md).
+    headers.emplace_back("Liquid-Version", std::string{version_string()});
     if (!request.bearer.empty()) {
         headers.emplace_back("Authorization", "Bearer " + std::move(request.bearer));
     }

@@ -43,6 +43,7 @@ table says *hint*.
 | `git mergetool` | `liquid conflicts`, `liquid conflict`, `liquid resolve` (*hint*) | A conflict is a recorded value, listed and resolved by id, not markers in a file. |
 | `git restore` | `liquid history <path> --restore <change>` (*hint*) | Restore is one use of a path's history, which follows the path across moves. |
 | `git branch` | `liquid refs` (*hint*) | liquid has references. `refs` lists them. |
+| `git remote` | `liquid lake` (*hint*) | A remote in liquid is a lake: a named service with its own token, its own version and its own repositories. `lake add`, `lake remove` and `lake list` follow `git remote add`, `remove` and `-v`; `lake use` chooses one per repository, and `lake check` reads its version ([lakes](../library/lakes.md)). |
 | `git fast-import`, `git fast-export` | `liquid import git`, `liquid export git` | `import` and `export` also handle local trees and Spack universes. |
 
 ## Open: the same name with a different meaning
@@ -58,7 +59,7 @@ the decision is made deliberately. None is changed in v0.1.0.
 
 ## Open: Git commands with no liquid command yet
 
-`checkout` and `switch`, `branch` and `tag` creation, `merge`, `rebase`, `fetch`, `remote`,
+`checkout` and `switch`, `branch` and `tag` creation, `merge`, `rebase`, `fetch`,
 `stash`, `show`, `revert` and `cherry-pick`. `liquid materialise` writes a working tree and
 `liquid mount` mounts one lazily, which covers part of what `checkout` is used for. When one of
 these is added, it takes Git's name.

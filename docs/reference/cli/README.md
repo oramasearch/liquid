@@ -49,6 +49,7 @@ Commands are grouped as `liquid --help` groups them. Where Git has a command for
 
 | Command | Summary | Availability |
 |---|---|---|
+| [`lake`](lake.md) | choose which lake liquid works with | available |
 | [`push`](push.md) | push repository changes and objects | available |
 | [`pull`](pull.md) | pull repository changes and objects | available |
 | [`review`](review.md) | review a lake change in place | available |

@@ -121,7 +121,8 @@ if(BUILD_SHARED_LIBS)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
 endif()
 if(UNIX)
-  target_sources(liquid-tests PRIVATE test_sync.cpp test_runtime_sockets.cpp admission/test_server.cpp)
+  target_sources(liquid-tests PRIVATE test_lake.cpp test_sync.cpp test_runtime_sockets.cpp
+    admission/test_server.cpp)
 endif()
 target_link_libraries(liquid-tests PRIVATE
   # liquid_forge_double links liquid::liquid publicly, so naming it here too put
@@ -911,6 +912,7 @@ add_executable(liquid-header-tests
   headers/hot_update.cpp
   headers/identity.cpp
   headers/install.cpp
+  headers/lake.cpp
   headers/import.cpp
   headers/liquid.cpp
   headers/node_store.cpp

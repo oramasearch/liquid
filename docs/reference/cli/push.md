@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid push [--atomic] <url>
+liquid push [--atomic] [<lake>|<url>]
 ```
 
 ## Description
 
-Send signed metadata, requested references, and missing objects to a sync endpoint.
+Send signed metadata, requested references, and missing objects to a sync endpoint. With no argument, push to the repository's lake; a lake name uses that lake; a full URL is matched to a named lake by host. Only that lake's token is sent, and a lake whose version this liquid does not support is refused before anything is sent.
 
 ## Options
 
@@ -25,6 +25,7 @@ available
 ## Examples
 
 ```sh
+liquid push
 liquid push http://127.0.0.1:8080
 ```
 

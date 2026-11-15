@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "cli/lake.hpp"
 #include "liquid/drive.hpp"
 #include "liquid/error.hpp"
 #include "liquid/runtime.hpp"
@@ -20,7 +21,9 @@ auto fail(const liquid::error& error) -> int {
 }
 
 auto usage() -> int {
-    std::println(stderr, "error: usage: clone <url|drive-folder> [<dir>] [--json] ()");
+    std::println(stderr,
+                 "error: usage: clone <url|drive-folder> [<dir>] [--json] | clone --lake <name> "
+                 "<repository> [<dir>] [--json] ()");
     return 2;
 }
 
@@ -159,6 +162,7 @@ auto clean_failed_target(const std::filesystem::path& target, bool existed) -> v
 auto clone(int argc, char** argv) -> int {
     auto positional = std::vector<std::string_view>{};
     auto json = false;
+    auto lake_name = std::string_view{};
     for (auto index = 0; index < argc; ++index) {
         const auto argument = std::string_view{argv[index]};
         if (argument == "--json") {
@@ -168,6 +172,13 @@ auto clone(int argc, char** argv) -> int {
             json = true;
             continue;
         }
+        if (argument == "--lake") {
+            if (!lake_name.empty() || index + 1 >= argc) {
+                return usage();
+            }
+            lake_name = argv[++index];
+            continue;
+        }
         positional.push_back(argument);
     }
     if (positional.empty() || positional.size() > 2) {
@@ -175,7 +186,26 @@ auto clone(int argc, char** argv) -> int {
     }
 
     auto remote = std::string{positional.front()};
-    if (!source_is_url(positional.front())) {
+    if (!lake_name.empty()) {
+        // `clone --lake <name> <repository>`: the repository is an identifier, a path or a URL on
+        // that lake.
+        auto lakes = liquid::runtime::block_on(liquid::lake_registry::open());
+        if (!lakes) {
+            return fail(lakes.error());
+        }
+        auto entry = lakes->find(lake_name);
+        if (!entry) {
+            return fail(liquid::error{liquid::errc::not_found,
+                                      "no lake has this name: add it with `liquid lake add " +
+                                          std::string{lake_name} + " <url>`",
+                                      std::string{lake_name}});
+        }
+        auto path = liquid::repository_path_for(*entry, positional.front());
+        if (!path) {
+            return fail(path.error());
+        }
+        remote = entry->url + *path;
+    } else if (!source_is_url(positional.front())) {
         auto configured = remote_from_drive_folder(std::filesystem::path{positional.front()});
         if (!configured) {
             return fail(configured.error());
@@ -189,10 +219,12 @@ auto clone(int argc, char** argv) -> int {
         return fail(valid_target.error());
     }
 
-    auto options = liquid::drive_options{};
-    if (const auto* token = std::getenv("LIQUID_TOKEN")) {
-        options.bearer_token = token;
+    auto chosen = prepare_lake(nullptr, remote);
+    if (!chosen) {
+        return fail(chosen.error());
     }
+    auto options = liquid::drive_options{};
+    options.bearer_token = chosen->token.value;
     auto client =
         liquid::runtime::block_on(liquid::drive_client::open(target, remote, std::move(options)));
     if (!client) {
@@ -220,16 +252,25 @@ auto clone(int argc, char** argv) -> int {
         }
     }
 
+    // The clone records its lake, so push, pull and review need no URL (liquid#525).
+    client = liquid::drive_client{};
+    if (chosen->named) {
+        auto cloned = liquid::runtime::block_on(liquid::repository::open(target));
+        if (cloned) {
+            remember_lake(*cloned, *chosen);
+        }
+    }
     auto code = std::error_code{};
     auto landed = std::filesystem::weakly_canonical(std::filesystem::absolute(target), code);
     if (code) {
         landed = target;
     }
     if (json) {
-        std::println("{{\"path\":{},\"remote\":{},\"objects_received\":{},"
+        std::println("{{\"path\":{},\"remote\":{},\"lake\":{},\"objects_received\":{},"
                      "\"bytes_received\":{}}}",
                      json_string(landed.string()),
                      json_string(remote),
+                     chosen->named ? json_string(chosen->named->name) : std::string{"null"},
                      report->received.objects,
                      report->received.bytes);
     } else {

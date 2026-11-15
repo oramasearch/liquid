@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -27,6 +28,11 @@ public:
     [[nodiscard]] auto advance_head(std::string path, std::string contents) -> result<change_id>;
     void add_branch_protection(forge_branch_protection rule);
     void fail_next(std::string code, std::string message, std::string path = {});
+    // The JSON body `GET /v1/server_info` answers with. Empty (the default) answers 404, as a
+    // lake that predates server_info versions would for this route.
+    void set_server_info(std::string body);
+    // How many times `GET /v1/server_info` was asked.
+    [[nodiscard]] auto server_info_requests() const -> std::uint64_t;
 
 private:
     struct impl;
