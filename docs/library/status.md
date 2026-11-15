@@ -82,6 +82,10 @@ or a terminal prompt), the macOS Keychain, or a key custody URI (default: `keych
 permissions, is written only for explicit `file` custody. Older identities keep loading;
 `liquid identity show` reports and warns about their custody, and `liquid identity custody --to`
 migrates them ([`identity.md`](identity.md#how-the-software-signing-key-is-protected-at-rest-liquid-402)).
+A headless Linux host such as a Lake pod names a passphrase file (`identity_custody_options::passphrase_file`
+or `LIQUID_IDENTITY_PASSPHRASE_FILE`); liquid refuses it unless the opened file is regular, owned
+by the effective user or root, and owner-only. TPM custody for pods is a later option
+([`identity.md`](identity.md#headless-linux-hosts-lake-pods)).
 
 **Release trust root (#384).** `verify_release` takes a `release_trust` held outside the
 repository: the policy's issuer must be listed (`$LIQUID_HOME/trust/release-policy-issuers` for

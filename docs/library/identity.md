@@ -325,8 +325,9 @@ key**. What protects the signing key is therefore whatever holds the wrapping ke
 
 The custody is chosen when the identity is created: `identity_custody_options::custody`, else
 `LIQUID_IDENTITY_KEY_CUSTODY`, else `keychain` on macOS and `passphrase` elsewhere. A passphrase is
-read from the file named by `LIQUID_IDENTITY_PASSPHRASE_FILE` (it must be owner-only; one trailing
-newline is dropped), else from the injected `identity_custody_options::passphrase` source; the CLI
+read from the file named by `identity_custody_options::passphrase_file`, else by
+`LIQUID_IDENTITY_PASSPHRASE_FILE` (it must be owner-only, see below; one trailing newline is
+dropped), else from the injected `identity_custody_options::passphrase` source; the CLI
 installs a source that prompts on the terminal without echo. A passphrase is never taken from a
 command-line argument. With no passphrase available, creation fails with `errc::unauthorized` and
 writes no key. A wrong passphrase fails the same way. The signer keeps the unsealed wrapping key in
@@ -353,10 +354,46 @@ place with `MoveFileExW`. The identity directory is set to mode 0700 on POSIX. A
 Linux has no desktop-keystore custody yet: the Secret Service is a D-Bus API, and liquid has no
 D-Bus client. Passphrase or TPM custody are the Linux choices.
 
+#### Headless Linux hosts (Lake pods)
+
+A host with no terminal and no Keychain, such as a Lake pod, uses `passphrase` custody with a
+**passphrase file**. The host names it with `identity_custody_options::passphrase_file` (a library
+caller such as Lake sets it before the first `local_signer()`), or with
+`LIQUID_IDENTITY_PASSPHRASE_FILE` (the CLI). The option wins over the variable, and both win over a
+terminal prompt. liquid opens the file and checks the opened file itself, so it cannot be swapped
+between the check and the read:
+
+- it must be a regular file (a directory, FIFO or device is refused);
+- it must be owned by the effective user liquid runs as, or by root;
+- it must have no group or other permission bit (mode `0600` or `0400`);
+- it must be at most 64 KiB, and not empty after one trailing newline is dropped.
+
+Anything else is refused with `errc::unauthorized`, and no identity is created: liquid never falls
+back to `file` custody. A symbolic link is followed, because a Kubernetes Secret volume presents
+each key as a link into its projected data, and the checks apply to the file the link reaches. A
+Secret volume therefore needs `defaultMode: 0400` (or `0600`), and a pod that sets `fsGroup` on that
+volume makes the file group-readable, which is refused. Rendering the file and the variable is the
+deployment's job (for Lake, the Orama operator), never a hand edit on a pod. On Windows the mode is
+not checked.
+
+The passphrase file is as sensitive as the key it unlocks: whoever can read both the identity
+directory and the passphrase file can sign as the identity. Keep them on different volumes, so a
+copy of the identity volume alone (a backup, a snapshot) does not carry the passphrase.
+
+**TPM is a later option** for these hosts. A `tpm:` custody URI already seals the wrapping key to a
+TPM, but a pod has no TPM of its own: it would need the node's TPM, or a virtual TPM, exposed to the
+pod, and the identity would then be bound to that node. When that exists, a pod moves with
+`migrate_local_identity_custody("tpm:...")` (`liquid identity custody --to tpm:...`) without
+changing its signing key.
+
 Tests: `IdentityCustody.KeyFilesNeverExistWithAWiderMode`,
 `IdentityCustody.FileCustodyIsReportedAsFilePermissionsOnly`,
 `IdentityCustody.PassphraseCustodyStoresNoClearWrappingKey`,
-`IdentityCustody.PassphraseFileMustBeOwnerOnly`, `IdentityCustody.InjectedPassphraseSourceIsAskedOnce`,
+`IdentityCustody.PassphraseFileMustBeOwnerOnly`,
+`IdentityCustody.PassphraseFileOptionCreatesAHeadlessIdentity`,
+`IdentityCustody.PassphraseFileLinkIsCheckedAtItsTarget`,
+`IdentityCustody.PassphraseFileMustBeASmallRegularFile`,
+`IdentityCustody.InjectedPassphraseSourceIsAskedOnce`,
 and `IdentityCustody.FileCustodyMigratesToPassphrase`. The Keychain provider has no automated test:
 it needs an unlocked login Keychain.
 
