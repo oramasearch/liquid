@@ -421,6 +421,8 @@ rules: the vocabulary, the document structure, the checks to run before finishin
 release is cut, the recorded decisions, and the conventions inherited from
 [`oramasearch/orama-bridge`](https://github.com/oramasearch/orama-bridge).
 
+Report a vulnerability privately, as [`SECURITY.md`](SECURITY.md) describes.
+
 When liquid gains or loses a capability, update the
 [implementation status](docs/library/status.md) first, then the matching line on this page.
 
