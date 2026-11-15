@@ -152,6 +152,11 @@ and performs local break-glass unsealing through the public secret API. Private-
 authorization callback and returns one verdict per update. Request handlers await library tasks on
 the listener executor and never include the private protocol codec.
 
+`signer.hpp` holds `shown_signer`, the one helper every command uses to print an author: the
+record's `taap_id` only when an identity chain verified it, otherwise `signed by an unverified key`
+(liquid#429, liquid#508). `log`, `ops`, `history`, `blame`, `why` and `wrap` use it, and their JSON
+also carries `"identity_verified"`.
+
 The CLI-internal metadata and validator live in `metadata.hpp` and `arguments.cpp`. Every command
 passes through the typed option allow-list before its handler interprets values. `docs.cpp` renders
 the same table as command help, Markdown, stable JSON, and man pages. The generated reference lives

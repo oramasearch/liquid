@@ -600,6 +600,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_BLAME_ROOT=${CMAKE_CURRENT_BINARY_DIR}/blame-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/blame.cmake)
+  add_test(NAME cli-unverified-author
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_UNVERIFIED_ROOT=${CMAKE_CURRENT_BINARY_DIR}/unverified-author-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/unverified-author.cmake)
   add_test(NAME cli-secret
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>

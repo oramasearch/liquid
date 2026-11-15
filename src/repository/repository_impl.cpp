@@ -3171,6 +3171,80 @@ auto change_signed_by_verified_identity(const change& value) -> bool {
     return body && signed_by_verified_identity(value.author, "change", *body, value.sig);
 }
 
+// True only when an identity chain binds the drip's signer to its signature, as
+// `repository::drips` reports it (liquid#429).
+auto drip_signed_by_verified_identity(const persisted_drip& saved, const actor& local) -> bool {
+    const auto& signing_author = saved.author.taap_id.empty() ? local : saved.author;
+    return signed_by_verified_identity(signing_author, "drip", saved.body, saved.signature);
+}
+
+// Says whether an operation record's `by` is verified (liquid#508). An operation record carries
+// no signature of its own. It is verified when it was recorded by the local identity, which holds
+// the key that signs this journal's drips. An operation attributed to anyone else is verified only
+// when a drip that records it (same author, operation and time) checks against that signer's
+// identity chain. Otherwise it is shown as `unverified_signer_label`, never as `by`. Each drip is
+// decoded and checked at most once per verifier.
+class operation_verifier {
+public:
+    operation_verifier(const repository_document& document, actor local)
+        : document_(&document), local_(std::move(local)) {}
+
+    auto verified(const stored_operation& operation) -> bool {
+        if (operation.by.taap_id.empty()) {
+            return false;
+        }
+        if (operation.by.taap_id == local_.taap_id) {
+            return true;
+        }
+        index();
+        for (auto& candidate : *drips_) {
+            if (candidate.by != operation.by.taap_id || candidate.operation != operation.kind ||
+                candidate.at != operation.at.time_since_epoch().count()) {
+                continue;
+            }
+            if (!candidate.verified) {
+                candidate.verified = drip_signed_by_verified_identity(*candidate.source, local_);
+            }
+            if (*candidate.verified) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    struct recorded_drip {
+        std::string by;
+        std::string operation;
+        std::int64_t at{};
+        const persisted_drip* source{};
+        std::optional<bool> verified;
+    };
+
+    auto index() -> void {
+        if (drips_) {
+            return;
+        }
+        drips_.emplace();
+        drips_->reserve(document_->drips.size());
+        for (const auto& saved : document_->drips) {
+            auto decoded = decode_repository_drip(saved.body);
+            if (!decoded) {
+                continue;
+            }
+            const auto& signer = saved.author.taap_id.empty() ? local_ : saved.author;
+            drips_->push_back({.by = decoded->agent ? decoded->agent->taap_id : signer.taap_id,
+                               .operation = decoded->operation,
+                               .at = decoded->at,
+                               .source = &saved});
+        }
+    }
+
+    const repository_document* document_;
+    actor local_;
+    std::optional<std::vector<recorded_drip>> drips_;
+};
+
 // The author of an imported drip or change is accepted only through `verify`, which requires the
 // author's identity chain (liquid#429): a record signed only by the key it carries is refused.
 auto import_synced_drip(repository_document& candidate,
@@ -6621,10 +6695,8 @@ runtime::task<std::vector<drip>> repository::drips() {
                           .reasoned_from = decoded->reasoned_from,
                           .revalidated = decoded->revalidated,
                           .delegation = decoded->delegation};
-        const auto signing_author =
-            saved.author.taap_id.empty() ? impl_->signing_key.identity() : saved.author;
         value.identity_verified =
-            signed_by_verified_identity(signing_author, "drip", saved.body, saved.signature);
+            drip_signed_by_verified_identity(saved, impl_->signing_key.identity());
         for (auto& path : decoded->paths) {
             value.ops.push_back({std::move(path)});
         }
@@ -8403,17 +8475,19 @@ runtime::task<std::vector<operation_record>> repository::operations(log_options)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     auto output = std::vector<operation_record>{};
     output.reserve(impl_->current.operations.size());
+    auto verifier = operation_verifier{impl_->current, impl_->signing_key.identity()};
     for (auto operation = impl_->current.operations.rbegin();
          operation != impl_->current.operations.rend();
          ++operation) {
-        output.push_back({operation->id,
-                          operation->kind,
-                          operation->from,
-                          operation->to,
-                          operation->by,
-                          operation->at,
-                          operation->session,
-                          operation->metadata});
+        output.push_back({.id = operation->id,
+                          .kind = operation->kind,
+                          .from = operation->from,
+                          .to = operation->to,
+                          .by = operation->by,
+                          .at = operation->at,
+                          .session = operation->session,
+                          .metadata = operation->metadata,
+                          .identity_verified = verifier.verified(*operation)});
     }
     co_return output;
 }
@@ -8429,6 +8503,8 @@ struct attribution_source {
     actor by;
     session_id session;
     bool agent{};
+    // Set from the change or operation the line came from (liquid#508).
+    bool identity_verified{};
 };
 
 auto attribution_groups(const repository_document& document)
@@ -8471,13 +8547,16 @@ auto content_operation(const stored_operation& operation) -> bool {
 }
 
 auto source_for_change(const std::map<std::string, attribution_operation_group>& groups,
+                       operation_verifier& verifier,
                        const change& value,
                        const node_id& node,
                        std::string_view old_path,
                        std::string_view new_path) -> attribution_source {
+    const auto from_change =
+        attribution_source{.by = value.author, .identity_verified = value.identity_verified};
     const auto found = groups.find(to_string(value.id.value));
     if (found == groups.end()) {
-        return {.by = value.author};
+        return from_change;
     }
     const auto& operations = found->second.operations;
     auto selected = static_cast<const stored_operation*>(nullptr);
@@ -8497,8 +8576,11 @@ auto source_for_change(const std::map<std::string, attribution_operation_group>&
         }
     }
     selected = selected ? selected : found->second.record;
-    return selected ? attribution_source{selected->by, selected->session, selected->agent}
-                    : attribution_source{.by = value.author};
+    return selected ? attribution_source{.by = selected->by,
+                                         .session = selected->session,
+                                         .agent = selected->agent,
+                                         .identity_verified = verifier.verified(*selected)}
+                    : from_change;
 }
 
 auto text_lines(std::span<const std::byte> bytes) -> std::vector<std::string> {
@@ -8546,7 +8628,8 @@ auto apply_attribution_hunks(std::span<const line_attribution> previous,
                               .by = source.by,
                               .session = source.session,
                               .change = change_value,
-                              .agent = source.agent});
+                              .agent = source.agent,
+                              .identity_verified = source.identity_verified});
         }
         old_offset = old_start + static_cast<std::size_t>(hunk.old_count);
         new_offset = new_start + static_cast<std::size_t>(hunk.new_count);
@@ -8614,6 +8697,7 @@ runtime::task<std::vector<line_attribution>> repository::attribution(std::string
     }
     std::ranges::reverse(*history);
     const auto groups = attribution_groups(impl_->current);
+    auto verifier = operation_verifier{impl_->current, impl_->signing_key.identity()};
     auto output = std::vector<line_attribution>{};
     auto previous = std::optional<change_id>{};
     for (const auto& revision : *history) {
@@ -8654,6 +8738,7 @@ runtime::task<std::vector<line_attribution>> repository::attribution(std::string
         }
         auto lines = text_lines(*contents);
         const auto source = source_for_change(groups,
+                                              verifier,
                                               revision,
                                               target_entry->node,
                                               changed->old_path.value_or(changed->path),
@@ -10685,7 +10770,8 @@ runtime::task<std::vector<path_history_entry>> repository::history(std::string p
                               .mode = current->entry.mode,
                               .by = change.author,
                               .at = change.at,
-                              .message = change.message});
+                              .message = change.message,
+                              .identity_verified = change.identity_verified});
             continue;
         }
         output.push_back({.change = change.id,
@@ -10694,7 +10780,8 @@ runtime::task<std::vector<path_history_entry>> repository::history(std::string p
                           .by = change.author,
                           .at = change.at,
                           .message = change.message,
-                          .deleted = true});
+                          .deleted = true,
+                          .identity_verified = change.identity_verified});
     }
     co_return output;
 }
@@ -11071,7 +11158,13 @@ repository_detail::build_access::path_change(repository& source, std::string pat
         if (!id) {
             co_return std::unexpected(id.error());
         }
-        co_return change_attribution{*id, operation->by, operation->at};
+        // The write is shown as its author's only when the drip that records it checks against
+        // that author's identity chain (liquid#508).
+        co_return change_attribution{.drip = *id,
+                                     .by = operation->by,
+                                     .at = operation->at,
+                                     .identity_verified = drip_signed_by_verified_identity(
+                                         *candidate, source.impl_->signing_key.identity())};
     }
     co_return std::nullopt;
 }

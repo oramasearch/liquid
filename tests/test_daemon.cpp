@@ -433,6 +433,9 @@ TEST(Daemon, attribution_query_crosses_the_wire) {
         EXPECT_EQ(liquid::to_string(remote->at(index).change.value),
                   liquid::to_string(direct->at(index).change.value));
         EXPECT_EQ(remote->at(index).agent, direct->at(index).agent);
+        // liquid#508: the flag crosses the wire, so `liquid blame` can show an unverified author.
+        EXPECT_TRUE(direct->at(index).identity_verified);
+        EXPECT_EQ(remote->at(index).identity_verified, direct->at(index).identity_verified);
     }
     EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
     EXPECT_TRUE(liquid::runtime::block_on(started->wait()));

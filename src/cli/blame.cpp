@@ -10,6 +10,8 @@
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 
+#include "cli/signer.hpp"
+
 namespace liquid_cli {
 
 [[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
@@ -70,11 +72,12 @@ void print_json(std::string_view path,
             std::print(",");
         }
         std::print("{{\"line\":{},\"change\":{},\"session\":{},\"actor\":{},"
-                   "\"agent\":{},\"text\":{}}}",
+                   "\"identity_verified\":{},\"agent\":{},\"text\":{}}}",
                    line.line,
                    json_string(liquid::to_string(line.change.value)),
                    json_string(liquid::to_string(line.session)),
-                   json_string(line.by.taap_id),
+                   json_string(shown_signer(line.by, line.identity_verified)),
+                   line.identity_verified,
                    line.agent,
                    json_string(line.text));
     }
@@ -129,7 +132,7 @@ auto blame(int argc, char** argv) -> int {
                      line.line,
                      liquid::to_string(line.change.value),
                      liquid::to_string(line.session),
-                     line.by.taap_id,
+                     shown_signer(line.by, line.identity_verified),
                      line.agent,
                      line.text);
     }

@@ -9,6 +9,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "liquid/drip.hpp"
@@ -115,9 +116,18 @@ struct LIQUID_EXPORT sync_ref_verdict {
 using sync_authorizer = std::function<runtime::task<std::vector<sync_ref_verdict>>(
     const sync_item&, std::span<const sync_ref_update> reference_updates)>;
 
+// The name the push rate limit is charged to when the host did not say who authenticated the
+// push. Every unauthenticated push shares this one actor bucket (liquid#508).
+inline constexpr std::string_view unauthenticated_pusher = "unauthenticated";
+
 struct LIQUID_EXPORT sync_server_options {
     sync_authorizer authorize;
     std::size_t batch_items{256};
+    // The identity that authenticated the push: the session or TAAP identity the host verified
+    // (Lake's signed-in caller, for example). The push rate limit's actor bucket is keyed on it,
+    // never on a record's claimed `sync_item::author`, so a pusher cannot spend another person's
+    // budget by naming them (liquid#508). Empty means `unauthenticated_pusher`.
+    std::string pusher;
 };
 
 class LIQUID_EXPORT sync_server {
@@ -130,8 +140,13 @@ public:
     sync_server(const sync_server&) = delete;
     sync_server& operator=(const sync_server&) = delete;
 
+    // Charges the push rate limit to `sync_server_options::pusher`.
     [[nodiscard]] runtime::task<std::vector<std::byte>>
     handle_push(std::span<const std::byte> request);
+    // Charges the push rate limit to `pusher`, the identity that authenticated this request, for a
+    // server that handles requests from more than one caller. Empty means `unauthenticated_pusher`.
+    [[nodiscard]] runtime::task<std::vector<std::byte>>
+    handle_push(std::span<const std::byte> request, std::string pusher);
     [[nodiscard]] runtime::task<std::vector<std::byte>>
     handle_pull(std::span<const std::byte> request);
     [[nodiscard]] runtime::task<std::vector<std::byte>>

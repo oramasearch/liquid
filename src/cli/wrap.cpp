@@ -12,6 +12,8 @@
 #include "liquid/error.hpp"
 #include "liquid/runtime.hpp"
 
+#include "cli/signer.hpp"
+
 namespace liquid_cli {
 
 auto print_tier(unsigned level, std::string_view mechanism) -> void;
@@ -103,7 +105,7 @@ void print_miss(const liquid::cache_miss& miss) {
     if (miss.changed_by) {
         std::println("  drip: {} by {} at {}",
                      liquid::to_string(miss.changed_by->drip),
-                     miss.changed_by->by.taap_id,
+                     shown_signer(miss.changed_by->by, miss.changed_by->identity_verified),
                      miss.changed_by->at.time_since_epoch().count());
     }
     if (miss.reason == liquid::cache_miss_reason::command_changed) {

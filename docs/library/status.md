@@ -58,6 +58,10 @@ chain is reported by `check_signature` as signed by an unverified key, `reposito
 `repository::log()` mark such records `identity_verified == false`, and `liquid log` shows them as
 `signed by an unverified key`, never as the name they claim
 ([`identity.md`](identity.md#every-decision-that-trusts-an-identity-requires-a-verified-chain)).
+Path history, operation records, line attribution and change attribution carry the same flag, so
+`liquid blame`, `history`, `ops`, `why` and `wrap` show an unverified author the same way, and
+their JSON carries `"identity_verified"` (#508). The sync push rate limit is charged to the
+authenticated pusher, never to a record's claimed author (#508).
 
 **Public API.** The public error, digest, identity document codec, signature decoder, and release
 approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers

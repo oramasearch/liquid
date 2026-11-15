@@ -204,7 +204,13 @@ Non-success responses use `Content-Type: application/vnd.liquid.error-v1` and a 
 | 500 | `io`, `internal` |
 
 Before metadata import, `sync_server` applies the repository's actor, directory-document, and
-repository buckets to each authored `sync_item`. A refusal returns the existing HTTP 429 mapping;
+repository buckets to each `sync_item`. The actor bucket is the **authenticated pusher's**, never
+the author a record claims, because that name is not verified until import (liquid#508). The host
+names the pusher, the session or TAAP identity that authenticated the request, in
+`sync_server_options::pusher` or per request with `handle_push(request, pusher)`; Lake is to pass
+its signed-in caller, which it does not do yet. `actor_overrides` are keyed the same way. A push with no pusher is charged to
+the shared `unauthenticated_pusher` bucket, which is what `liquid serve sync` does today because it
+does not authenticate pushes. A refusal returns the existing HTTP 429 mapping;
 the canonical error body also carries `retry_after_ms` and `scope`. The complete metadata batch is
 left unapplied, so a rejected peer operation cannot enter causal history. `max_update_bytes`
 applies to each item's body.

@@ -22,6 +22,8 @@
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 
+#include "cli/signer.hpp"
+
 namespace liquid_cli {
 
 [[nodiscard]] auto ensure_daemon(const std::filesystem::path& checkout) -> liquid::result<void>;
@@ -40,11 +42,6 @@ auto fail(const liquid::error& error) -> int {
 auto usage(std::string_view message) -> int {
     std::println(stderr, "error: usage: {} ()", message);
     return 2;
-}
-
-// A record's author is shown only when an identity chain verified it (liquid#429).
-auto shown_signer(const liquid::actor& by, bool identity_verified) -> std::string_view {
-    return identity_verified ? std::string_view{by.taap_id} : liquid::unverified_signer_label;
 }
 
 auto json_string(std::string_view value) -> std::string {
@@ -614,14 +611,16 @@ auto repo_log(int argc, char** argv) -> int {
                                           : "forced");
                 const auto delegation =
                     drip.delegation ? json_string(liquid::to_string(*drip.delegation)) : "null";
-                std::print("{}{{\"id\":{},\"base\":{},\"paths\":{},\"actor\":{},\"at\":{},"
-                           "\"reasoned_from\":{},\"cursor\":{},\"revalidated\":{},"
+                std::print("{}{{\"id\":{},\"base\":{},\"paths\":{},\"actor\":{},"
+                           "\"identity_verified\":{},\"at\":{},\"reasoned_from\":{},\"cursor\":{},"
+                           "\"revalidated\":{},"
                            "\"delegation\":{}}}",
                            index == 0 ? "" : ",",
                            json_string(liquid::to_string(drip.id.value)),
                            json_string(liquid::to_string(drip.base.value)),
                            strings_json(paths),
                            json_string(shown_signer(drip.by, drip.identity_verified)),
+                           drip.identity_verified,
                            drip.at.time_since_epoch().count(),
                            reasoned_from,
                            cursor,
@@ -649,11 +648,13 @@ auto repo_log(int argc, char** argv) -> int {
         std::print("[");
         for (std::size_t index = 0; index < changes->size(); ++index) {
             const auto& change = (*changes)[index];
-            std::print("{}{{\"id\":{},\"message\":{},\"author\":{},\"at\":{}}}",
+            std::print("{}{{\"id\":{},\"message\":{},\"author\":{},\"identity_verified\":{},"
+                       "\"at\":{}}}",
                        index == 0 ? "" : ",",
                        json_string(liquid::to_string(change.id.value)),
                        json_string(change.message),
                        json_string(shown_signer(change.author, change.identity_verified)),
+                       change.identity_verified,
                        change.at.time_since_epoch().count());
         }
         std::println("]");

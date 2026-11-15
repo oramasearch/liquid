@@ -202,7 +202,8 @@ auto attribution_value(std::span<const line_attribution> values) -> cbor::value 
                              {"actor", value.by.taap_id},
                              {"session", to_string(value.session)},
                              {"change", to_string(value.change.value)},
-                             {"agent", value.agent}}));
+                             {"agent", value.agent},
+                             {"identity_verified", value.identity_verified}}));
     }
     return cbor::value{std::move(lines)};
 }
@@ -221,6 +222,8 @@ auto decode_attribution_value(const cbor::value& source) -> result<std::vector<l
         const auto* session_text = text_field(value, "session");
         const auto* change_text = text_field(value, "change");
         const auto* agent = bool_field(value, "agent");
+        // A daemon that does not send the flag has not verified the author (liquid#508).
+        const auto* identity_verified = bool_field(value, "identity_verified");
         if (!line || *line == 0 || !text || !actor || !session_text || !change_text || !agent) {
             return std::unexpected(failure(errc::corrupt, "invalid daemon attribution line"));
         }
@@ -234,7 +237,8 @@ auto decode_attribution_value(const cbor::value& source) -> result<std::vector<l
                           .by = {.taap_id = *actor},
                           .session = *session,
                           .change = {*change},
-                          .agent = *agent});
+                          .agent = *agent,
+                          .identity_verified = identity_verified && *identity_verified});
     }
     return output;
 }

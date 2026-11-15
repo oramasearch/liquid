@@ -133,6 +133,9 @@ struct LIQUID_EXPORT line_attribution {
     session_id session;
     change_id change;
     bool agent{};
+    // Set from the change or operation the line came from. Otherwise show
+    // `unverified_signer_label`, never `by` (liquid#508).
+    bool identity_verified{};
 };
 
 struct LIQUID_EXPORT session_options {
