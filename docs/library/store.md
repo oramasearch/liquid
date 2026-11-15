@@ -829,6 +829,7 @@ case reads `chunk header digest differs from index`; the writer processes fail `
 file or directory […/LIQUID_STORE.backend-tmp]` and `backend object was not found
 (packs/objects.meta.tmp)`; and in the checkout case the library client fails and `liquid status`
 fails `in rename: No such file or directory […/index/MANIFEST.backend-tmp]`.
+Without the lock the process cases fail (see the pull request for the counts).
 
 ### Injected owners and fencing
 
