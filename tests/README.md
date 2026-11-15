@@ -235,7 +235,9 @@ delegation are refused at fork and stop a running session's lease and publish (l
 delegation is refused for another agent, a dispatcher that is not its issuer and another
 repository, and the agent it names is the one history records (liquid #515), a chain is refused when a link
 broadens, does not reduce depth, is not linked or is revoked, or has no principal root, and a valid
-chain's publish names its last agent (liquid #517),
+chain's publish names its last agent (liquid #517), a reopened session is refused when its stored
+delegation was widened, unsigned, replaced or issued by another principal, when it has no status or
+is revoked, and a revocation after reopening stops its publish (liquid #516),
 sessions without a capability cannot publish or lease, leases and moves stay inside the
 scopes, finished sessions cannot be reused, and one session cannot release another's lease. `test_daemon.cpp` checks that the same attribution crosses the local wire, while
 `test_plugin_abi.c` is a real C plugin descriptor whose presence, lease, and attribution callbacks

@@ -644,7 +644,10 @@ Git objects and protobuf. Their first runs found five defects, fixed in the same
   identity until `LIQUID_IDENTITY_KEY_CUSTODY` is set (#402); `file` is the explicit opt-in for
   file-permission-only protection. Linux has no Secret Service custody (no D-Bus client), and the
   macOS Keychain custody has no automated test.
-- Delegated sessions trust stored session authority on reopen (#516); see
+- Delegated sessions answer revocation only from the caller's resolver; the CLI's is the local
+  list `$LIQUID_HOME/trust/delegation-revocations`, until Lake serves delegation status. An
+  intermediate link of a delegation chain verifies only when its issuer's identity chain is in this
+  machine's identity store. See
   [`../security/delegation-threat-model.md`](../security/delegation-threat-model.md).
 - `liquid push` and `liquid pull` cannot present a TLS client certificate, so they reach a
   `serve sync --client-ca` listener only through another client; `--token-file` works with them.
