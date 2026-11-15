@@ -14,6 +14,7 @@
 #include <boost/capy/error.hpp>
 #include <boost/capy/ex/this_coro.hpp>
 #include <boost/capy/read.hpp>
+#include <boost/capy/timeout.hpp>
 #include <boost/capy/write.hpp>
 #include <boost/corosio/connect.hpp>
 #include <boost/corosio/openssl_stream.hpp>
@@ -35,6 +36,25 @@ struct parsed_url {
 auto client_error(errc code, std::string message, std::string context = {}) -> error {
     return {code, std::move(message), std::move(context)};
 }
+
+} // namespace
+
+auto plaintext_allowed(std::string_view host) -> bool {
+    auto lower = std::string{host};
+    std::ranges::transform(lower, lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (lower == "localhost" || lower == "::1" || lower.starts_with("127.")) {
+        return true;
+    }
+    if (lower.ends_with(".svc") || lower.ends_with(".svc.cluster.local")) {
+        return true;
+    }
+    const auto* allowed = std::getenv("LIQUID_ALLOW_INSECURE_HTTP");
+    return allowed != nullptr && std::string_view{allowed} == "1";
+}
+
+namespace {
 
 auto parse_url(std::string_view input) -> result<parsed_url> {
     auto output = parsed_url{};
@@ -158,7 +178,10 @@ auto decode_chunked(std::string_view input) -> result<std::vector<std::byte>> {
     }
 }
 
-auto parse_response(std::string wire) -> result<response> {
+// `truncated`: the TLS peer closed without close_notify. That is accepted only for a body whose
+// length the response states (content-length or chunked), which the parse then checks; a body
+// that runs to the close could have been cut by an attacker (liquid#395).
+auto parse_response(std::string wire, bool truncated = false) -> result<response> {
     const auto header_end = wire.find("\r\n\r\n");
     if (header_end == std::string::npos) {
         return std::unexpected(client_error(errc::corrupt, "HTTP response header is truncated"));
@@ -177,6 +200,10 @@ auto parse_response(std::string wire) -> result<response> {
         return output;
     }
     const auto length_text = header_value(header_text, "content-length");
+    if (truncated && length_text.empty()) {
+        return std::unexpected(
+            client_error(errc::corrupt, "HTTP response ended without TLS close_notify"));
+    }
     if (!length_text.empty()) {
         auto length = std::uint64_t{};
         const auto parsed =
@@ -222,23 +249,34 @@ auto wire_request(const parsed_url& url, const request_options& options) -> resu
 }
 
 template <boost::capy::Stream Stream>
-auto exchange(Stream& stream, std::string wire) -> runtime::task<response> {
-    auto [write_error, written] =
-        co_await boost::capy::write(stream, boost::capy::const_buffer(wire.data(), wire.size()));
+auto exchange(Stream& stream, std::string wire, const request_options& options)
+    -> runtime::task<response> {
+    auto [write_error, written] = co_await boost::capy::timeout(
+        boost::capy::write(stream, boost::capy::const_buffer(wire.data(), wire.size())),
+        options.read_timeout);
     if (write_error || written != wire.size()) {
         co_return std::unexpected(client_error(
             errc::io, write_error ? write_error.message() : "short HTTP write", "HTTP client"));
     }
+    // At most the answer's bound plus room for its header, within the read deadline (liquid#436).
+    const auto limit = options.maximum_response_bytes + 64U * 1024U;
     auto input = std::string{};
-    auto [read_error, read] =
-        co_await boost::capy::read(stream, boost::capy::string_dynamic_buffer(&input));
+    auto [read_error, read] = co_await boost::capy::timeout(
+        boost::capy::read(stream, boost::capy::string_dynamic_buffer(&input, limit)),
+        options.read_timeout);
     static_cast<void>(read);
-    const auto clean_tls_close = !input.empty() && read_error.message() == "stream truncated";
-    if (read_error && read_error != boost::capy::error::eof && !clean_tls_close) {
+    if (input.size() >= limit) {
+        co_return std::unexpected(client_error(
+            errc::io, "HTTP response is larger than " +
+                          std::to_string(options.maximum_response_bytes) + " bytes",
+            "HTTP client"));
+    }
+    const auto truncated = !input.empty() && read_error.message() == "stream truncated";
+    if (read_error && read_error != boost::capy::error::eof && !truncated) {
         co_return std::unexpected(client_error(errc::io, read_error.message(), "HTTP client"));
     }
     try {
-        co_return parse_response(std::move(input));
+        co_return parse_response(std::move(input), truncated);
     } catch (const std::exception& exception) {
         co_return std::unexpected(
             client_error(errc::corrupt, exception.what(), "HTTP client response"));
@@ -260,6 +298,25 @@ runtime::task<response> request(request_options options) {
     if (!url) {
         co_return std::unexpected(url.error());
     }
+    // Plain http only where no network attacker sits between (L-10, liquid#392): this machine,
+    // a Kubernetes Service inside the cluster, or anywhere LIQUID_ALLOW_INSECURE_HTTP=1 allows.
+    // Elsewhere it would carry a bearer, a custody data key or a sealing key in the clear, so it
+    // is refused before anything is sent.
+    const bool authorized = std::ranges::any_of(options.headers, [](const auto& header) {
+        auto name = header.first;
+        std::ranges::transform(name, name.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return name == "authorization";
+    });
+    if (!url->tls && (options.sensitive || authorized) && !plaintext_allowed(url->host)) {
+        co_return std::unexpected(client_error(
+            errc::invalid_argument,
+            "refusing plain http to " + url->host +
+                ": use https (plain http is only for loopback, an in-cluster Service, or with "
+                "LIQUID_ALLOW_INSECURE_HTTP=1)",
+            url->host));
+    }
     auto wire = wire_request(*url, options);
     if (!wire) {
         co_return std::unexpected(wire.error());
@@ -280,7 +337,7 @@ runtime::task<response> request(request_options options) {
                 client_error(errc::unavailable, connect_error.message(), url->host));
         }
         if (!url->tls) {
-            co_return co_await exchange(socket, std::move(*wire));
+            co_return co_await exchange(socket, std::move(*wire), options);
         }
         auto context = boost::corosio::tls_context{};
         context.set_hostname(url->host);
@@ -304,7 +361,7 @@ runtime::task<response> request(request_options options) {
             co_return std::unexpected(
                 client_error(errc::unavailable, handshake_error.message(), url->host));
         }
-        auto output = co_await exchange(secure, std::move(*wire));
+        auto output = co_await exchange(secure, std::move(*wire), options);
         auto [shutdown_error] = co_await secure.shutdown();
         static_cast<void>(shutdown_error);
         co_return output;

@@ -1,3 +1,4 @@
+#include "http1/client.hpp"
 #include "identity/custody/common.hpp"
 
 #include <algorithm>
@@ -250,6 +251,14 @@ auto perform_http(std::string method,
     auto parsed = parse_url(url);
     if (!parsed) {
         co_return std::unexpected(parsed.error());
+    }
+    // Every custody request carries key material (a data key to wrap, a wrapped key to open), so
+    // plain http goes only where no network attacker sits between (L-10, liquid#392).
+    if (!parsed->tls && !http1::plaintext_allowed(parsed->host)) {
+        co_return std::unexpected(custody_error(
+            errc::invalid_argument,
+            "refusing plain http to custody endpoint " + parsed->host + ": use https",
+            parsed->host));
     }
     try {
         const auto executor = co_await boost::capy::this_coro::executor;

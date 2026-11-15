@@ -56,7 +56,10 @@ For YAML, JSON, TOML and `.env`, liquid encrypts **leaf values** while leaving k
 and structure in the clear — the SOPS model.
 
 Diffs, reviews and merges keep working. `encrypted_regex`-style rules limit
-encryption to the fields that need it.
+encryption to the fields that need it. Because the pattern comes from the repository and the
+matcher backtracks, a pattern longer than 256 bytes, one that repeats a group that already repeats
+(`(a+)+`), or one with a backreference is refused (`invalid_argument`) instead of run on every path
+(L-33, liquid#406).
 
 Whole-file encryption is the fallback, not the default, because it destroys every
 collaboration property liquid exists to provide.

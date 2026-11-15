@@ -4,6 +4,7 @@
 #include <array>
 #include <map>
 #include <regex>
+#include <vector>
 #include <span>
 
 #include "crypto/crypto.hpp"
@@ -154,7 +155,55 @@ auto pointer_component(std::string_view input) -> std::string {
     return output;
 }
 
+// Why a pattern could backtrack without bound, or empty when it cannot (L-33, liquid#406). The
+// pattern comes from the repository document, and std::regex backtracks, so a nested quantifier
+// (`(a+)+`), a backreference or a very long pattern is refused instead of run on every path.
+auto regex_pattern_problem(std::string_view expression) -> std::string {
+    constexpr auto maximum_pattern = std::size_t{256};
+    if (expression.size() > maximum_pattern) {
+        return "an encryption path pattern is at most 256 bytes";
+    }
+    const auto quantifier = [](char c) { return c == '*' || c == '+' || c == '?' || c == '{'; };
+    auto quantified = std::vector<bool>{};  // per open group: does it hold a quantifier?
+    for (auto index = std::size_t{0}; index < expression.size(); ++index) {
+        const auto c = expression[index];
+        if (c == '\\') {
+            if (index + 1 < expression.size() && expression[index + 1] >= '1' &&
+                expression[index + 1] <= '9') {
+                return "an encryption path pattern cannot use a backreference";
+            }
+            ++index;
+            continue;
+        }
+        if (c == '(') {
+            quantified.push_back(false);
+        } else if (c == ')') {
+            if (quantified.empty()) {
+                return {};  // left to std::regex to report
+            }
+            const auto inner = quantified.back();
+            quantified.pop_back();
+            const auto next = index + 1 < expression.size() ? expression[index + 1] : '\0';
+            if (inner && quantifier(next)) {
+                return "an encryption path pattern cannot repeat a group that already repeats";
+            }
+            if (inner && !quantified.empty()) {
+                quantified.back() = true;
+            }
+            if (quantifier(next) && !quantified.empty()) {
+                quantified.back() = true;
+            }
+        } else if (quantifier(c) && !quantified.empty()) {
+            quantified.back() = true;
+        }
+    }
+    return {};
+}
+
 auto compile_regex(std::string_view expression) -> result<std::regex> {
+    if (const auto problem = regex_pattern_problem(expression); !problem.empty()) {
+        return std::unexpected(leaf_error(errc::invalid_argument, problem, std::string{expression}));
+    }
     try {
         return std::regex{expression.begin(), expression.end(), std::regex::ECMAScript};
     } catch (const std::regex_error& caught) {
