@@ -192,6 +192,7 @@ them from these files.
 | File | Who it lists | Used by |
 |---|---|---|
 | `trust/hot-update-signers` | Identities whose signed patch `liquid hot-update apply` and `status` accept | [hot-update.md](hot-update.md#who-may-sign-a-patch) (liquid#388) |
+| `trust/release-policy-issuers` | Identities allowed to issue the release policy `liquid release verify` accepts | [release-approval.md](release-approval.md#trust-root) (liquid#384) |
 
 Each listed identity must also have its chain in the identity store (`liquid identity trust`): the
 list says who may act, the chain proves that a signature is theirs.

@@ -308,6 +308,11 @@ identity chain is not trusted. `Identity.BackdatedSignatureByCompromisedKeyIsRef
 signer-chosen `signed_at` before the declaration does not rescue a compromised key's signature, and
 `TransparencyTimestamp.SignatureTrustedTimeComesOnlyFromVerifiedEvidence` checks the trusted-time
 evidence that can (liquid#391).
+including compromise-time refusal, refusal of signers whose identity chain is not trusted, and the
+release trust root (liquid#384): a policy from an unpinned issuer, a policy under an empty issuer
+list, and a policy for another repository are refused, and a pinned issuer's policy for its own
+repository passes. `cli/release.cmake` proves the CLI refuses without
+`trust/release-policy-issuers` and refuses a policy replaced by an unpinned repository writer.
 Signer attribution (liquid#383) is covered where each verifier lives: `test_identity.cpp` (chain
 rules and the unknown-signer result), `test_sync.cpp` (identity frames), `attestation/`,
 `admission/`, `build/test_policy.cpp`, `test_hot_update.cpp`, and `cli/release.cmake`. Tests that

@@ -47,7 +47,9 @@ installs the terminal passphrase prompt (echo off, never an argument) that libli
 identity's wrapping key has passphrase custody, reports the wrapping-key custody in `show`, warns
 when only file permissions protect the key, and moves it with `custody --to` (liquid #402). `sign.cpp` signs a canonical digest
 with the active backend. `release.cpp` persists signed release policies and approvals and renders
-the distinct-signer threshold result.
+the distinct-signer threshold result; `verify` builds its trust root from
+`$LIQUID_HOME/trust/release-policy-issuers` and the current repository, never from the repository's
+own files.
 
 `data.cpp` implements branch, list, discard, and promote entirely through `liquid/data.hpp`. It
 prints live branch URLs but never prints configured base URLs. An omitted branch session is a new

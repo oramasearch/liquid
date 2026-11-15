@@ -911,6 +911,9 @@ TEST(ReleaseApproval, threshold_counts_distinct_valid_identities) {
         "2099-01-01T00:00:00Z",
         policy_signer));
     ASSERT_TRUE(policy) << policy.error().message;
+    // liquid#384: the verifier pins the policy issuer and the repository outside the repository.
+    const auto trust = liquid::release_trust{.repository = repository,
+                                             .policy_issuers = {policy_signer.identity().taap_id}};
     auto first_approval =
         liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v1", first));
     auto second_approval =
@@ -921,11 +924,11 @@ TEST(ReleaseApproval, threshold_counts_distinct_valid_identities) {
     // The verifier runs in `third`'s home. Until it trusts the other identities, the policy's
     // issuer is unknown and the policy is refused.
     const auto both = std::array{*first_approval, *second_approval};
-    auto unknown_policy = liquid::verify_release(artifact, *policy, both);
+    auto unknown_policy = liquid::verify_release(artifact, *policy, both, trust);
     ASSERT_FALSE(unknown_policy);
     EXPECT_EQ(unknown_policy.error().code, liquid::errc::unauthorized);
     trust_identities({&policy_signer});
-    auto unknown_approvers = liquid::verify_release(artifact, *policy, both);
+    auto unknown_approvers = liquid::verify_release(artifact, *policy, both, trust);
     ASSERT_TRUE(unknown_approvers) << unknown_approvers.error().message;
     EXPECT_FALSE(unknown_approvers->satisfied);
     EXPECT_TRUE(unknown_approvers->distinct_valid_signers.empty());
@@ -936,18 +939,18 @@ TEST(ReleaseApproval, threshold_counts_distinct_valid_identities) {
     trust_identities({&first, &second});
 
     const auto one = std::array{*first_approval};
-    auto one_result = liquid::verify_release(artifact, *policy, one);
+    auto one_result = liquid::verify_release(artifact, *policy, one, trust);
     ASSERT_TRUE(one_result) << one_result.error().message;
     EXPECT_FALSE(one_result->satisfied);
 
     const auto duplicate = std::array{*first_approval, *first_approval};
-    auto duplicate_result = liquid::verify_release(artifact, *policy, duplicate);
+    auto duplicate_result = liquid::verify_release(artifact, *policy, duplicate, trust);
     ASSERT_TRUE(duplicate_result) << duplicate_result.error().message;
     EXPECT_FALSE(duplicate_result->satisfied);
     EXPECT_EQ(duplicate_result->distinct_valid_signers.size(), 1U);
 
     const auto two = std::array{*first_approval, *second_approval};
-    auto two_result = liquid::verify_release(artifact, *policy, two);
+    auto two_result = liquid::verify_release(artifact, *policy, two, trust);
     ASSERT_TRUE(two_result) << two_result.error().message;
     EXPECT_TRUE(two_result->satisfied);
     EXPECT_EQ(two_result->distinct_valid_signers.size(), 2U);
@@ -981,10 +984,82 @@ TEST(ReleaseApproval, approval_after_declared_compromise_is_rejected) {
     ASSERT_TRUE(rotated) << rotated.error().message;
     trust_identities({&policy_signer, &first});
     const auto approvals = std::array{*first_approval, *second_approval};
-    auto result = liquid::verify_release(artifact, *policy, approvals);
+    const auto trust = liquid::release_trust{.repository = repository,
+                                             .policy_issuers = {policy_signer.identity().taap_id}};
+    auto result = liquid::verify_release(artifact, *policy, approvals, trust);
     ASSERT_TRUE(result) << result.error().message;
     EXPECT_FALSE(result->satisfied);
     EXPECT_EQ(result->distinct_valid_signers.size(), 1U);
+}
+
+// liquid#384: the release policy ships with the repository, so a writer of the repository can sign
+// one naming themselves. Its issuer is authenticated (its chain is held, as sync would leave it),
+// but it is not a pinned release-policy issuer, so the policy is refused.
+TEST(ReleaseApproval, policy_from_an_unpinned_issuer_is_refused) {
+    auto pinned = open_identity("unpinned-pinned");
+    auto attacker = open_identity("unpinned-attacker");
+    auto verifier = open_identity("unpinned-verifier");
+    const auto repository = digest_with(std::byte{0x55});
+    const auto artifact = digest_with(std::byte{0x66});
+    auto policy = liquid::runtime::block_on(liquid::make_release_policy(
+        repository, "targets", 1, {attacker.identity().taap_id}, "2099-01-01T00:00:00Z", attacker));
+    ASSERT_TRUE(policy) << policy.error().message;
+    auto approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v3", attacker));
+    ASSERT_TRUE(approval) << approval.error().message;
+    trust_identities({&pinned, &attacker});
+    const auto approvals = std::array{*approval};
+
+    const auto pinned_trust = liquid::release_trust{.repository = repository,
+                                                    .policy_issuers = {pinned.identity().taap_id}};
+    auto refused = liquid::verify_release(artifact, *policy, approvals, pinned_trust);
+    ASSERT_FALSE(refused) << "a policy from an unpinned issuer authorized a release";
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+    EXPECT_NE(refused.error().message.find("not a configured release-policy issuer"),
+              std::string::npos)
+        << refused.error().message;
+
+    const auto empty_trust = liquid::release_trust{.repository = repository};
+    auto empty = liquid::verify_release(artifact, *policy, approvals, empty_trust);
+    ASSERT_FALSE(empty) << "a policy was accepted with no release-policy issuer configured";
+    EXPECT_EQ(empty.error().code, liquid::errc::unauthorized);
+    static_cast<void>(verifier);
+}
+
+// liquid#384: a pinned issuer's policy names the repository it governs and cannot be replayed to
+// authorize a release of another repository; for its own repository it passes.
+TEST(ReleaseApproval, policy_for_another_repository_is_refused) {
+    auto issuer = open_identity("other-repository-issuer");
+    auto approver = open_identity("other-repository-approver");
+    auto verifier = open_identity("other-repository-verifier");
+    const auto governed = digest_with(std::byte{0x77});
+    const auto released = digest_with(std::byte{0x78});
+    const auto artifact = digest_with(std::byte{0x79});
+    auto policy = liquid::runtime::block_on(liquid::make_release_policy(
+        governed, "targets", 1, {approver.identity().taap_id}, "2099-01-01T00:00:00Z", issuer));
+    ASSERT_TRUE(policy) << policy.error().message;
+    auto approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v4", approver));
+    ASSERT_TRUE(approval) << approval.error().message;
+    trust_identities({&issuer, &approver});
+    const auto approvals = std::array{*approval};
+
+    const auto other = liquid::release_trust{.repository = released,
+                                             .policy_issuers = {issuer.identity().taap_id}};
+    auto refused = liquid::verify_release(artifact, *policy, approvals, other);
+    ASSERT_FALSE(refused) << "a policy for another repository authorized a release";
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+    EXPECT_NE(refused.error().message.find("another repository"), std::string::npos)
+        << refused.error().message;
+
+    const auto own = liquid::release_trust{.repository = governed,
+                                           .policy_issuers = {issuer.identity().taap_id}};
+    auto accepted = liquid::verify_release(artifact, *policy, approvals, own);
+    ASSERT_TRUE(accepted) << accepted.error().message;
+    EXPECT_TRUE(accepted->satisfied);
+    EXPECT_EQ(accepted->distinct_valid_signers,
+              std::vector<std::string>{approver.identity().taap_id});
+    static_cast<void>(verifier);
 }
 
 TEST(TpmCustody, seal_unseal_and_changed_pcr_refusal) {

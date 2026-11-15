@@ -31,6 +31,7 @@ endfunction()
 
 identity(first first_id)
 identity(second second_id)
+identity(policy policy_id)
 
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/policy"
@@ -56,8 +57,25 @@ foreach(name IN ITEMS first second)
   endif()
 endforeach()
 
-# liquid#383: `first` verifies, and it binds a signer's name to a key only through an identity
-# chain it holds. Until it trusts the policy issuer, the policy names an unknown signer.
+# liquid#384: `first` verifies, and the release policy's issuer must be pinned outside the
+# repository. With no `trust/release-policy-issuers` file, every policy is refused and the error
+# names the file to create.
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
+          "${LIQUID_CLI}" release verify "${artifact}"
+  WORKING_DIRECTORY "${LIQUID_RELEASE_ROOT}/repo"
+  RESULT_VARIABLE unpinned_result
+  OUTPUT_VARIABLE unpinned_output
+  ERROR_VARIABLE unpinned_error)
+if(unpinned_result EQUAL 0 OR NOT unpinned_error MATCHES "trust/release-policy-issuers")
+  message(FATAL_ERROR
+    "release verify accepted a policy with no pinned issuer: ${unpinned_error}")
+endif()
+file(WRITE "${LIQUID_RELEASE_ROOT}/first/trust/release-policy-issuers"
+  "# identities allowed to issue this machine's release policies\n${policy_id}\n")
+
+# liquid#383: `first` binds a signer's name to a key only through an identity chain it holds.
+# Until it trusts the policy issuer, the policy names an unknown signer.
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
           "${LIQUID_CLI}" release verify "${artifact}"
@@ -126,6 +144,32 @@ if(NOT verify_result EQUAL 0 OR
    NOT verify_output MATCHES "satisfied=true" OR
    NOT verify_output MATCHES "distinct_valid_signers=2")
   message(FATAL_ERROR "release verify command failed: ${verify_error} ${verify_output}")
+endif()
+
+# liquid#384: `second` writes the repository and replaces the policy with one it signed itself.
+# `first` holds second's chain, but second is not a pinned issuer, so the policy is refused.
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/second"
+          "${LIQUID_CLI}" release policy set --threshold 1 --signer "${second_id}"
+          --not-after 2099-01-01T00:00:00Z
+  WORKING_DIRECTORY "${LIQUID_RELEASE_ROOT}/repo"
+  RESULT_VARIABLE replaced_result
+  ERROR_VARIABLE replaced_error)
+if(NOT replaced_result EQUAL 0)
+  message(FATAL_ERROR "replacing the release policy failed: ${replaced_error}")
+endif()
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
+          "${LIQUID_CLI}" release verify "${artifact}"
+  WORKING_DIRECTORY "${LIQUID_RELEASE_ROOT}/repo"
+  RESULT_VARIABLE replaced_verify_result
+  OUTPUT_VARIABLE replaced_verify_output
+  ERROR_VARIABLE replaced_verify_error)
+if(replaced_verify_result EQUAL 0 OR
+   NOT replaced_verify_error MATCHES "not a configured release-policy issuer")
+  message(FATAL_ERROR
+    "release verify accepted a policy from an unpinned issuer: "
+    "${replaced_verify_error} ${replaced_verify_output}")
 endif()
 
 execute_process(
