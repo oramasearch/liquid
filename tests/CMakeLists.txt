@@ -244,15 +244,34 @@ if(LIQUID_UNSQUASHFS_EXECUTABLE)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_UNSQUASHFS_EXECUTABLE="${LIQUID_UNSQUASHFS_EXECUTABLE}")
 endif()
+# The loopback TLS fixture: a self-signed localhost certificate and its key, made at configure time
+# in the build tree, never committed (L-34, liquid#409): a private key in the repository draws
+# scanner reports and blurs the project's own secret scanning, fixture or not.
+set(LIQUID_TEST_TLS_DIR "${CMAKE_CURRENT_BINARY_DIR}/tls")
+set(LIQUID_TEST_TLS_CERT "${LIQUID_TEST_TLS_DIR}/localhost-cert.pem")
+set(LIQUID_TEST_TLS_KEY "${LIQUID_TEST_TLS_DIR}/localhost-key.pem")
+if(NOT EXISTS "${LIQUID_TEST_TLS_KEY}" OR NOT EXISTS "${LIQUID_TEST_TLS_CERT}")
+  find_program(LIQUID_OPENSSL_EXECUTABLE openssl REQUIRED)
+  file(MAKE_DIRECTORY "${LIQUID_TEST_TLS_DIR}")
+  execute_process(
+    COMMAND "${LIQUID_OPENSSL_EXECUTABLE}" req -x509 -newkey rsa:2048 -nodes -days 3650
+      -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+      -keyout "${LIQUID_TEST_TLS_KEY}" -out "${LIQUID_TEST_TLS_CERT}"
+    RESULT_VARIABLE liquid_test_tls_result
+    OUTPUT_QUIET ERROR_QUIET)
+  if(NOT liquid_test_tls_result EQUAL 0)
+    message(FATAL_ERROR "could not generate the loopback TLS test certificate with openssl")
+  endif()
+endif()
 if(UNIX)
   target_compile_definitions(liquid-tests PRIVATE
     LIQUID_ADMISSION_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/admission"
-    LIQUID_ADMISSION_TLS_CERT="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
-    LIQUID_ADMISSION_TLS_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem")
+    LIQUID_ADMISSION_TLS_CERT="${LIQUID_TEST_TLS_CERT}"
+    LIQUID_ADMISSION_TLS_KEY="${LIQUID_TEST_TLS_KEY}")
 endif()
 target_compile_definitions(liquid-tests PRIVATE
-  LIQUID_TLS_CERTIFICATE="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-cert.pem"
-  LIQUID_TLS_PRIVATE_KEY="${PROJECT_SOURCE_DIR}/tools/reapi-peers/nativelink-tls-key.pem"
+  LIQUID_TLS_CERTIFICATE="${LIQUID_TEST_TLS_CERT}"
+  LIQUID_TLS_PRIVATE_KEY="${LIQUID_TEST_TLS_KEY}"
   LIQUID_SECRET_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/sealed-secret")
 # The version lives in CMakeLists.txt, include/liquid/version.hpp and src/version.cpp.
 # Version.MatchesProjectVersion compares the code with project(VERSION); release-notes-page

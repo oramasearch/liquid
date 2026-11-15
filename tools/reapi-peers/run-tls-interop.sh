@@ -14,8 +14,13 @@ fi
 build_dir=$1
 peer_name=liquid-155-nativelink-tls
 server_log=tools/reapi-peers/liquid-http2-test-server.log
-certificate=tools/reapi-peers/nativelink-tls-cert.pem
-private_key=tools/reapi-peers/nativelink-tls-key.pem
+# The localhost certificate and key the test build made (never committed, liquid#409).
+certificate=$build_dir/tests/tls/localhost-cert.pem
+private_key=$build_dir/tests/tls/localhost-key.pem
+if [[ ! -f $certificate || ! -f $private_key ]]; then
+  echo "run the build's configure step first: $certificate is missing" >&2
+  exit 2
+fi
 
 if [[ $(uname) == Darwin ]]; then
   peer_network=(-p 50053:50053)
@@ -37,7 +42,7 @@ trap cleanup EXIT
 docker rm -f "$peer_name" >/dev/null 2>&1 || true
 docker run -d --rm --name "$peer_name" "${peer_network[@]}" \
   -v "$PWD/tools/reapi-peers/nativelink-tls.json5:/config:ro" \
-  -v "$PWD/tools/reapi-peers:/certs:ro" \
+  -v "$(cd "$(dirname "$certificate")" && pwd):/certs:ro" \
   ghcr.io/tracemachina/nativelink:v1.6.6 /config >/dev/null
 
 for _ in $(seq 1 20); do
