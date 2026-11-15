@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -135,6 +136,15 @@ struct LIQUID_EXPORT sync_server_options {
     // never on a record's claimed `sync_item::author`, so a pusher cannot spend another person's
     // budget by naming them (liquid#508). Empty means `unauthenticated_pusher`.
     std::string pusher;
+    // Uploaded objects are held in a quarantine until a push that reaches them is authorized
+    // (liquid#403): then they enter the store; a refused push discards them. The quarantine holds
+    // at most `upload_quota_bytes` at once, an upload that would exceed it is refused whole with
+    // `errc::busy`, and an object no push claims within `upload_ttl` is discarded.
+    std::uint64_t upload_quota_bytes{std::uint64_t{1} << 30};
+    std::chrono::seconds upload_ttl{std::chrono::hours{1}};
+    // Where the quarantine lives: a private directory is created inside it and removed with the
+    // server. Empty selects the system temporary directory.
+    std::filesystem::path staging_directory;
 };
 
 class LIQUID_EXPORT sync_server {

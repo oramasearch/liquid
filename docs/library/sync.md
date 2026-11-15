@@ -89,7 +89,8 @@ new request key. A legacy authorization failure remains an HTTP error because it
 per-ref reasons.
 
 An optional `Authorization: Bearer <token>` header carries lake authentication. The CLI reads the
-token from `LIQUID_TOKEN`; credentials never appear in the URL or output.
+token from `LIQUID_TOKEN`; credentials never appear in the URL or output. `liquid serve sync
+--token-file` requires the same header on every route ([Local server command](#local-server-command)).
 
 ## Drive client layering
 
@@ -174,6 +175,36 @@ another's key is refused on import (liquid#429). The push authorizer (`sync_auth
 before that import, so the `author` it sees is still a claim; authorize on the authenticated
 caller.
 
+## Upload quarantine (liquid#403)
+
+Uploads arrive before the push that authorizes them, so `sync_server` does not write them to the
+store. `POST /sync/chunks` verifies each frame and stages the objects the store lacks in a
+quarantine: a private directory (mode 0700) created inside `sync_server_options::staging_directory`,
+or the system temporary directory, and removed with the server.
+
+- **Authorized push.** When a push imports anything (at least one ref accepted, or no refs at all),
+  the staged objects its `objects` roots reach move into the store, children first and each digest
+  verified again, before its metadata is imported. The walk follows the same edges as
+  `sync_session::send`, so it reaches every object the push uploaded.
+- **Refused push.** When every ref is refused, an atomic push is refused, flow admission refuses it,
+  or an item's author does not verify, the staged objects its roots reach are discarded. A refused
+  push leaves nothing in the store.
+- **Quota.** The quarantine holds at most `upload_quota_bytes` (default 1 GiB; `serve sync
+  --upload-quota <bytes>`) at once. A chunk request that would exceed it is refused whole with
+  `errc::busy` (HTTP 429, `scope=upload`) and stages nothing. Objects already staged are not
+  charged again. A push whose uploads exceed the quota cannot complete until the quota is raised.
+- **Expiry.** An object no push claims within `upload_ttl` (default one hour) is discarded at the
+  next upload.
+- **Visibility.** `find-missing` answers from the store alone and range reads serve only stored
+  objects, so a staged object is neither visible nor readable, and a retried push uploads it again
+  without being charged twice.
+
+Concurrent pushes share the quarantine. A refused push discards an object a concurrent push also
+uploaded; that push then fails to import and its retry uploads the object again. Authorization still
+runs before anything is stored, and an accepted push moves only what its own roots reach. When
+authorization accepts a push but import then fails validation, its objects are already in the store,
+unreferenced, for collection to remove.
+
 ## Chunk stream
 
 Chunk uploads concatenate the store's unencrypted physical pack-entry frames without a pack file
@@ -229,11 +260,20 @@ the canonical error body also carries `retry_after_ms` and `scope`. The complete
 left unapplied, so a rejected peer operation cannot enter causal history. `max_update_bytes`
 applies to each item's body.
 
+The actor bucket is keyed on an item's author only after that author is proven (liquid#403): before
+admission, every authored item is checked against the author's identity chain, the stored one or
+the one the push carries. An identity frame must hold a valid chain named after its author, and a
+drip or change must be signed by a key in that chain. Any other frame kind that names an author,
+or an item that fails this check, refuses the whole push with that item's index before any budget
+is spent, so a peer cannot exhaust another author's budget with records it cannot sign. Import
+repeats the full verification. The budget remains per author, not per connection: a peer that
+replays an author's genuinely signed records still spends that author's budget.
+
 `sync_endpoint::push` projects a flow rejection into `sync_report::retry_after_ms` and
 `exhausted_scope` rather than hiding the peer's retry signal in transport text. `liquid push`
-prints `flow_rejected scope=<scope> retry_after_ms=<value>` and exits unsuccessfully. Object
-uploads may already exist in the content-addressed store, but the repository document, directory
-documents, drips, changes, and refs remain unchanged.
+prints `flow_rejected scope=<scope> retry_after_ms=<value>` and exits unsuccessfully. A rejected
+push leaves the repository document, directory documents, drips, changes, refs, and the store
+unchanged: its uploads are discarded with it.
 
 ### Retrying a refusal that carries `Retry-After`
 
@@ -321,8 +361,8 @@ exception leaves the coroutine boundary.
 
 The server imports shared drip, change, and directory metadata with the accepted ref frames, leaves
 refused refs at their pre-push heads, and returns one `sync_ref_outcome` per requested ref. When no
-ref is accepted, it skips metadata import entirely. Object uploads happen before authorization and
-remain in the content-addressed store regardless of every outcome. With `atomic: true`, any refusal
+ref is accepted, it skips metadata import entirely and discards the push's quarantined uploads.
+Graph walks read change records from the store or the quarantine. With `atomic: true`, any refusal
 prevents metadata import: originally refused refs retain their reasons, and otherwise accepted refs
 use `atomic push refused because another reference was refused`.
 
@@ -419,9 +459,28 @@ vendored `oramasearch/http` router and serializer. It binds `127.0.0.1:8080` by 
 `--listen <address>` and `--port <port>` select another listener. Repeating `--allow-ref <glob>`
 installs a reference policy that permits only names matching at least one supplied glob; `*`
 matches any sequence and `?` matches one character. A disallowed ref is refused while allowed refs
-from the same non-atomic push apply. Without that flag the command supplies no authentication
-policy. Keep the loopback default for local exchange, or embed `sync_server` with an authorization
-callback when exposing a service boundary.
+from the same non-atomic push apply. `--upload-quota <bytes>` sets the quarantine quota.
+
+Transport security and authentication (liquid#403) use the `listener_security` rules shared with
+`serve reapi` ([`liquid/listener.hpp`](../../include/liquid/listener.hpp)):
+
+- A listener on any address other than `127.0.0.0/8` or `::1` is refused at startup, before the
+  repository is opened, unless it has TLS (`--tls-cert` and `--tls-key`) **and** client
+  authentication: `--token-file <path>` or `--client-ca <path>`. There is no plaintext mode off
+  loopback.
+- `--token-file` reads a bearer token from a regular file owned by the user running liquid with no
+  group or other permissions; the token never travels in argv. Every route then requires
+  `Authorization: Bearer <token>`, compared in constant time, and a request without it is answered
+  `401 unauthorized` before its body is read. Clients send it from `LIQUID_TOKEN`.
+- `--client-ca` requires every TLS client to present a certificate that CA signs; the handshake fails
+  otherwise. `liquid push` and `liquid pull` do not yet present client certificates, so they reach
+  such a listener only through another client or a terminating proxy; use `--token-file` for them.
+- Each connection serves one request (`Connection: close`) and a request body is limited to 64 MiB,
+  so the per-connection upload bound is the request bound; the quarantine quota bounds all staged
+  uploads together.
+
+`--allow-ref` is authorization, not authentication: it decides which refs an authenticated client
+may move. Embed `sync_server` with an authorization callback for any other policy.
 
 ## How to verify
 
@@ -429,8 +488,11 @@ The sync tests exchange two on-disk repositories through `sync_server`, prove th
 exchange transfers only newly introduced chunks, retry unchanged metadata, and pull into an empty
 repository. They also corrupt a TAAP signature, associate newly reachable changes with their refs,
 report false for a divergent update's fast-forward field, apply mixed outcomes, preserve refusal
-reasons, keep an all-refused repository unchanged, retain uploaded objects, make atomic pushes
-all-or-nothing, convert an authorizer exception into per-ref refusals, and decode a legacy reply.
-The CLI test spawns `liquid serve sync --allow-ref main`, observes one line per ref for ordinary and
-atomic pushes, and runs the real `liquid push` and `liquid pull` commands. Static, shared, and
+reasons, keep an all-refused repository unchanged, leave no uploaded object of a refused push in the
+store, quarantine uploads under the quota and refuse a push beyond it, keep a forged author from
+spending the named author's flow budget, make atomic pushes all-or-nothing, convert an authorizer
+exception into per-ref refusals, and decode a legacy reply. The CLI tests spawn `liquid serve sync
+--allow-ref main`, observe one line per ref for ordinary and atomic pushes, run the real `liquid
+push` and `liquid pull` commands, and require `--token-file` to refuse a missing or wrong token;
+`cli-serve-listen` requires every insecure non-loopback listener to be refused. Static, shared, and
 Linux-container proofs run these tests with the rest of the suite.

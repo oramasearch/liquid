@@ -61,6 +61,20 @@ expect_refused("reapi group-readable token file" "readable only by its owner"
 expect_refused("reapi certificate without key" "must be given together"
   serve reapi --listen 127.0.0.1:50991 --tls-cert cert.pem)
 
+set(repository "${LIQUID_SERVE_ROOT}/repository")
+expect_refused("sync plaintext on any address" "${off_loopback}"
+  serve sync "${repository}" --listen 0.0.0.0 --port 50992)
+expect_refused("sync plaintext on an IPv6 address" "${off_loopback}"
+  serve sync "${repository}" --listen :: --port 50992)
+expect_refused("sync token without TLS" "${off_loopback}"
+  serve sync "${repository}" --listen 0.0.0.0 --port 50992 --token-file "${token_file}")
+expect_refused("sync TLS without authentication" "${off_loopback}"
+  serve sync "${repository}" --listen 0.0.0.0 --port 50992 --tls-cert cert.pem --tls-key key.pem)
+expect_refused("sync group-readable token file" "readable only by its owner"
+  serve sync "${repository}" --port 50992 --token-file "${shared_token_file}")
+expect_refused("sync zero upload quota" "usage"
+  serve sync "${repository}" --port 50992 --upload-quota 0)
+
 execute_process(
   COMMAND "${CMAKE_COMMAND}" -E env
     "LIQUID_HOME=${identity_home}"

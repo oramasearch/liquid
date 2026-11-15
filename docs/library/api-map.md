@@ -740,6 +740,8 @@ bool bearer_authorized(std::string_view expected, std::string_view authorization
 ```
 
 Shared by `serve_reapi` and the `liquid serve sync` adapter. Plaintext is served only on loopback.
+`sync_server_options` adds `upload_quota_bytes`, `upload_ttl`, and `staging_directory` for the
+upload quarantine that keeps a push's objects out of the store until it is authorized (#403).
 
 ### `liquid/sync.hpp`
 

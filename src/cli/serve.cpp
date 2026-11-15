@@ -24,6 +24,8 @@
 #include <boost/capy/buffers/vector_dynamic_buffer.hpp>
 #include <boost/capy/read.hpp>
 #include <boost/corosio.hpp>
+#include <boost/corosio/openssl_stream.hpp>
+#include <boost/corosio/tls_context.hpp>
 #include <boost/http.hpp>
 #include <boost/http/server/http_worker.hpp>
 
@@ -54,7 +56,8 @@ auto fail(const liquid::error& error) -> int {
 auto usage() -> int {
     std::println(stderr,
                  "error: usage: serve sync <path> [--listen <address>] [--port <port>] "
-                 "[--allow-ref <glob>]...");
+                 "[--allow-ref <glob>]... [--tls-cert <path> --tls-key <path>] "
+                 "[--token-file <path>] [--client-ca <path>] [--upload-quota <bytes>]");
     return 2;
 }
 
@@ -224,31 +227,69 @@ auto handle_range(liquid::sync_server& server, boost::http::route_params& params
     co_return co_await send_bytes(params, boost::http::status::ok, sync_content_type, body);
 }
 
-auto make_router(liquid::sync_server& server) -> boost::http::router<boost::http::route_params> {
+// True when no bearer token is configured, or the request carries exactly one `Authorization`
+// header holding it. The comparison is constant-time (liquid#403).
+auto authorized(const std::string& token, const boost::http::route_params& params) -> bool {
+    if (token.empty()) {
+        return true;
+    }
+    if (params.req.count(boost::http::field::authorization) != 1) {
+        return false;
+    }
+    const auto value = params.req.value_or(boost::http::field::authorization, "");
+    return liquid::bearer_authorized(token, std::string_view{value.data(), value.size()});
+}
+
+// Refuses an unauthenticated request before its body is read.
+auto send_unauthorized(boost::http::route_params& params) -> boost::http::route_task {
+    co_return co_await send_error(params,
+                                  liquid::error{liquid::errc::unauthorized,
+                                                "repository authentication required",
+                                                "Authorization"});
+}
+
+auto make_router(liquid::sync_server& server, const std::string& token)
+    -> boost::http::router<boost::http::route_params> {
     auto router = boost::http::router<boost::http::route_params>{};
+    const auto* required = &token;
     router.add(boost::http::method::post,
                "/sync/push",
-               [&server](boost::http::route_params& params) -> boost::http::route_task {
+               [&server, required](boost::http::route_params& params) -> boost::http::route_task {
+                   if (!authorized(*required, params)) {
+                       co_return co_await send_unauthorized(params);
+                   }
                    co_return co_await handle_post(server, params, post_operation::push);
                });
     router.add(boost::http::method::post,
                "/sync/pull",
-               [&server](boost::http::route_params& params) -> boost::http::route_task {
+               [&server, required](boost::http::route_params& params) -> boost::http::route_task {
+                   if (!authorized(*required, params)) {
+                       co_return co_await send_unauthorized(params);
+                   }
                    co_return co_await handle_post(server, params, post_operation::pull);
                });
     router.add(boost::http::method::post,
                "/sync/find-missing",
-               [&server](boost::http::route_params& params) -> boost::http::route_task {
+               [&server, required](boost::http::route_params& params) -> boost::http::route_task {
+                   if (!authorized(*required, params)) {
+                       co_return co_await send_unauthorized(params);
+                   }
                    co_return co_await handle_post(server, params, post_operation::find_missing);
                });
     router.add(boost::http::method::post,
                "/sync/chunks",
-               [&server](boost::http::route_params& params) -> boost::http::route_task {
+               [&server, required](boost::http::route_params& params) -> boost::http::route_task {
+                   if (!authorized(*required, params)) {
+                       co_return co_await send_unauthorized(params);
+                   }
                    co_return co_await handle_post(server, params, post_operation::chunks);
                });
     router.add(boost::http::method::get,
                "/sync/chunks/:digest",
-               [&server](boost::http::route_params& params) -> boost::http::route_task {
+               [&server, required](boost::http::route_params& params) -> boost::http::route_task {
+                   if (!authorized(*required, params)) {
+                       co_return co_await send_unauthorized(params);
+                   }
                    co_return co_await handle_range(server, params);
                });
     return router;
@@ -263,16 +304,17 @@ protected:
     boost::corosio::tcp_socket socket_;
 };
 
-class sync_worker final : private worker_socket,
-                          public boost::corosio::tcp_server::worker_base,
-                          public boost::http::http_worker {
+// One accepted connection at a time. With TLS the socket is wrapped in Corosio's OpenSSL stream;
+// a failed handshake, including a missing or untrusted client certificate, closes the connection.
+class sync_worker final : private worker_socket, public boost::corosio::tcp_server::worker_base {
 public:
     sync_worker(boost::corosio::io_context& context,
                 boost::http::router<boost::http::route_params> router,
                 boost::http::shared_parser_config parser,
-                boost::http::shared_serializer_config serializer)
-        : worker_socket(context),
-          http_worker(socket_, std::move(router), std::move(parser), std::move(serializer)) {}
+                boost::http::shared_serializer_config serializer,
+                std::shared_ptr<boost::corosio::tls_context> tls)
+        : worker_socket(context), router_(std::move(router)), parser_(std::move(parser)),
+          serializer_(std::move(serializer)), tls_(std::move(tls)) {}
 
     auto socket() -> boost::corosio::tcp_socket& override {
         return socket_;
@@ -284,13 +326,30 @@ public:
 
 private:
     auto session() -> boost::capy::task<void> {
-        co_await do_http_session();
+        if (!tls_) {
+            auto worker = boost::http::http_worker{socket_, router_, parser_, serializer_};
+            co_await worker.do_http_session();
+        } else {
+            auto secure = boost::corosio::openssl_stream{&socket_, *tls_};
+            auto [handshake_error] =
+                co_await secure.handshake(boost::corosio::openssl_stream::server);
+            if (!handshake_error) {
+                auto worker = boost::http::http_worker{secure, router_, parser_, serializer_};
+                co_await worker.do_http_session();
+            }
+        }
         socket_.close();
     }
+
+    boost::http::router<boost::http::route_params> router_;
+    boost::http::shared_parser_config parser_;
+    boost::http::shared_serializer_config serializer_;
+    std::shared_ptr<boost::corosio::tls_context> tls_;
 };
 
 auto make_workers(boost::corosio::io_context& context,
-                  boost::http::router<boost::http::route_params> router)
+                  boost::http::router<boost::http::route_params> router,
+                  const std::shared_ptr<boost::corosio::tls_context>& tls)
     -> std::vector<std::unique_ptr<boost::corosio::tcp_server::worker_base>> {
     auto parser_options = boost::http::parser_config{true};
     parser_options.body_limit = maximum_body_size;
@@ -298,7 +357,7 @@ auto make_workers(boost::corosio::io_context& context,
     auto serializer = boost::http::make_serializer_config(boost::http::serializer_config{});
     auto workers = std::vector<std::unique_ptr<boost::corosio::tcp_server::worker_base>>{};
     for (auto count = 0; count < 32; ++count) {
-        workers.push_back(std::make_unique<sync_worker>(context, router, parser, serializer));
+        workers.push_back(std::make_unique<sync_worker>(context, router, parser, serializer, tls));
     }
     return workers;
 }
@@ -306,17 +365,56 @@ auto make_workers(boost::corosio::io_context& context,
 class sync_http_server final : public boost::corosio::tcp_server {
 public:
     sync_http_server(boost::corosio::io_context& context,
-                     boost::http::router<boost::http::route_params> router)
+                     boost::http::router<boost::http::route_params> router,
+                     const std::shared_ptr<boost::corosio::tls_context>& tls)
         : tcp_server(context, context.get_executor()) {
-        set_workers(make_workers(context, std::move(router)));
+        set_workers(make_workers(context, std::move(router), tls));
     }
 };
+
+// The TLS context of the sync listener: its certificate chain and key, and, with a client CA, a
+// required client certificate that CA signs (mutual TLS). Null when TLS is not configured.
+auto sync_tls_context(const liquid::listener_security& security)
+    -> liquid::result<std::shared_ptr<boost::corosio::tls_context>> {
+    if (!security.tls_certificate || !security.tls_key) {
+        return std::shared_ptr<boost::corosio::tls_context>{};
+    }
+    const auto refused = [](std::error_code code, std::string context) {
+        return std::unexpected(
+            liquid::error{liquid::errc::invalid_argument, code.message(), std::move(context)});
+    };
+    auto tls = std::make_shared<boost::corosio::tls_context>();
+    const auto certificate = security.tls_certificate->string();
+    if (const auto code = tls->use_certificate_chain_file(certificate)) {
+        return refused(code, certificate);
+    }
+    const auto key = security.tls_key->string();
+    if (const auto code = tls->use_private_key_file(key, boost::corosio::tls_file_format::pem)) {
+        return refused(code, key);
+    }
+    if (const auto code = tls->set_alpn({"http/1.1"})) {
+        return refused(code, "sync TLS ALPN");
+    }
+    if (security.client_certificate_authority) {
+        const auto authority = security.client_certificate_authority->string();
+        if (const auto code = tls->load_verify_file(authority)) {
+            return refused(code, authority);
+        }
+        if (const auto code = tls->set_verify_mode(boost::corosio::tls_verify_mode::require_peer)) {
+            return refused(code, "sync client TLS");
+        }
+    }
+    return tls;
+}
 
 struct serve_options {
     std::filesystem::path path;
     std::string address{"127.0.0.1"};
     std::uint16_t port{8080};
     std::vector<std::string> allowed_refs;
+    liquid::listener_security security;
+    std::optional<std::filesystem::path> token_file;
+    std::optional<std::uint64_t> upload_quota;
 };
 
 auto glob_matches(std::string_view pattern, std::string_view value) -> bool {
@@ -379,6 +477,30 @@ auto parse_options(int argc, char** argv) -> std::optional<serve_options> {
         }
         if (name == "--allow-ref" && !value.empty()) {
             options.allowed_refs.emplace_back(value);
+            continue;
+        }
+        if (name == "--tls-cert" && !value.empty()) {
+            options.security.tls_certificate = std::filesystem::path{value};
+            continue;
+        }
+        if (name == "--tls-key" && !value.empty()) {
+            options.security.tls_key = std::filesystem::path{value};
+            continue;
+        }
+        if (name == "--client-ca" && !value.empty()) {
+            options.security.client_certificate_authority = std::filesystem::path{value};
+            continue;
+        }
+        if (name == "--token-file" && !value.empty()) {
+            options.token_file = std::filesystem::path{value};
+            continue;
+        }
+        if (name == "--upload-quota") {
+            const auto quota = parse_number(value);
+            if (!quota || *quota == 0) {
+                return std::nullopt;
+            }
+            options.upload_quota = *quota;
             continue;
         }
         if (name != "--port") {
@@ -590,6 +712,24 @@ auto serve(int argc, char** argv) -> int {
     if (!options) {
         return usage();
     }
+    // The bearer token comes from an owner-only file, never argv (liquid#403).
+    if (options->token_file) {
+        auto token = liquid::read_token_file(*options->token_file);
+        if (!token) {
+            return fail(token.error());
+        }
+        options->security.bearer_token = std::move(*token);
+    }
+    // Plaintext and unauthenticated service only on loopback.
+    const auto secured = liquid::validate_listener_security(
+        liquid::is_loopback_address(options->address), options->security);
+    if (!secured) {
+        return fail(secured.error());
+    }
+    auto tls = sync_tls_context(options->security);
+    if (!tls) {
+        return fail(tls.error());
+    }
     auto opened = liquid::runtime::block_on(liquid::repository::open(options->path));
     if (!opened) {
         return fail(opened.error());
@@ -599,15 +739,20 @@ auto serve(int argc, char** argv) -> int {
         if (!options->allowed_refs.empty()) {
             server_options.authorize = reference_authorizer(std::move(options->allowed_refs));
         }
+        if (options->upload_quota) {
+            server_options.upload_quota_bytes = *options->upload_quota;
+        }
         auto handler = liquid::sync_server{*opened, std::move(server_options)};
         auto context = boost::corosio::io_context{};
-        auto server = sync_http_server{context, make_router(handler)};
+        auto server =
+            sync_http_server{context, make_router(handler, options->security.bearer_token), *tls};
         auto address = boost::corosio::endpoint{options->address};
         auto bound = server.bind(boost::corosio::endpoint{address, options->port});
         if (bound) {
             return fail(liquid::error{liquid::errc::io, bound.message(), "serve sync listener"});
         }
-        std::println("listening=http://{}:{}", options->address, options->port);
+        std::println(
+            "listening={}://{}:{}", *tls ? "https" : "http", options->address, options->port);
         server.start();
         context.run();
         return 0;

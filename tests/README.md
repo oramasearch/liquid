@@ -240,11 +240,16 @@ server behind a small socket transport dispatched on the shared runtime, measure
 bytes across repeated pushes, pulls into an empty repository, and rejects a corrupted TAAP
 signature without changing state. It checks change-to-ref context, derives false fast-forward
 state for divergent history, applies mixed per-ref outcomes, preserves exact reasons, keeps
-all-refused and atomic pushes unchanged, retains uploaded objects, converts callback exceptions to
+all-refused and atomic pushes unchanged, discards a refused push's uploads, converts callback exceptions to
 refusals, and reads a legacy reply. Metadata-only receipt verifies tree and blob records while
 leaving every payload chunk remote. A chunk upload repeating one small compressed 16 MiB frame is
 refused, with nothing stored, once its frames declare more than the 64 MiB decoded budget, and
 accepted at the budget (liquid#435). Its CLI case starts the real `serve sync --allow-ref main`
+leaving every payload chunk remote. Its liquid#403 cases leave no uploaded object of a refused push in
+the store, keep uploads out of `find-missing` and range reads until a push authorizes them, refuse
+uploads and a push beyond the upload quota, keep a forged author from spending the named author's
+flow budget, and require `serve sync --token-file` to refuse a missing or wrong token.
+Its CLI case starts the real `serve sync --allow-ref main`
 refusals, reads a legacy reply, and proves a flow-refused push leaves repository metadata
 unchanged. Its CLI case starts the real `serve sync --allow-ref main`
 process, checks ordinary and atomic per-ref output, and invokes the real push and pull commands. The

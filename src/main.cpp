@@ -251,7 +251,7 @@ constexpr auto flags_deploy = std::to_array<flag>({
 constexpr auto flags_serve = std::to_array<flag>({
     {"--listen",
      "<address>",
-     "Select the listener address. A REAPI listener off loopback requires TLS and "
+     "Select the listener address. A sync or REAPI listener off loopback requires TLS and "
      "--token-file or --client-ca.",
      "127.0.0.1"},
     {"--port", "<port>", "Select the sync listener port.", "8080"},
@@ -265,12 +265,16 @@ constexpr auto flags_serve = std::to_array<flag>({
     {"--tls-key", "<path>", "Read the listener TLS private key from this file.", "none"},
     {"--client-ca",
      "<path>",
-     "Require a REAPI client certificate signed by this CA (mutual TLS).",
+     "Require a sync or REAPI client certificate signed by this CA (mutual TLS).",
      "none"},
     {"--token-file",
      "<path>",
-     "Require on every REAPI request the bearer token in this owner-only file.",
+     "Require on every sync or REAPI request the bearer token in this owner-only file.",
      "none"},
+    {"--upload-quota",
+     "<bytes>",
+     "Hold at most this many uploaded sync bytes before a push authorizes them.",
+     "1073741824"},
     {"--attestation-source", "<url>", "Read admission attestations from this source.", "none"},
     {"--store", "<path>", "Read admission attestations from this store.", "none"},
     {"--log-cache", "<path>", "Store admission log cache data at this path.", "none"},
