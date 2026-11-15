@@ -70,7 +70,7 @@ built binary under the build directory before CTest compares it with the committ
 | `daemon` | `daemon [start \| stop \| --shutdown]` | Start or stop the checkout daemon; stopping with none running says `no daemon is running`. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
 | `inspect` | `inspect <path\|digest> [--json]` | Show the selected format codec, tier, and decoded entry tree. | available |
-| `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, or `log scan <log-url> <identity>` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
+| `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, `log scan <log-url> <identity>`, or `log trust <log-url> [--confirm <fingerprint>]` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
 | `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
 | `blame` | `blame <path> [--json]` | Show the session and change that last wrote each line. | available on macOS and Linux |
 | `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]\|pin <path>\|unpin <path>>` | Synchronize, inspect, pin, or unpin a configured drive folder. | available |
@@ -332,7 +332,13 @@ Lake checkpoint, tile, and proof authentication remains the separate `#207` veri
 signed Lake checkpoint and records trusted state. `log consistency <log-url>` accepts only an
 append-only extension of that record. `log scan <log-url> <identity>` validates the bulk tiles and
 prints matching canonical attestations. `verify --log <log-url>` requires inclusion for every
-agreeing reproducibility attestation.
+agreeing reproducibility attestation. Each of them checks the log against its pin in
+`$LIQUID_HOME/trust/transparency/` (the log's key, witnesses, and threshold) and refuses when there
+is no pin; nothing the log says about its own key or witnesses is trusted. `log trust <log-url>`
+prints what the log claims and a fingerprint, and pins nothing; `log trust <log-url> --confirm
+<fingerprint>` writes the pin only if the log still matches that fingerprint. Plain `http://` log
+URLs are refused unless the host is loopback
+([pin format](../library/transparency.md#pinned-log-key-and-witness-policy-389)).
 
 `anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
@@ -472,8 +478,9 @@ paths, and `revalidated` (`disjoint`, `forced`, or null) from the signed body.
 `log verify <log-url> <attestation-base64url>` validates exact canonical-TAAP inclusion in a
 signed checkpoint and records it in the current repository. `log consistency <log-url>` advances
 that record only when Lake provides a valid append-only proof. `log scan <log-url> <identity>`
-lists canonical entries naming the identity. A first accepted checkpoint prints
-`bootstrap_warning=true`; operators should record that trust decision. `verify --log <log-url>`
+lists canonical entries naming the identity. Every one of them needs the log's pin first (`log
+trust`, liquid #389). A first accepted checkpoint prints `bootstrap_warning=true`; operators should
+record that trust decision. `verify --log <log-url>`
 requires the agreeing action's reproducibility attestation to be included in the same verified log.
 The existing `log --ops` and `log --json` options may be supplied in either order.
 

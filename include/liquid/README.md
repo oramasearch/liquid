@@ -95,4 +95,8 @@ pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay 
 
 `transparency.hpp` provides `http_log_source::create()` for local URL validation through
 `result<http_log_source>`. Existing string construction retains errors for request operations;
-see [the contract](../../docs/library/transparency.md#http-url-validation-289).
+see [the contract](../../docs/library/transparency.md#http-url-validation-289). Every verifying
+`log_client` operation takes the caller's `log_trust` pin, and `load_log_trust`,
+`save_log_trust`, `parse_log_trust` and `format_log_trust` handle the
+`$LIQUID_HOME/trust/transparency/` pin file
+([pinned trust](../../docs/library/transparency.md#pinned-log-key-and-witness-policy-389)).

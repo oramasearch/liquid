@@ -227,7 +227,13 @@ full or partial tile is reauthenticated through its parents to the selected chec
 tile bytes receive the same complete walk, and consistency verification completes that walk before
 it requests a proof. HTTP log source construction reports invalid URLs through the public
 result model; legacy request operations retain the validation error. `log scan`, `log consistency`,
-and `log verify` reject malformed URLs locally with exit 2 (liquid #289).
+and `log verify` reject malformed URLs locally with exit 2 (liquid #289), and plain `http://` is
+refused unless the host is loopback. The log's key, witness set, and witness threshold come only
+from a pin the caller supplies, never from the log: the CLI reads it from
+`$LIQUID_HOME/trust/transparency/` and refuses when none exists, a pinned threshold cannot be
+lowered by the log, a key change is refused, and cosignatures from unpinned witnesses do not count.
+`liquid log trust <log-url> [--confirm <fingerprint>]` is the explicit, confirmed first-use pin
+(liquid #389).
 Complete transparency inclusion verification checks signed checkpoints, witness quorum, tiles, and
 proofs before log mode accepts a record. Strict DER, CMS, and X.509 parsing plus verification-only
 RSA and ECDSA validate RFC 3161 checkpoint timestamps and RFC 4998 renewal chains against

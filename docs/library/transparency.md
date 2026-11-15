@@ -105,8 +105,13 @@ error before entering the HTTP transport. New callers should use the factory to 
 error at construction. This also protects existing admission and verification callers without
 changing their proof or trust behavior.
 
-`log scan`, `log consistency`, and `log verify` use the factory before opening a repository
-or decoding an attestation. Invalid URLs print the specific correction and exit **2** (invalid
+Plain `http://` is accepted only when the host is loopback: `localhost`, an IPv4 address in
+`127.0.0.0/8`, or `::1` (liquid #389). Anyone on the path of a plain-HTTP request can forge every
+response, so any other `http://` URL is refused with an `invalid_argument` diagnostic naming the
+loopback rule; use `https://`. Admission policies apply the same rule to `log.lake` when they load.
+
+`log scan`, `log consistency`, `log verify`, and `log trust` use the factory before opening a
+repository or decoding an attestation. Invalid URLs print the specific correction and exit **2** (invalid
 usage); a valid URL's failed operation still exits **1**, as the
 [command reference](../reference/cli/log.md#exit-status) specifies.
 
@@ -152,13 +157,73 @@ add newly received tiles to the cache. A successful walk replaces the cache with
 for that checkpoint, which drops superseded partial widths instead of retaining one version per log
 append.
 
-Callers that already hold trust anchors can pass `log_trust` to `current_checkpoint` or the
-repository-independent `verify_inclusion` overload. That path never consults the source's identity
-or witness-configuration endpoints: it verifies the selected checkpoint against the supplied
-identity and witnesses, then performs the same complete tile walk and checkpoint-bound inclusion
-proof. Admission policy sets use this overload so network responses cannot redefine cluster trust.
-The repository-backed overload retains its existing trusted-checkpoint persistence for CLI and
-repository workflows.
+### Pinned log key and witness policy (#389)
+
+Every verifying `log_client` operation (`current_checkpoint`, both `verify_inclusion` overloads,
+`verify_consistency`, and `scan`) takes a caller-supplied `log_trust`: the log's Ed25519 key and
+TAAP identifier, the witnesses whose cosignatures count, and the threshold. No operation reads the
+source's `identity()` or `configuration()`, Lake's `/v1/identity` or
+`/v1/transparency_log_configuration`. Before this change the repository-backed overloads, the
+consistency check, and scans took the key and the threshold from those endpoints, so a malicious
+log, or anyone on the path of a plain-HTTP log, could answer with its own key and
+`witness_threshold: 0` and witness cosigning gave no split-view protection.
+
+With the pin in place:
+
+- A checkpoint signed under any other identifier is refused with `checkpoint is not signed by the
+  pinned log key`; one signed by another key under the pinned identifier fails its signature check.
+  A log that changes its key is never re-pinned automatically.
+- The pinned threshold is the only one applied. The log's own threshold is not read, so a log cannot
+  lower it.
+- Only cosignatures from pinned witness keys count. A valid signature from any other witness,
+  including one the log lists in its own configuration, is ignored.
+- `validate_log_trust` refuses an unusable pin before any request: a key that is not 32 bytes under
+  a `taap:1:ed25519:` identifier, a witness with no endpoint or a repeated key, or a threshold above
+  the number of pinned witnesses. A threshold of zero is accepted only because it is written in the
+  pin; it means no witness protection.
+
+Library callers (Lake, liquify, admission policy sets) pass their own `log_trust`. The `liquid`
+CLI and the repository workflows read it from the user's liquid home, `$LIQUID_HOME` or else
+`$HOME/.liquid`, through `load_log_trust(url)`:
+
+```text
+$LIQUID_HOME/trust/transparency/<name>
+```
+
+`<name>` is `log_trust_file_name(url)`: the URL without `https://` (or with `http://` replaced by
+`http-`), without trailing slashes, and with every character other than ASCII letters, digits, `.`
+and `-` replaced by `_`. `https://lake.example:8443/log` is `lake.example_8443_log`. A name over 160
+characters keeps its first 160 and adds `-` and 16 hexadecimal digits of the URL's SHA-256. Nothing
+under `trust/` is ever read from a repository, a clone, a sync peer, or a log. A missing file is
+`errc::not_configured`, and the message names the file to create: verification fails closed.
+
+The file is a small line format, like the other files under `trust/`. Blank lines and lines starting
+with `#` are ignored; each other line is a directive and space-separated values:
+
+```text
+# liquid transparency-log pin (liquid#389).
+version liquid_log_pin/1
+log https://lake.example
+key taap:1:ed25519:<id> <64 lowercase hex digits of the Ed25519 public key>
+witness https://witness-1.example/checkpoint <64 lowercase hex digits>
+witness https://witness-2.example/checkpoint <64 lowercase hex digits>
+threshold 2
+```
+
+`version`, `log`, `key`, and `threshold` appear exactly once; `witness` appears once per pinned
+witness. The `log` line must name the URL being verified, so a pin copied to another log's file is
+refused. Unknown directives, repeated lines, and files over 64 KiB are refused.
+`parse_log_trust` and `format_log_trust` read and write this format; `save_log_trust` creates a new
+file and refuses to replace an existing one (`errc::already_exists`).
+
+`liquid log trust <log-url>` is the explicit trust-on-first-use step, and nothing runs it
+implicitly. It refuses when a pin already exists. Otherwise it reads what the log says its key,
+witnesses, and threshold are, checks that the current checkpoint verifies under them, prints the
+pin file it would write and `fingerprint=sha256:<hex>` (the SHA-256 of that text), and pins
+nothing. After checking the key and witnesses with the log's operator, run
+`liquid log trust <log-url> --confirm <fingerprint>`: it reads the log again and writes the pin only
+if the text has exactly that fingerprint. A log that reports a threshold of zero gets a warning that
+such a pin gives no split-view protection. To change a pin, edit or remove its file; a log cannot.
 
 An inclusion proof must bind the supplied exact canonical TAAP bytes, leaf index, tree size, root,
 and checkpoint. Before a consistency proof is requested or a bootstrap checkpoint is stored, the
@@ -171,6 +236,7 @@ The most recent accepted checkpoint is a canonical-CBOR repository metadata reco
 SHA-256-derived log name, not a separate database. On first use, operators can pin a checkpoint
 with `bootstrap_policy::pinned`; `accept_with_warning` returns a recorded bootstrap warning.
 
+Each command below loads the log's pin first and refuses when there is none.
 `liquid log verify <log-url> <attestation-base64url>` verifies inclusion and records its checkpoint.
 `liquid log consistency <log-url>` advances trusted state only through a consistency proof.
 `liquid log scan <log-url> <identity>` returns matching canonical attestations. `liquid verify
@@ -180,8 +246,9 @@ timestamps <log-url>` and `liquid log verify --timestamps` retain the RFC 3161/R
 
 `cli-verify-log` exercises that policy through the CLI handler. It stores a signed, agreeing
 `reproducibility/1` attestation in a temporary repository and serves the matching checkpoint, entry
-tile, and inclusion proof over loopback HTTP. It also requires missing, tampered, and unavailable
-inclusion to fail; without `--log`, verification retains its local-only policy. The test injects
+tile, and inclusion proof over loopback HTTP. It requires the unpinned log to be refused, then pins
+it and requires verification to pass. It also requires a pin whose witness threshold is higher than
+the one the log reports, and missing, tampered, and unavailable inclusion, to fail; without `--log`, verification retains its local-only policy. The test injects
 only the already-completed verification report, so it can cover the CLI policy without a sandbox
 mount. `cli-verify-log-guide` reads the documented all-actions invocation and runs it through the
 built command parser. The typed command table remains covered independently by generated help and
@@ -192,6 +259,16 @@ by Lake's `tests/fixtures/transparency/regenerate.py`. The tests use its checkpo
 proofs and cover modified, missing, reordered, substituted, forged, cached, and parent-only corrupt
 data. The consistency regression removes the middle hash level and proves that verification fails
 before requesting its otherwise valid proof.
+
+The #389 cases in `test_lake_transparency.cpp` give the fixture source a hostile voice: it can
+report a different identity or configuration, and it counts every read of them. A log that drops
+its witness signatures and reports threshold zero is refused by `current_checkpoint`,
+`verify_consistency`, and `scan`; a checkpoint re-signed by another key, under a new identifier or
+the pinned one, is refused; a valid cosignature from a witness outside the pinned set does not
+count toward the threshold; a pin that cannot be met is refused before any request; and none of
+them reads the log's identity or configuration. `transparency_pin` cases round-trip the pin file,
+refuse malformed and mismatched pins, refuse a missing pin with the file named, and refuse to
+replace an existing pin.
 
 ## Tile-walk measurement
 

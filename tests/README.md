@@ -53,8 +53,9 @@ byte-identity tests; those helpers remain outside the public ABI.
 The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
 URL or explicit TSA anchor file is absent.
 `cli-verify-log` uses a loopback HTTP log fixture and a signed stored reproducibility attestation
-to require valid inclusion and reject missing, tampered, and unavailable inclusion through the
-`verify --log` CLI handler. Its test target compiles the private attestation encoder and canonical
+to refuse an unpinned log, require valid inclusion once pinned, and reject a log reporting a lower
+witness threshold than its pin, and missing, tampered, and unavailable inclusion, through the
+`verify --log` CLI handler (liquid #389). Its test target compiles the private attestation encoder and canonical
 CBOR dependency so it also covers a shared libliquid build with hidden symbols.
 `cli-verify-log-guide` reads the transparency guide's all-actions invocation and runs it through
 the built command parser.
@@ -138,6 +139,9 @@ witness quorum, every full and partial tile level, inclusion and consistency pro
 reauthentication, and altered or missing input. Its `cve_2026_56865` case keeps valid leaf bytes
 while changing a verified parent hash tile and requires the failure to name that tile. The skipped
 level case proves consistency verification completes the tile walk before requesting its proof.
+Its liquid #389 cases refuse a log that lowers its witness threshold, swaps its key, or counts a
+witness outside the pinned set, never read the log's own identity or configuration, and cover the
+`$LIQUID_HOME/trust/transparency/` pin file (round trip, malformed pins, missing pin, no replacement).
 `liquid-transparency-measure` times cold and cached verification of a synthetic `2^16`-leaf log.
 Admission tests cover policy round trips, every image decision, TLS and insecure CLI listeners,
 Kubernetes fixtures, policy-pinned checkpoint trust, valid inclusion, forged parent tiles,
@@ -418,7 +422,8 @@ execution, explicit unavailable results, the deliberate regression and Linux pro
 Issue #286 adds `cli-project` for ordinary-repository projection and existing result-ID
 compatibility. `guides-projection` runs the documented file-to-package workflow natively,
 including equality of Debian bytes from a change and its root tree, without a mount.
-`test_log_url.cpp` covers HTTP log URL factory errors and all six legacy source operations.
+`test_log_url.cpp` covers HTTP log URL factory errors, including plain `http://` to a host that is
+not loopback (liquid #389), and all six legacy source operations.
 `cli-log-url` repeats these API tests and every malformed URL through the three log verbs
 with networking denied on macOS and Linux. See [the contract](../docs/library/transparency.md#http-url-validation-289).
 

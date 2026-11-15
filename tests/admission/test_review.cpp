@@ -99,7 +99,7 @@ auto policy_for(const liquid::attestation& statement) -> liquid::admission_polic
             .exempt_namespaces = {"kube-system"},
             .attestation_source = "/store",
             .log = {.mode = liquid::admission_log_mode::verify,
-                    .lake = "http://lake.example",
+                    .lake = "https://lake.example",
                     .trust = {.identity = {.taap_id = "taap:1:ed25519:fixture-log",
                                            .algorithm = "ed25519",
                                            .public_key = std::vector<std::byte>(32)},
@@ -160,6 +160,17 @@ TEST(AdmissionPolicy, refuses_an_invalid_verify_url) {
     auto decoded = liquid::decode_admission_policy(*encoded);
     ASSERT_FALSE(decoded);
     EXPECT_EQ(decoded.error().context, "log.lake");
+}
+
+TEST(AdmissionPolicy, refuses_plain_http_to_a_remote_log) {
+    auto policy = policy_for(signed_image());
+    policy.log.lake = "http://lake.example";
+    auto encoded = liquid::encode_admission_policy(policy);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::decode_admission_policy(*encoded);
+    ASSERT_FALSE(decoded);
+    EXPECT_EQ(decoded.error().context, "log.lake");
+    EXPECT_NE(decoded.error().message.find("loopback"), std::string::npos);
 }
 
 TEST(AdmissionPolicy, preserves_an_omitted_checkpoint_age_bound) {
