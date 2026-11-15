@@ -125,7 +125,10 @@ bypass its registered slot cannot be redirected.
 ## Restart contract and daemon
 
 Repository `config.hot_update` persists a `restart_hook` argument vector and configured targets of
-`{name, endpoint}`. A configured target requires a non-empty restart hook. The daemon's ordered
+`{name, endpoint}`. A configured target requires a non-empty restart hook. The configuration is
+local to the checkout that set it through `repository_options::hot_update`: clone, pull, drive sync
+and composition never carry it, so a hook named by a remote repository never runs (liquid #420,
+[sync.md](sync.md#trust-configuration-stays-with-the-checkout-that-set-it)). The daemon's ordered
 `hot-update` target runs after graph invalidation for every drip, builds each configured target,
 selects its evidence-bearing result, compares it with `hot_update/current/<name>`, and then applies
 the plan.

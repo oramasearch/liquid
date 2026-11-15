@@ -95,8 +95,10 @@ those canonical records, prints the distinct count and missing identities, print
 `unknown_signer=<id>` for each listed identity whose approval is present but whose chain this
 machine does not hold, and exits nonzero when the threshold is not satisfied.
 
-Policy and approval files are evidence and should be committed or distributed with the release.
-They are not trusted because of where they are: `release verify` accepts the policy only from an
+Policy and approval files are evidence and are distributed with the release (in its bundle, or
+copied beside the artifact). They live under the checkout's `.liquid/` directory, which is
+checkout-local since liquid #420: tree import never records it, and a drive or clone never writes
+it ([sync.md](sync.md)), so a repository sync does not carry them. They are not trusted because of where they are: `release verify` accepts the policy only from an
 issuer listed in `$LIQUID_HOME/trust/release-policy-issuers` (see *Trust root*). The directory is
 not a private-key store.
 

@@ -202,6 +202,12 @@ time (liquid#435).
 Send rejects any missing-object
 response containing a digest outside the current offered root closure before any upload
 (liquid #446).
+Issue #420 confirms that no
+trust-controlling repository configuration (the REAPI remote and its TLS, key and header settings,
+the hot-update restart hook, policy, deployment, TUF state) travels with clone, sync or composition,
+and makes checkout-local paths (`LIQUID_REPO`, `.liquid/`, `.liquid-store/` and liquid's other
+state directories) impossible to import into a tree or to write from a peer's tree
+([`sync.md`](sync.md#trust-configuration-stays-with-the-checkout-that-set-it)).
 
 **Drive.** Issue #195 adds the persisted three-tree drive client, named concurrent conflict values,
 interrupted-transfer resume, per-reference refusal reporting, stable-node path history and restore,

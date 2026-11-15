@@ -251,6 +251,12 @@ Its sender tests use a hostile `remote_blob_source` to request an unrelated loca
 before or after a valid identity, with empty roots, and after a previous offer on the same session.
 Every such response is refused before any upload; algorithm-tag mismatches are also refused.
 Valid metadata and payload requests and an empty missing subset still succeed (liquid #446).
+Issue #420 cases set every trust-controlling repository key on a source (REAPI remote with peer
+verification off, client key and headers, restart hook, deployment control plane, agent rules, TUF
+state) and show that a direct import, an HTTP pull and a drive clone all leave them behind, and that
+a drive never writes a checkout-local path (`LIQUID_REPO`, `.liquid/`, `.liquid-store/`, build and
+wrap state) named in a peer's tree. `test_repository.cpp` checks that tree import never records
+those paths.
 The clone cases pull through an HTTP sync endpoint, force full hydration of a file above the
 ordinary drive threshold, confirm the persisted remote and stable JSON, and configure and build a
 small CMake project inside the checkout. A second clone resolves that checkout as a configured

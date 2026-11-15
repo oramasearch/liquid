@@ -175,6 +175,11 @@ configuration; later runs reuse it. CLI flags on a later run take precedence.
 `wrap --scheduler <endpoint>` selects and persists the liquid scheduler backend while retaining
 the same TLS, header, deadline, instance, and CAS settings.
 
+`config.remote` is local to the checkout or wrap cache that set it (liquid #420). Clone, pull, push,
+drive sync and composition never carry it, so a repository cannot point a receiver's builds at its
+own cache, turn `verify_peer` off, or name the client key and headers sent there. The trace is in
+[sync.md](sync.md#trust-configuration-stays-with-the-checkout-that-set-it).
+
 ## Public API map
 
 | Header | Surface |
