@@ -235,16 +235,22 @@ auto daemon_command(int argc, char** argv) -> int {
         auto waited = liquid::runtime::block_on(started->wait());
         return waited ? 0 : fail(waited.error());
     }
-    if (argc == 1 && std::string_view{argv[0]} == "--shutdown") {
+    if (argc == 1 &&
+        (std::string_view{argv[0]} == "--shutdown" || std::string_view{argv[0]} == "stop")) {
         auto attached = liquid::runtime::block_on(liquid::daemon::attach(checkout));
         if (!attached) {
+            // No endpoint, or nothing answering on it: there is nothing to stop.
+            if (attached.error().code == liquid::errc::unavailable) {
+                std::println("no daemon is running");
+                return 0;
+            }
             return fail(attached.error());
         }
         auto stopped = liquid::runtime::block_on(attached->shutdown());
         return stopped ? 0 : fail(stopped.error());
     }
-    if (argc != 0) {
-        return usage("daemon [--shutdown]");
+    if (argc > 1 || (argc == 1 && std::string_view{argv[0]} != "start")) {
+        return usage("daemon [start | stop | --shutdown]");
     }
     auto ready = ensure_daemon(checkout);
     if (!ready) {

@@ -34,7 +34,7 @@ table says *hint*.
 | Git | liquid | Why it differs |
 |---|---|---|
 | `git add` | none (*hint*) | There is no staging area. Every write is captured as a drip. |
-| `git commit` | `liquid cut <message>` (*hint*) | A change is a named group of drips that already exist. Nothing is created at that moment except the name, so calling it a commit would describe the wrong thing. The project's vocabulary reserves "commit" for Git. |
+| `git commit` | `liquid cut -m <message>` (*hint*) | A change is a named group of drips that already exist. Nothing is created at that moment except the name, so calling it a commit would describe the wrong thing. The project's vocabulary reserves "commit" for Git. `-m`/`--message` work as in Git; a message that starts with `-` is refused. |
 | `git grep` | `liquid search` (*hint*) | Search ranks results from an index and also takes a substring or a regular expression. It is not a line-by-line scan. |
 | `git reflog`, `git reset` | `liquid ops`, `liquid undo` (*hint* on `reflog`) | liquid records operations, not reference movements, and undoes the newest, a named one, or a whole session's. |
 | `git submodule` | `liquid nest` (*hint*) | Nesting is part of liquid's object model, recorded as an operation like any other write. |

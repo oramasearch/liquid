@@ -670,14 +670,31 @@ auto repo_log(int argc, char** argv) -> int {
 }
 
 auto repo_cut(int argc, char** argv) -> int {
-    if (argc == 0) {
-        return usage("cut requires a message");
+    // `-m`/`--message` as in Git, or the remaining words as the message. A leading `-` is refused
+    // so that a mistyped option is never recorded in history (liquid#528).
+    auto message = std::string{};
+    if (argc >= 1 &&
+        (std::string_view{argv[0]} == "-m" || std::string_view{argv[0]} == "--message")) {
+        if (argc != 2) {
+            return usage("cut -m <message> takes one message; quote it");
+        }
+        message = argv[1];
+    } else {
+        message = join(argc, argv);
+    }
+    if (message.empty()) {
+        return usage("cut requires a message: liquid cut -m <message>");
+    }
+    if (message.starts_with('-')) {
+        return usage(std::format("cut refuses a message that starts with '-' ({}); use "
+                                 "liquid cut -m <message>",
+                                 message));
     }
     auto repository = open_repository();
     if (!repository) {
         return fail(repository.error());
     }
-    auto change = liquid::runtime::block_on(repository->cut(join(argc, argv)));
+    auto change = liquid::runtime::block_on(repository->cut(message));
     if (!change) {
         return fail(change.error());
     }

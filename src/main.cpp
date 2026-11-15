@@ -133,8 +133,11 @@ constexpr auto flags_write = std::to_array<flag>({
     {"--depends-on", "<path>", "Add a path read while planning; repeatable.", "none"},
     {"--on-stale", "<policy>", "Choose refuse, disjoint, or force stale-write handling.", "refuse"},
 });
+constexpr auto flags_cut = std::to_array<flag>({
+    {"--message", "<message>", "The change message; `-m <message>` is the short form.", "none"},
+});
 constexpr auto flags_daemon = std::to_array<flag>({
-    {"--shutdown", {}, "Stop the checkout daemon.", "false"},
+    {"--shutdown", {}, "Stop the checkout daemon; the same as `daemon stop`.", "false"},
     {"--serve", "<checkout>", "Run the internal daemon service for a checkout.", "none"},
     {"--idle-ms", "<count>", "Exit the service after this idle interval.", "configured value"},
     {"--memory", "<bytes>", "Set the resident graph-value byte ceiling.", "configured value"},
@@ -598,12 +601,14 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::repo_write},
     {"daemon",
-     "daemon [--shutdown] | daemon --serve <checkout> [service options]",
+     "daemon [start | stop | --shutdown] | daemon --serve <checkout> [service options]",
      "start or stop the checkout daemon",
      "available on macOS and Linux",
      flags_daemon,
-     "Start, stop, or run the per-checkout process that owns capture and graph work.",
-     "liquid daemon --shutdown",
+     "Start, stop, or run the per-checkout process that owns capture and graph work. `daemon` "
+     "and `daemon start` start it when it is not running and print its status; `daemon stop` "
+     "and `daemon --shutdown` stop it, and say `no daemon is running` when there is none.",
+     "liquid daemon start\nliquid daemon stop",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::daemon_command},
@@ -711,12 +716,14 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::transparency_log},
     {"cut",
-     "cut <message>",
+     "cut -m <message> | cut <message>",
      "cut the working change",
      "available",
-     {},
-     "Name the current aggregation of captured drips as a reviewable change.",
-     "liquid cut \"import existing files\"",
+     flags_cut,
+     "Name the current aggregation of captured drips as a reviewable change. The message is "
+     "given with `-m`/`--message`, as in Git, or as the remaining words. A message that starts "
+     "with `-` is refused, so a mistyped option never becomes part of history.",
+     "liquid cut -m \"import existing files\"\nliquid cut import existing files",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::repo_cut},
@@ -1541,9 +1548,9 @@ struct git_hint {
 constexpr auto git_hints = std::to_array<git_hint>({
     {"add",
      "liquid has no staging area: every write is captured as a drip. Name the work with "
-     "`liquid cut <message>`"},
+     "`liquid cut -m <message>`"},
     {"commit",
-     "use `liquid cut <message>`: a change is a named group of captured drips, and there is "
+     "use `liquid cut -m <message>`: a change is a named group of captured drips, and there is "
      "nothing to stage"},
     {"grep", "use `liquid search`, which ranks results and also takes a substring or a regex"},
     {"reflog", "use `liquid ops` to list recorded operations and `liquid undo` to reverse one"},
