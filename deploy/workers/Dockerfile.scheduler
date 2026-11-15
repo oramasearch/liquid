@@ -12,4 +12,4 @@ ENV LIQUID_HOME=/var/lib/liquid-identity
 VOLUME ["/var/lib/liquid-scheduler", "/var/lib/liquid-identity"]
 EXPOSE 50051 8080
 ENTRYPOINT ["/usr/local/bin/liquid", "scheduler"]
-CMD ["--listen", "0.0.0.0:50051", "--control-listen", "0.0.0.0:8080", "--store", "/var/lib/liquid-scheduler", "--trust-worker", "/etc/liquid/workers"]
+CMD ["--listen", "127.0.0.1:50051", "--control-listen", "0.0.0.0:8080", "--store", "/var/lib/liquid-scheduler", "--trust-worker", "/etc/liquid/workers"]

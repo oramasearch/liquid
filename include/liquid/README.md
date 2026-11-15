@@ -63,7 +63,8 @@ and complete target-byte verification gate used by registry and drive clients.
 `listener.hpp` defines `listener_security`, the TLS, mutual-TLS and bearer-token configuration of
 the REAPI and sync listeners, and the checks they share: only a loopback listener may run without
 TLS and client authentication, tokens come from owner-only files, and bearer comparison is
-constant-time. `reapi.hpp` carries it in `reapi_serve_options::security`; the `liquid serve sync`
+constant-time. `reapi.hpp` carries it in `reapi_serve_options::security`, and `workers.hpp` in
+`scheduler_options::security` with the same rules (liquid #520); the `liquid serve sync`
 adapter applies the same rules. `sync_server_options` bounds the upload quarantine with
 `upload_quota_bytes` and `upload_ttl` and places it under `staging_directory`.
 

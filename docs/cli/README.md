@@ -132,8 +132,8 @@ built binary under the build directory before CTest compares it with the committ
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
-| `scheduler` | `scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]` | Serve CAS, ActionCache, Execution, and the liquid worker queue. | available |
-| `worker` | `worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <tiny\|short\|medium\|long>] [--poll-ms <count>]` | Run the Phase 2 executor as a scheduler worker. | available on Linux with FUSE |
+| `scheduler` | `scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>] [--tls-cert <path> --tls-key <path>] [--token-file <path>] [--client-ca <path>]` | Serve CAS, ActionCache, Execution, and the liquid worker queue; off loopback only with TLS and a token or client CA. | available |
+| `worker` | `worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <tiny\|short\|medium\|long>] [--poll-ms <count>] [--scheduler-tls] [--scheduler-ca <path>] [--client-cert <path> --client-key <path>] [--token-file <path>]` | Run the Phase 2 executor as a scheduler worker. | available on Linux with FUSE |
 | `node-store` | `node-store <serve\|status\|mount\|unmount\|prefetch> [options]` | Run or control the runtime node chunk store. | available on Linux with FUSE and on macOS with macFUSE |
 | `repack` | `repack [repository]` | Rebase stored chunk deltas. | available |
 | `tree` | `tree` | Print the recorded root tree digest. | available |
@@ -807,8 +807,8 @@ liquid hot-update apply blake3:<patch-record> --endpoint .liquid/demo.sock
 liquid hot-update status blake3:<new-result> --json
 liquid wrap cmake -S . -B build -G Ninja
 liquid wrap --input zlib=blake3:<result-or-tree-digest> cmake --build build
-liquid scheduler --listen 0.0.0.0:50051 --control-listen 0.0.0.0:8080
-liquid worker --scheduler 127.0.0.1:50051 --control-listen 0.0.0.0:8081
+liquid scheduler --listen 0.0.0.0:50051 --tls-cert server.pem --tls-key server-key.pem --token-file scheduler.token --control-listen 0.0.0.0:8080
+liquid worker --scheduler scheduler.example:50051 --scheduler-ca ca.pem --token-file scheduler.token --control-listen 0.0.0.0:8081
 liquid wrap --scheduler 127.0.0.1:50051 make -j8
 liquid wrap --jobs 8 --explain cmake --build build
 liquid build --plan

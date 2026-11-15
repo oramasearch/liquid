@@ -485,6 +485,16 @@ constexpr auto flags_scheduler = std::to_array<flag>({
     {"--store", "<path>", "Select the scheduler store directory.", "platform cache"},
     {"--instance", "<name>", "Select the scheduler instance.", "empty"},
     {"--lease-ms", "<count>", "Set the worker lease duration.", "configured value"},
+    {"--tls-cert", "<path>", "Read the listener TLS certificate chain from this file.", "none"},
+    {"--tls-key", "<path>", "Read the listener TLS private key from this file.", "none"},
+    {"--client-ca",
+     "<path>",
+     "Require a client certificate signed by this CA (mutual TLS).",
+     "none"},
+    {"--token-file",
+     "<path>",
+     "Require on every request the bearer token in this owner-only file.",
+     "none"},
 });
 constexpr auto flags_worker = std::to_array<flag>({
     {"--scheduler", "<address>", "Select the scheduler endpoint.", "none"},
@@ -494,6 +504,17 @@ constexpr auto flags_worker = std::to_array<flag>({
     {"--instance", "<name>", "Select the scheduler instance.", "empty"},
     {"--size-class", "<class>", "Choose tiny, short, medium, or long.", "medium"},
     {"--poll-ms", "<count>", "Set the scheduler polling interval.", "configured value"},
+    {"--scheduler-tls", {}, "Connect to the scheduler over TLS.", "false"},
+    {"--scheduler-ca",
+     "<path>",
+     "Verify the scheduler certificate against this CA.",
+     "system roots"},
+    {"--client-cert", "<path>", "Present this TLS client certificate to the scheduler.", "none"},
+    {"--client-key", "<path>", "Read the TLS client private key from this file.", "none"},
+    {"--token-file",
+     "<path>",
+     "Send the bearer token in this owner-only file to the scheduler.",
+     "none"},
 });
 constexpr auto flags_docs = std::to_array<flag>({
     {"--format", "<markdown|json|man>", "Select the output format.", "markdown"},
@@ -1332,18 +1353,21 @@ constexpr auto commands = std::to_array<command>({
      liquid_cli::facts},
     {"scheduler",
      "scheduler --listen <address> --trust-worker <path> [--control-listen <address>] [--store "
-     "<path>] [--instance <name>] [--lease-ms <count>]",
+     "<path>] [--instance <name>] [--lease-ms <count>] [--tls-cert <path> --tls-key <path>] "
+     "[--token-file <path>] [--client-ca <path>]",
      "run the remote-execution scheduler and CAS",
      "available",
      flags_scheduler,
-     "Serve CAS, ActionCache, Execution, and a signed worker lease queue for trusted workers.",
-     "liquid scheduler --listen 0.0.0.0:50051 --trust-worker /etc/liquid/workers",
+     "Serve CAS, ActionCache, Execution, and a signed worker lease queue for trusted workers. A "
+     "listener off loopback requires TLS and --token-file or --client-ca.",
+     "liquid scheduler --listen 127.0.0.1:50051 --trust-worker /etc/liquid/workers",
      network_exit,
      argument_policy::ordinary,
      liquid_cli::scheduler},
     {"worker",
      "worker --scheduler <address> --trust-scheduler <path> [--control-listen <address>] [--root "
-     "<path>] [--instance <name>] [--size-class <class>] [--poll-ms <count>]",
+     "<path>] [--instance <name>] [--size-class <class>] [--poll-ms <count>] [--scheduler-tls] "
+     "[--scheduler-ca <path>] [--client-cert <path> --client-key <path>] [--token-file <path>]",
      "run a remote-execution worker",
      "available on Linux with FUSE",
      flags_worker,

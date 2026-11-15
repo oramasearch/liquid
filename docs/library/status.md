@@ -367,7 +367,7 @@ and refuses a message over 5 MiB with `RESOURCE_EXHAUSTED` (#451). Both REAPI li
 retained ByteStream uploads by size, total allocated capacity, count and idle expiry and active
 Write deadlines; failed Writes release their buffers (liquid #444). It binds loopback by default
 and refuses any other address unless it has TLS and a bearer token or a client CA; a configured
-token is required, compared in constant time, on every RPC (#415). Liquid's
+token is required, compared in constant time, on every RPC (#415). `liquid scheduler` applies the same listener rules (#520). Liquid's
 action-digest scheduler and TAAP-signed worker fleet are implemented, including one bounded requeue
 after worker loss, size-class placement from #18's recorded decision, REAPI Execution and
 ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces
@@ -653,8 +653,7 @@ Git objects and protobuf. Their first runs found five defects, fixed in the same
   `serve sync --client-ca` listener only through another client; `--token-file` works with them.
   Sync flow budgets are per author, so replaying an author's genuinely signed records still spends
   that author's budget (#403).
-- `liquid scheduler` serves the REAPI listener without the #415 TLS and token options. A REAPI
-  client CA file must hold a single certificate: the vendored Corosio TLS context loads only the
+- A REAPI client CA file must hold a single certificate: the vendored Corosio TLS context loads only the
   first certificate of a CA file.
 - The executable-aware delta algorithm id is reserved and unused.
 - The data-branch reflink fast path requires local cluster control metadata.
