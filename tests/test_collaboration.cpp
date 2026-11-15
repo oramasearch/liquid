@@ -5,13 +5,17 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <variant>
 #include <vector>
 
+#include "encoding/cbor.hpp"
 #include "identity/taap.hpp"
 #include "liquid/attestation.hpp"
 #include "liquid/repository.hpp"
@@ -1097,6 +1101,155 @@ TEST(Collaboration, fork_session_validates_every_link_of_a_delegation_chain) {
     ASSERT_TRUE(drips);
     ASSERT_FALSE(drips->empty());
     EXPECT_EQ(drips->back().by.taap_id, subagent.taap_id);
+}
+
+// The stored state of session `id` below `root`.
+auto session_state_file(const std::filesystem::path& root, const liquid::session_id& id)
+    -> std::filesystem::path {
+    const auto name = liquid::to_string(id);
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        if (entry.is_regular_file() && entry.path().filename() == "LIQUID_SESSION" &&
+            entry.path().parent_path().filename() == name) {
+            return entry.path();
+        }
+    }
+    return {};
+}
+
+auto read_bytes(const std::filesystem::path& path) -> std::vector<std::byte> {
+    auto input = std::ifstream{path, std::ios::binary};
+    const auto characters = std::vector<char>{std::istreambuf_iterator<char>{input}, {}};
+    auto output = std::vector<std::byte>(characters.size());
+    std::ranges::transform(
+        characters, output.begin(), [](char value) { return static_cast<std::byte>(value); });
+    return output;
+}
+
+void write_bytes(const std::filesystem::path& path, const std::vector<std::byte>& value) {
+    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
+    output.write(reinterpret_cast<const char*>(value.data()),
+                 static_cast<std::streamsize>(value.size()));
+}
+
+// Rewrites the session state in `original` with `replacement` as its stored delegation, as anyone
+// who can write the state backend could, and keeps every other field.
+auto with_stored_delegation(const std::vector<std::byte>& original,
+                            const liquid::attestation& replacement) -> std::vector<std::byte> {
+    namespace cbor = liquid::encoding::cbor;
+    auto value = cbor::decode(original);
+    EXPECT_TRUE(value);
+    auto encoded = liquid::encode_attestation(replacement);
+    EXPECT_TRUE(encoded) << encoded.error().message;
+    if (!value || !encoded) {
+        return original;
+    }
+    auto* fields = std::get_if<cbor::value::map>(&value->data);
+    EXPECT_NE(fields, nullptr);
+    if (!fields) {
+        return original;
+    }
+    for (auto& [key, item] : *fields) {
+        const auto* name = std::get_if<std::string>(&key.data);
+        if (name && *name == "delegation") {
+            item = cbor::value{cbor::value::bytes{encoded->begin(), encoded->end()}};
+        }
+    }
+    auto rewritten = cbor::encode(*value);
+    EXPECT_TRUE(rewritten);
+    return rewritten ? *rewritten : original;
+}
+
+// Must-never M1 (liquid#516): a reopened session never acts on stored authority that was changed,
+// that this principal did not issue, that is revoked, or that is reopened without a status.
+TEST(Collaboration, open_session_verifies_the_stored_delegation_again) {
+    collaboration_directory directory;
+    auto shared = forked_repository(directory.path() / "shared");
+    const auto agent = liquid::actor{.taap_id = "taap:1:ed25519:delegated-agent"};
+    auto authority = delegation(shared, agent, {"src/**"});
+    ASSERT_TRUE(authority) << authority.error().message;
+    auto forked = liquid::runtime::block_on(
+        shared.fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
+    ASSERT_TRUE(forked) << forked.error().message;
+    const auto id = forked->id();
+    ASSERT_TRUE(
+        liquid::runtime::block_on(forked->write("src/value.cpp", bytes("int value = 2;\n"))));
+    *forked = liquid::session{};
+
+    const auto file = session_state_file(directory.path() / "shared", id);
+    ASSERT_FALSE(file.empty());
+    const auto original = read_bytes(file);
+    const auto reopen = [&](liquid::delegation_status_resolver status) {
+        return liquid::runtime::block_on(shared.open_session(id, {.status = std::move(status)}));
+    };
+    const auto refused_with = [&](const liquid::attestation& stored) {
+        write_bytes(file, with_stored_delegation(original, stored));
+        auto opened = reopen(not_revoked());
+        write_bytes(file, original);
+        return opened ? std::optional<liquid::errc>{} : std::optional{opened.error().code};
+    };
+
+    auto widened = *authority;
+    set_attribute(widened, "scopes", std::vector<std::string>{"**"});
+    EXPECT_EQ(refused_with(widened), liquid::errc::unauthorized);
+
+    auto unsigned_authority = *authority;
+    unsigned_authority.signature.clear();
+    EXPECT_EQ(refused_with(unsigned_authority), liquid::errc::unauthorized);
+
+    // A broader delegation that this principal really signed still differs from the one the
+    // session was forked with.
+    auto broader = delegation(shared, agent, {"**"});
+    ASSERT_TRUE(broader);
+    EXPECT_EQ(refused_with(*broader), liquid::errc::unauthorized);
+
+    // A delegation issued by another principal, whose identity this machine trusts, as on a host
+    // the session was transferred to.
+    const auto other_home = directory.path() / "other-home";
+    auto other_chain = in_home(other_home, [] {
+        auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+        return signer ? liquid::load_identity_chain(signer->identity().taap_id)
+                      : liquid::result<std::vector<liquid::identity_document>>{
+                            std::unexpected(signer.error())};
+    });
+    ASSERT_TRUE(other_chain) << other_chain.error().message;
+    ASSERT_TRUE(liquid::trust_identity_chain(*other_chain));
+    auto foreign = in_home(other_home, [&] { return delegation(shared, agent, {"src/**"}); });
+    ASSERT_TRUE(foreign) << foreign.error().message;
+    EXPECT_EQ(refused_with(*foreign), liquid::errc::unauthorized);
+
+    auto without_status = reopen({});
+    ASSERT_FALSE(without_status);
+    EXPECT_EQ(without_status.error().code, liquid::errc::unauthorized);
+
+    auto revoked = std::make_shared<std::atomic_bool>(true);
+    const auto revocable = liquid::delegation_status_resolver{
+        [revoked](const liquid::attestation&,
+                  const liquid::digest&) -> liquid::result<liquid::attestation_status> {
+            return liquid::attestation_status{
+                .revoked = revoked->load(),
+                .checked_at =
+                    std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())};
+        }};
+    auto revoked_open = reopen(revocable);
+    ASSERT_FALSE(revoked_open);
+    EXPECT_EQ(revoked_open.error().code, liquid::errc::unauthorized);
+
+    // Revoked between reopen and publish: the publish is refused and nothing lands.
+    revoked->store(false);
+    auto reopened = reopen(revocable);
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    revoked->store(true);
+    auto published = liquid::runtime::block_on(reopened->publish());
+    ASSERT_FALSE(published);
+    EXPECT_EQ(published.error().code, liquid::errc::unauthorized);
+    auto unchanged = liquid::runtime::block_on(shared.read("src/value.cpp"));
+    ASSERT_TRUE(unchanged);
+    EXPECT_EQ(text(*unchanged), "int value = 1;\n");
+
+    revoked->store(false);
+    auto restored = reopen(revocable);
+    ASSERT_TRUE(restored) << restored.error().message;
+    EXPECT_TRUE(liquid::runtime::block_on(restored->publish({.message = "agent"})));
 }
 
 } // namespace

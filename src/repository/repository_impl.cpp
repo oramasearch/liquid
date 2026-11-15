@@ -8673,7 +8673,11 @@ namespace {
 struct stored_session {
     actor agent;
     attestation delegation;
+    // The digests the delegation and each chain link had at fork (liquid#516). `open_session`
+    // refuses a session whose stored delegation no longer hashes to them.
+    digest delegation_id{};
     std::vector<attestation> chain;
+    std::vector<digest> chain_ids;
     digest base_tree{};
     change_id base_change{};
     journal_cursor base_cursor;
@@ -8692,10 +8696,16 @@ auto encode_stored_session(const stored_session& value) -> result<std::vector<st
         }
         chain.push_back(bytes(*encoded));
     }
-    return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
+    auto chain_ids = cbor::value::array{};
+    for (const auto& id : value.chain_ids) {
+        chain_ids.push_back(digest_value(id));
+    }
+    return cbor::encode(map({{"v", cbor::value{std::uint64_t{2}}},
                              {"agent", actor_value(value.agent)},
                              {"delegation", bytes(*delegation)},
+                             {"delegation_id", digest_value(value.delegation_id)},
                              {"chain", cbor::value{std::move(chain)}},
+                             {"chain_ids", cbor::value{std::move(chain_ids)}},
                              {"base_tree", digest_value(value.base_tree)},
                              {"base_change", digest_value(value.base_change.value)},
                              {"base_cursor", cbor::value{value.base_cursor.token}}}));
@@ -8714,9 +8724,27 @@ auto decode_stored_session(std::span<const std::byte> encoded) -> result<stored_
     const auto* delegation_bytes =
         delegation_value ? std::get_if<cbor::value::bytes>(&delegation_value->data) : nullptr;
     const auto* cursor = cursor_value ? std::get_if<std::string>(&cursor_value->data) : nullptr;
-    if (!value || !version || *version != 1 || !agent_value || !delegation_bytes || !tree_value ||
-        !change_value || !cursor) {
+    // Version 2 (liquid#516) adds the delegation and chain digests. A version-1 record has neither
+    // and is refused; its delegation predates the required `not_after` and `repository` anyway.
+    const auto* delegation_id_value = value ? find(*value, "delegation_id") : nullptr;
+    const auto* chain_ids_value = value ? find(*value, "chain_ids") : nullptr;
+    const auto* chain_id_items =
+        chain_ids_value ? std::get_if<cbor::value::array>(&chain_ids_value->data) : nullptr;
+    if (!value || !version || *version != 2 || !agent_value || !delegation_bytes || !tree_value ||
+        !change_value || !cursor || !delegation_id_value || !chain_id_items) {
         return std::unexpected(failure(errc::corrupt, "invalid session metadata"));
+    }
+    auto delegation_id = decode_digest(*delegation_id_value);
+    if (!delegation_id) {
+        return std::unexpected(delegation_id.error());
+    }
+    auto chain_ids = std::vector<digest>{};
+    for (const auto& item : *chain_id_items) {
+        auto decoded = decode_digest(item);
+        if (!decoded) {
+            return std::unexpected(decoded.error());
+        }
+        chain_ids.push_back(*decoded);
     }
     auto chain = std::vector<attestation>{};
     if (const auto* chain_value = find(*value, "chain")) {
@@ -8748,7 +8776,9 @@ auto decode_stored_session(std::span<const std::byte> encoded) -> result<stored_
     }
     return stored_session{.agent = std::move(*agent),
                           .delegation = std::move(*delegation),
+                          .delegation_id = *delegation_id,
                           .chain = std::move(chain),
+                          .chain_ids = std::move(chain_ids),
                           .base_tree = *tree,
                           .base_change = change_id{*change},
                           .base_cursor = journal_cursor{*cursor}};
@@ -8858,6 +8888,95 @@ auto check_delegation_binding(const attestation& delegation,
     return {};
 }
 
+// The authority a session acts on, once every check has passed.
+struct session_authority {
+    digest delegation_id{};
+    std::vector<digest> chain_ids;
+    std::vector<std::string> scopes;
+    bool may_publish{};
+    bool may_lease{};
+};
+
+// Every check a delegation and its chain must pass before a session acts on them, shared by
+// `fork_session` and `open_session` (liquid#516), so authority restored from session state is
+// verified exactly as authority presented at fork: each link a linked attenuation of the one
+// before it (#517), bound to its agent, dispatcher and `repository` (#515), inside its window, not
+// revoked and correctly signed, with the root issued by `principal` (#514). Each delegation is
+// stored under its digest, which the status resolver is given.
+auto authorize_session(store& objects,
+                       std::string principal,
+                       std::string repository,
+                       const actor& agent,
+                       const attestation& delegation,
+                       std::span<const attestation> chain,
+                       const delegation_status_resolver& status)
+    -> runtime::task<session_authority> {
+    for (auto index = std::size_t{}; index < chain.size(); ++index) {
+        auto link_valid =
+            validate_delegation(chain[index], index == 0 ? nullptr : &chain[index - 1]);
+        if (!link_valid) {
+            co_return std::unexpected(link_valid.error());
+        }
+    }
+    auto delegation_valid =
+        validate_delegation(delegation, chain.empty() ? nullptr : &chain.back());
+    if (!delegation_valid) {
+        co_return std::unexpected(delegation_valid.error());
+    }
+    for (auto index = std::size_t{}; index < chain.size(); ++index) {
+        const auto& delegate =
+            index + 1 < chain.size() ? chain[index + 1].issuer : delegation.issuer;
+        auto link_bound = check_delegation_binding(chain[index], delegate, repository);
+        if (!link_bound) {
+            co_return std::unexpected(link_bound.error());
+        }
+    }
+    auto bound = check_delegation_binding(delegation, agent, repository);
+    if (!bound) {
+        co_return std::unexpected(bound.error());
+    }
+    auto authority = session_authority{};
+    for (const auto& link : chain) {
+        auto encoded_link = encode_attestation(link);
+        if (!encoded_link) {
+            co_return std::unexpected(encoded_link.error());
+        }
+        auto link_id =
+            co_await repository_detail::store_access::put_plain(objects, std::move(*encoded_link));
+        if (!link_id) {
+            co_return std::unexpected(link_id.error());
+        }
+        authority.chain_ids.push_back(*link_id);
+    }
+    auto encoded_delegation = encode_attestation(delegation);
+    if (!encoded_delegation) {
+        co_return std::unexpected(encoded_delegation.error());
+    }
+    auto delegation_id = co_await repository_detail::store_access::put_plain(
+        objects, std::move(*encoded_delegation));
+    if (!delegation_id) {
+        co_return std::unexpected(delegation_id.error());
+    }
+    authority.delegation_id = *delegation_id;
+    auto still_valid = check_delegation_now(
+        delegation, authority.delegation_id, chain, authority.chain_ids, principal, status);
+    if (!still_valid) {
+        co_return std::unexpected(still_valid.error());
+    }
+    const auto* scopes =
+        std::get_if<std::vector<std::string>>(delegation_attribute(delegation, "scopes"));
+    const auto* may_publish = std::get_if<bool>(delegation_attribute(delegation, "may_publish"));
+    const auto* may_lease = std::get_if<bool>(delegation_attribute(delegation, "may_lease"));
+    if (!scopes || scopes->empty() || !may_publish || !may_lease) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "delegation has no usable authority"));
+    }
+    authority.scopes = *scopes;
+    authority.may_publish = *may_publish;
+    authority.may_lease = *may_lease;
+    co_return authority;
+}
+
 } // namespace
 
 runtime::task<session> repository::fork_session(session_options options) {
@@ -8868,77 +8987,18 @@ runtime::task<session> repository::fork_session(session_options options) {
         co_return std::unexpected(
             failure(errc::not_found, "a session requires a recorded fork point"));
     }
-    // Every link of the chain is a linked attenuation of the one before it, and the session's own
-    // delegation of the last link (liquid#517).
-    for (auto index = std::size_t{}; index < options.chain.size(); ++index) {
-        auto link_valid = validate_delegation(options.chain[index],
-                                              index == 0 ? nullptr : &options.chain[index - 1]);
-        if (!link_valid) {
-            co_return std::unexpected(link_valid.error());
-        }
+    const auto principal = impl_->signing_key.identity().taap_id;
+    auto authority = co_await authorize_session(impl_->objects,
+                                                principal,
+                                                node_text(impl_->current.repository),
+                                                options.actor,
+                                                options.delegation,
+                                                options.chain,
+                                                options.status);
+    if (!authority) {
+        co_return std::unexpected(authority.error());
     }
-    auto delegation_valid = validate_delegation(
-        options.delegation, options.chain.empty() ? nullptr : &options.chain.back());
-    if (!delegation_valid) {
-        co_return std::unexpected(delegation_valid.error());
-    }
-    const auto repository_id = node_text(impl_->current.repository);
-    for (auto index = std::size_t{}; index < options.chain.size(); ++index) {
-        const auto& delegate = index + 1 < options.chain.size() ? options.chain[index + 1].issuer
-                                                                : options.delegation.issuer;
-        auto link_bound = check_delegation_binding(options.chain[index], delegate, repository_id);
-        if (!link_bound) {
-            co_return std::unexpected(link_bound.error());
-        }
-    }
-    auto bound = check_delegation_binding(options.delegation, options.actor, repository_id);
-    if (!bound) {
-        co_return std::unexpected(bound.error());
-    }
-    auto chain_ids = std::vector<digest>{};
-    for (const auto& link : options.chain) {
-        auto encoded_link = encode_attestation(link);
-        if (!encoded_link) {
-            co_return std::unexpected(encoded_link.error());
-        }
-        auto link_id = co_await repository_detail::store_access::put_plain(
-            impl_->objects, std::move(*encoded_link));
-        if (!link_id) {
-            co_return std::unexpected(link_id.error());
-        }
-        chain_ids.push_back(*link_id);
-    }
-    auto encoded_delegation = encode_attestation(options.delegation);
-    if (!encoded_delegation) {
-        co_return std::unexpected(encoded_delegation.error());
-    }
-    auto delegation_id = co_await repository_detail::store_access::put_plain(
-        impl_->objects, std::move(*encoded_delegation));
-    if (!delegation_id) {
-        co_return std::unexpected(delegation_id.error());
-    }
-    auto still_valid = check_delegation_now(options.delegation,
-                                            *delegation_id,
-                                            options.chain,
-                                            chain_ids,
-                                            impl_->signing_key.identity().taap_id,
-                                            options.status);
-    if (!still_valid) {
-        co_return std::unexpected(still_valid.error());
-    }
-    const auto* scopes =
-        std::get_if<std::vector<std::string>>(delegation_attribute(options.delegation, "scopes"));
-    const auto* may_publish =
-        std::get_if<bool>(delegation_attribute(options.delegation, "may_publish"));
-    const auto* may_lease =
-        std::get_if<bool>(delegation_attribute(options.delegation, "may_lease"));
-    if (!scopes || scopes->empty() || !may_publish || !may_lease) {
-        co_return std::unexpected(
-            failure(errc::invalid_argument, "delegation has no usable authority"));
-    }
-    const auto delegated_scopes = *scopes;
-    const auto delegated_publish = *may_publish;
-    const auto delegated_lease = *may_lease;
+    const auto delegation_id = authority->delegation_id;
     auto encoded = encode_repository_document(impl_->current);
     if (!encoded) {
         co_return std::unexpected(encoded.error());
@@ -8976,7 +9036,7 @@ runtime::task<session> repository::fork_session(session_options options) {
         }
     }
     private_repository.impl_->acting_actor = options.actor;
-    private_repository.impl_->acting_delegation = *delegation_id;
+    private_repository.impl_->acting_delegation = delegation_id;
     auto checkpointed = co_await private_repository.impl_->checkpoint();
     if (!checkpointed) {
         co_return std::unexpected(checkpointed.error());
@@ -8993,16 +9053,18 @@ runtime::task<session> repository::fork_session(session_options options) {
     implementation->base_cursor = journal_cursor{std::to_string(impl_->current.drips.size())};
     implementation->agent = std::move(options.actor);
     implementation->delegation = std::move(options.delegation);
-    implementation->delegation_id = *delegation_id;
+    implementation->delegation_id = delegation_id;
     implementation->chain = std::move(options.chain);
-    implementation->chain_ids = std::move(chain_ids);
-    implementation->scopes = delegated_scopes;
-    implementation->may_publish = delegated_publish;
-    implementation->may_lease = delegated_lease;
+    implementation->chain_ids = std::move(authority->chain_ids);
+    implementation->scopes = std::move(authority->scopes);
+    implementation->may_publish = authority->may_publish;
+    implementation->may_lease = authority->may_lease;
     implementation->status = std::move(options.status);
     auto metadata = encode_stored_session({.agent = implementation->agent,
                                            .delegation = implementation->delegation,
+                                           .delegation_id = implementation->delegation_id,
                                            .chain = implementation->chain,
+                                           .chain_ids = implementation->chain_ids,
                                            .base_tree = implementation->base_tree,
                                            .base_change = implementation->base_change,
                                            .base_cursor = implementation->base_cursor});
@@ -9035,6 +9097,31 @@ runtime::task<session> repository::open_session(session_id id, session_open_opti
     if (!metadata) {
         co_return std::unexpected(metadata.error());
     }
+    // Session state is unsigned and may have been written by anyone who can write the state
+    // backend, or carried here by a transfer, so the stored authority is verified exactly as at
+    // fork, with this repository's principal and the caller's status, before anything acts on it
+    // (liquid#516).
+    auto authority = co_await authorize_session(impl_->objects,
+                                                impl_->signing_key.identity().taap_id,
+                                                node_text(impl_->current.repository),
+                                                metadata->agent,
+                                                metadata->delegation,
+                                                metadata->chain,
+                                                options.status);
+    if (!authority) {
+        co_return std::unexpected(authority.error());
+    }
+    const auto same_digest = [](const digest& left, const digest& right) {
+        return left.alg == right.alg && left.bytes == right.bytes;
+    };
+    if (!same_digest(authority->delegation_id, metadata->delegation_id) ||
+        authority->chain_ids.size() != metadata->chain_ids.size() ||
+        !std::ranges::equal(authority->chain_ids, metadata->chain_ids, same_digest)) {
+        co_return std::unexpected(
+            failure(errc::unauthorized,
+                    "session delegation differs from the one it was forked with",
+                    private_state.key("LIQUID_SESSION")));
+    }
     auto document = co_await load_state_document(private_state, impl_->objects);
     if (!document) {
         co_return std::unexpected(document.error());
@@ -9061,41 +9148,7 @@ runtime::task<session> repository::open_session(session_id id, session_open_opti
         }
     }
     private_repository.impl_->acting_actor = metadata->agent;
-    auto encoded_delegation = encode_attestation(metadata->delegation);
-    if (!encoded_delegation) {
-        co_return std::unexpected(encoded_delegation.error());
-    }
-    auto delegation_id = co_await repository_detail::store_access::put_plain(
-        impl_->objects, std::move(*encoded_delegation));
-    if (!delegation_id) {
-        co_return std::unexpected(delegation_id.error());
-    }
-    private_repository.impl_->acting_delegation = *delegation_id;
-    auto chain_ids = std::vector<digest>{};
-    for (const auto& link : metadata->chain) {
-        auto encoded_link = encode_attestation(link);
-        if (!encoded_link) {
-            co_return std::unexpected(encoded_link.error());
-        }
-        auto link_id = co_await repository_detail::store_access::put_plain(
-            impl_->objects, std::move(*encoded_link));
-        if (!link_id) {
-            co_return std::unexpected(link_id.error());
-        }
-        chain_ids.push_back(*link_id);
-    }
-    const auto* scopes =
-        std::get_if<std::vector<std::string>>(delegation_attribute(metadata->delegation, "scopes"));
-    const auto* may_publish =
-        std::get_if<bool>(delegation_attribute(metadata->delegation, "may_publish"));
-    const auto* may_lease =
-        std::get_if<bool>(delegation_attribute(metadata->delegation, "may_lease"));
-    if (!scopes || !may_publish || !may_lease) {
-        co_return std::unexpected(failure(errc::corrupt, "session authority is incomplete"));
-    }
-    const auto delegated_scopes = *scopes;
-    const auto delegated_publish = *may_publish;
-    const auto delegated_lease = *may_lease;
+    private_repository.impl_->acting_delegation = authority->delegation_id;
     auto implementation = std::make_unique<session::impl>();
     implementation->shared = this;
     implementation->private_replica = std::move(private_repository);
@@ -9104,12 +9157,12 @@ runtime::task<session> repository::open_session(session_id id, session_open_opti
     implementation->base_cursor = metadata->base_cursor;
     implementation->agent = std::move(metadata->agent);
     implementation->delegation = std::move(metadata->delegation);
-    implementation->delegation_id = *delegation_id;
+    implementation->delegation_id = authority->delegation_id;
     implementation->chain = std::move(metadata->chain);
-    implementation->chain_ids = std::move(chain_ids);
-    implementation->scopes = delegated_scopes;
-    implementation->may_publish = delegated_publish;
-    implementation->may_lease = delegated_lease;
+    implementation->chain_ids = std::move(authority->chain_ids);
+    implementation->scopes = std::move(authority->scopes);
+    implementation->may_publish = authority->may_publish;
+    implementation->may_lease = authority->may_lease;
     implementation->status = std::move(options.status);
     co_return session{std::move(implementation)};
 }

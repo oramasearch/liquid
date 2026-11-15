@@ -78,7 +78,9 @@ verifies each, and requires the root to be the principal's. An intermediate link
 its identity chain in this machine's identity store.
 Session creation verifies the window, the signature, the status the caller's resolver returns, and
 that the local principal issued the delegation; every lease and publish checks the window and the
-status again, so a revoked or expired delegation stops a running session. Private writes need no publish capability. Scope and capability
+status again, so a revoked or expired delegation stops a running session. `open_session` runs the
+same checks on the authority stored with the session and refuses one whose digests differ from
+those recorded at fork (liquid #516). Private writes need no publish capability. Scope and capability
 checks happen before lease or base validation, and version-3 signed drips record the delegation
 digest and agent actor. Versions 1 and 2 remain readable.
 

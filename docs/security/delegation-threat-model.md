@@ -8,14 +8,14 @@ at that commit.
 
 **Result.** The checks that exist are sound where they apply: a delegation must be a complete,
 correctly signed `delegation/1` record issued by the repository's own principal, and a session's
-publish and lease are refused outside its scopes and capabilities. Four must-nevers do **not**
-hold, and each is filed:
+publish and lease are refused outside its scopes and capabilities. Four must-nevers did **not**
+hold; each was filed, and each is now fixed:
 
 | Issue | Defect |
 |---|---|
 | [#514](https://github.com/oramasearch/liquid/issues/514) | `fork_session` accepts revoked and expired delegations: it made up its own "not revoked, checked now" status, and `delegation/1` had no expiry. **Fixed**: a required `not_after` and a required status resolver, asked at fork, lease and publish. |
 | [#515](https://github.com/oramasearch/liquid/issues/515) | A delegation was not bound to the agent, the dispatcher or the repository that uses it. **Fixed**: subject, dispatcher and a required `repository` attribute are checked at fork, and `liquid session start --as <agent>` acts as the delegated agent. |
-| [#516](https://github.com/oramasearch/liquid/issues/516) | `open_session` restores authority from unsigned session state without verifying it again. |
+| [#516](https://github.com/oramasearch/liquid/issues/516) | `open_session` restored authority from unsigned session state without verifying it again. **Fixed**: `open_session` verifies the stored authority exactly as `fork_session` does and checks the digests recorded at fork. |
 | [#517](https://github.com/oramasearch/liquid/issues/517) | `validate_delegation` let a sub-delegation broaden its scopes and did not link it to its parent; chains were never checked when a session acts. **Fixed**: conservative containment, linked links, and `session_options::chain` validated and verified link by link. |
 
 The must-nevers that hold and had no test now have one (*Must-nevers* below).
@@ -83,7 +83,7 @@ agent ──session publish──▶ may_publish 9044, diff base→private, ever
                            version-3 drips (author = principal, agent = actor,
                            delegation = digest) 5081-5084, state removed 9279
 CLI later: liquid session write|publish <id> ──▶ open_session ──▶ LIQUID_SESSION decoded,
-                           authority taken as stored (no verification)        8851-8929
+                           authority verified again as at fork (#516)
 ```
 
 ## Must-nevers
@@ -123,7 +123,7 @@ Each row: the property, where it is enforced, the test that proves it, and its s
 
 | Id | Must never | Enforced at | Test | Status |
 |---|---|---|---|---|
-| M1 | A reopened session acts on authority that was not verified again, or that was changed in storage. | Not enforced: `open_session` `repository_impl.cpp:8851-8929` decodes and trusts `LIQUID_SESSION` | No test | **Does not hold — [#516](https://github.com/oramasearch/liquid/issues/516)** |
+| M1 | A reopened session acts on authority that was not verified again, or that was changed in storage. | `open_session` runs `authorize_session`, the same checks as `fork_session` (chain, binding to the stored agent and this repository, window, status from the caller's required resolver, signatures, principal root), and refuses a stored delegation or chain whose digests differ from those recorded at fork (`LIQUID_SESSION` version 2) | `open_session_verifies_the_stored_delegation_again` | Holds ([#516](https://github.com/oramasearch/liquid/issues/516)) |
 | M2 | A published or discarded session is used or reopened again. | `impl_->active` checks on every member; state removed `repository_impl.cpp:9279`, `9303` | `finished_sessions_cannot_be_reused_or_reopened` (**new**) | Holds |
 | M3 | A session releases a lease held by another session or by the human. | `repository::release` `repository_impl.cpp:9553-9556` (actor and session) | `a_session_cannot_release_another_sessions_lease` (**new**) | Holds |
 | M4 | Presence is written into history or used to infer attribution. | `report_presence` is transient; attribution reads operations only | `presence_is_transient_and_crosses_repository_sync` | Holds |
@@ -135,7 +135,7 @@ Each row: the property, where it is enforced, the test that proves it, and its s
 | **Spoofing** the agent | `options.actor` must be the delegation's subject (D8) | Mitigated, #515 |
 | **Spoofing** the issuer | issuer check and identity chain (D2, D3) | Mitigated |
 | **Tampering** with the delegation in flight | signature (D2) | Mitigated |
-| **Tampering** with stored session authority | `LIQUID_SESSION` is unsigned and trusted on open (M1) | Open, #516 |
+| **Tampering** with stored session authority | `LIQUID_SESSION` is unsigned, so its authority is verified again on open (M1) | Mitigated, #516 |
 | **Repudiation** of agent work | version-3 drips carry the delegation digest, signed by the principal, and name the delegation's subject (S8, D8) | Mitigated |
 | **Information disclosure** | a session reads the whole private replica, not only its scopes | Accepted: scopes limit writes, not reads (below) |
 | **Denial of service** | an in-scope lease blocks the human's writes until it expires | Accepted: leases are time-bounded; Lake can authorise them (`authorize_lease`) |
@@ -201,11 +201,14 @@ real status (#514) bound replay in time; binding to agent and repository (#515) 
 - **Join.** A session is created only by `fork_session` (no daemon or sync request creates one).
   Its id is 16 random bytes (`random_id()`); the id is a handle, not a credential, because whoever
   can call `open_session` can already write the repository's state.
-- **Rejoin.** `open_session` restores authority from `LIQUID_SESSION` without verifying it (M1,
-  #516). The record travels with a repository transfer (`tests/store/test_transfer.cpp`), so a
-  session can be reopened on a host whose principal never issued its delegation.
+- **Rejoin.** `open_session` verifies the authority in `LIQUID_SESSION` exactly as `fork_session`
+  does, with this repository's principal and the caller's status resolver, and refuses a delegation
+  or chain whose digests differ from those recorded at fork (M1, #516). The record travels with a
+  repository transfer (`tests/store/test_transfer.cpp`); on a host whose principal never issued its
+  delegation it is refused.
 - **Authority while joined.** Writes go to the private replica only (S5). Leases and publishes are
-  checked against the cached scopes and capabilities (S1-S4). Presence carries the session's agent
+  checked against the verified scopes and capabilities (S1-S4), after the window, status and
+  signatures of every link are checked again (D4, D7). Presence carries the session's agent
   and id, is never history (M4), and is not scope-checked: an agent can report presence on any path.
 - **Leave.** `publish` and `discard` remove the session state and mark the handle inactive (M2).
   `discard` releases the session's own leases; a session cannot release anyone else's (M3). A
@@ -223,5 +226,5 @@ real status (#514) bound replay in time; binding to agent and repository (#515) 
 ## How to verify
 
 Run `ctest --test-dir build -R 'Collaboration|AttestationRegistry'`. The tests named in the tables
-are the proof for each holding must-never. When #514 to #517 are fixed, their rows change to
-*Holds* with the tests their *Done when* lists name.
+are the proof for each holding must-never. `cli-session` proves that `liquid session start --as`
+acts as the delegated agent.
