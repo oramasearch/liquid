@@ -5,6 +5,7 @@
 
 #if defined(__linux__)
 
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
@@ -28,6 +29,8 @@ extern char** environ;
 namespace liquid::sandbox_detail {
 namespace {
 
+// A single-quoted sh word: everything inside is literal except `'`, closed and escaped. A NUL
+// cannot be carried at all, so a script that would hold one is refused (L-17, liquid#399).
 auto quote(std::string_view value) -> std::string {
     auto output = std::string{"'"};
     for (const auto character : value) {
@@ -91,6 +94,17 @@ auto read_violation(const launch_request& request) -> std::optional<std::string>
 auto write_bootstrap(const launch_request& request,
                      const std::filesystem::path& script,
                      const std::optional<std::filesystem::path>& read_guard) -> result<void> {
+    // A NUL cannot be quoted for sh, so a command, variable or path holding one is refused before
+    // the script exists (liquid#399).
+    const auto holds_nul = [](std::string_view value) {
+        return value.find('\0') != std::string_view::npos;
+    };
+    if (std::ranges::any_of(request.command, holds_nul) || holds_nul(request.cwd) ||
+        holds_nul(request.work_root) || holds_nul(request.toolchain_root) ||
+        holds_nul(request.sandbox_root.string())) {
+        return std::unexpected(
+            error{errc::invalid_argument, "a sandbox argument or path holds a NUL", script.string()});
+    }
     auto stream = std::ofstream{script, std::ios::binary | std::ios::trunc};
     if (!stream)
         return std::unexpected(error{errc::io, "cannot create sandbox bootstrap", script.string()});
