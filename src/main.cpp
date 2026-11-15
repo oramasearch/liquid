@@ -42,6 +42,7 @@ auto path_history(int argc, char** argv) -> int;
 auto locks_lock(int argc, char** argv) -> int;
 auto locks_unlock(int argc, char** argv) -> int;
 auto identity(int argc, char** argv) -> int;
+auto install_identity_custody() -> void;
 auto keys(int argc, char** argv) -> int;
 auto release(int argc, char** argv) -> int;
 auto sign(int argc, char** argv) -> int;
@@ -263,7 +264,12 @@ constexpr auto flags_keys = std::to_array<flag>({
     {"--shares", "<count>", "Set the number of custody shares to create.", "none"},
 });
 constexpr auto flags_identity = std::to_array<flag>({
-    {"--to", "<software|fido2|piv:9c>", "Select the new identity-key custody.", "software"},
+    {"--to",
+     "<custody>",
+     "For rotate: the new signing-key custody (software, fido2, or piv:9c). For custody: the new "
+     "wrapping-key custody of a software key (passphrase, keychain on macOS, a key custody URI "
+     "such as tpm:pcrs=0,7, or file, which leaves the key protected only by file permissions).",
+     "software"},
     {"--document",
      {},
      "Show only the public TAAP/1 document as unpadded base64url canonical CBOR, "
@@ -1021,8 +1027,9 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::retain},
     {"identity",
-     "identity [show [--document|--chain]|rotate [--to software|fido2|piv:9c]|trust "
-     "<chain|-> [--accept-compromise-rotation]] [--json]",
+     "identity [show [--document|--chain]|rotate [--to software|fido2|piv:9c]|custody [--to "
+     "passphrase|keychain|file|<custody-uri>]|trust <chain|-> [--accept-compromise-rotation]] "
+     "[--json]",
      "show, rotate, or trust identities",
      "available",
      flags_identity,
@@ -1030,9 +1037,15 @@ constexpr auto commands = std::to_array<command>({
      "for other machines, rotate its signing key with a linked successor document, or trust "
      "another identity's chain. A signer name verifies only against a chain this machine holds: "
      "its own, one trusted here, or one received and verified during sync. The private signing "
-     "key stays local for every custody.",
+     "key stays local for every custody. A software key is sealed under a wrapping key held by a "
+     "passphrase (LIQUID_IDENTITY_PASSPHRASE_FILE or a terminal prompt), the macOS Keychain, or a "
+     "key custody URI; LIQUID_IDENTITY_KEY_CUSTODY chooses it for a new identity (default: "
+     "keychain on macOS, passphrase elsewhere). Only an explicit file custody leaves the key "
+     "protected by file permissions alone, and identity show warns when it is. identity custody "
+     "shows the custody and --to moves the key to another.",
      "liquid identity show --document\nliquid identity show --chain > me.chain\nliquid identity "
-     "trust - < colleague.chain\nliquid identity rotate --json",
+     "trust - < colleague.chain\nliquid identity rotate --json\nliquid identity custody --to "
+     "passphrase",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::identity},
@@ -1647,6 +1660,7 @@ auto print_command_help(const command& definition) -> void {
 
 int main(int argc, char** argv) {
     liquid_cli::set_executable(argv[0]);
+    liquid_cli::install_identity_custody();
     if (argc < 2) {
         print_usage();
         return 2;

@@ -554,6 +554,7 @@ add_library(libliquid
   src/identity/custody/common.cpp
   src/identity/custody/gcp_kms.cpp
   src/identity/custody/http.cpp
+  src/identity/custody/keychain.cpp
   src/identity/custody/lake.cpp
   src/identity/custody/shamir.cpp
   src/identity/custody/tpm.cpp
@@ -714,10 +715,11 @@ else()
 endif()
 if(WIN32)
   target_compile_definitions(libliquid PRIVATE LIQUID_HAVE_PCSC=1)
-  target_link_libraries(libliquid PRIVATE bcrypt hid setupapi tbs winscard)
+  target_link_libraries(libliquid PRIVATE advapi32 bcrypt hid setupapi tbs winscard)
 elseif(APPLE)
   target_compile_definitions(libliquid PRIVATE LIQUID_HAVE_PCSC=1)
-  target_link_libraries(libliquid PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework PCSC")
+  target_link_libraries(libliquid PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework PCSC"
+                        "-framework Security")
 elseif(UNIX)
   find_library(LIQUID_PCSC_LIBRARY pcsclite)
   if(LIQUID_PCSC_LIBRARY)

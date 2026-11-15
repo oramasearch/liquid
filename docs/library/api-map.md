@@ -1805,6 +1805,13 @@ class signer {
 };
 result<bool> verify(const actor&, std::string_view artifact_type, std::span<const std::byte> canonical_body, const signature&);
 result<verified_identity> verify_chain(std::span<const identity_document> documents);
+struct identity_custody_options { std::string custody;            // passphrase | keychain | <custody URI> | file
+  std::function<result<std::string>(bool confirm)> passphrase; };   // asked when no passphrase file is set
+void set_identity_custody_options(identity_custody_options);      // process-wide, read by local_signer
+struct identity_custody_status { std::string custody, kind; bool file_permissions_only, clear_copy_present;
+                                 std::filesystem::path path; };
+result<identity_custody_status> local_identity_custody();           // reads, never unseals (#402)
+runtime::task<identity_custody_status> migrate_local_identity_custody(std::string custody);
 struct signature { std::string algorithm; std::string signing_key_identifier; std::string signing_key_label;
                    std::string signature_purpose; std::string signed_at; std::vector<std::byte> bytes;
                    std::vector<std::byte> authenticator_data, client_data_hash; };   // TAAP/1 §6.7 plus FIDO2 fields
@@ -1983,6 +1990,9 @@ document used by `identity show --document`, without accessing the backend or si
 canonical CBOR, `decode_identity_document` rejects malformed or non-canonical input, and
 `decode_signature` parses a canonical TAAP/1 signature object. Decoding is separate from
 `verify_document` and `verify_chain` so callers explicitly choose their trust policy.
+The local identity's wrapping key is held by the custody `identity_custody_options` selects
+(passphrase, macOS Keychain, a key custody URI, or explicit file-permission-only `file`); see
+[`identity.md`](identity.md#how-the-software-signing-key-is-protected-at-rest-liquid-402) (#402).
 `passphrase_provider`, `key_file_provider`, and `keyring` are implemented for encrypted store
 objects. The keyring retains held data-key versions, rotates future writes, rewraps every held
 version when the KEK changes, and records revocation after deleting a wrapped version. TPM PCR

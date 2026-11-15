@@ -307,6 +307,15 @@ model two machines in one process switch `LIQUID_HOME` between identities and mo
 `trust_identity_chain` or `liquid identity show --chain` / `identity trust`. On Linux it also drives an installed `swtpm` through the TPM
 command transport.
 
+`test_identity_custody.cpp` covers how the local identity's signing key is held at rest
+(liquid#402): a watcher that stats every identity file during creation under a zero umask sees no
+mode but 0600, no temporary file is left, a passphrase-custody identity writes no clear wrapping
+key, a wrong, missing, or group-readable passphrase is refused, an injected passphrase source is
+asked once per signer, and a file-custody identity migrates to a sealed wrapping key. Because
+tests run without a terminal, `ctest-environment.cmake` (read by ctest before any test runs) sets
+`LIQUID_IDENTITY_KEY_CUSTODY=file` for every test process; the custody tests set their own value.
+Running a test binary directly on a machine without an identity needs the same setting.
+
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.
 Hot-update tests classify fixture pairs across all tiers, prove that comment-only output equality is

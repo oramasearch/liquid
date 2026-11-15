@@ -2,7 +2,8 @@
 
 `taap.cpp` and `taap.hpp` hold canonical TAAP helpers. `key_version.hpp` is the shared parser and
 formatter for data-key references. The public identity, signing, wrapped-key file, and keyring
-implementation remains in `src/identity.cpp`.
+implementation remains in `src/identity.cpp`, including the owner-only atomic writer for identity
+files and the custody of the identity wrapping key (liquid #402).
 
 `custody/` contains private provider implementations. Public callers use only
 `liquid/identity.hpp`; vendor SDK types and provider transport details do not cross that boundary.

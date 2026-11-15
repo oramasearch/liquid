@@ -4,6 +4,10 @@ set(LIQUID_HTTP2_TEST_SOURCES
   ${PROJECT_SOURCE_DIR}/src/http2/grpc.cpp
   ${PROJECT_SOURCE_DIR}/src/http2/hpack.cpp)
 
+# Settings every test process inherits; see the file.
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/ctest-environment.cmake")
+
 find_program(LIQUID_PYTHON_EXECUTABLE NAMES python3 python REQUIRED)
 add_test(NAME docs-links
   COMMAND ${LIQUID_PYTHON_EXECUTABLE}
@@ -25,6 +29,7 @@ add_executable(liquid-tests
   test_hot_update.cpp
   http2/test_codecs.cpp
   test_identity.cpp
+  test_identity_custody.cpp
   test_install.cpp
   test_hardware_keys.cpp
   test_node_store.cpp
