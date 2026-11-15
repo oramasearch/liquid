@@ -54,6 +54,13 @@ author's chain as an `identity` frame and stores it before checking signatures; 
 policy, admission, worker results, and the build cache all refuse an unknown signer
 ([`identity.md`](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)).
 
+**Compromised keys (#391).** A key named in a compromise declaration verifies no signature through
+`verify`: its `signed_at` is the signer's own claim and can be backdated. `verify_with_trusted_time`
+accepts one only with an RFC 3161 token or RFC 4998 evidence record over the signature that a
+caller-trusted TSA dates before the declaration. No record format carries such evidence yet, so
+every signature by a declared-compromised key is refused today
+([`identity.md`](identity.md#rotation)).
+
 **Identity key custody (#402).** Every identity file is created owner-only and atomically (mode
 0600 through `open(O_CREAT|O_EXCL|O_NOFOLLOW)`, or an owner-only DACL on Windows, then a rename).
 A new software identity seals its wrapping key under a passphrase (`LIQUID_IDENTITY_PASSPHRASE_FILE`
@@ -491,6 +498,9 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
   chain is trusted by hand. An identity that recovered from a compromise without its old key's
   signature is trusted elsewhere only by `liquid identity trust --accept-compromise-rotation`.
   Who may issue a release policy or a hot-update patch is still open (#384, #388).
+- Signatures by a key later declared compromised are refused even when made before the
+  declaration (#391): no signing path requests an RFC 3161 token and no drip, change, approval or
+  attestation record carries one, and the CLI configures no TSA roots.
 - A host without a terminal, a passphrase file or another custody cannot create a software
   identity until `LIQUID_IDENTITY_KEY_CUSTODY` is set (#402); `file` is the explicit opt-in for
   file-permission-only protection. Linux has no Secret Service custody (no D-Bus client), and the

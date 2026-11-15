@@ -1805,6 +1805,13 @@ class signer {
 };
 result<bool> verify(const actor&, std::string_view artifact_type, std::span<const std::byte> canonical_body, const signature&);
 result<verified_identity> verify_chain(std::span<const identity_document> documents);
+struct signature_timestamp { std::vector<std::byte> rfc3161_token, evidence_record;
+                             x509::trust_anchor_set trust; };          // exactly one evidence field
+result<std::string> trusted_signature_time(const signature&, const signature_timestamp&);
+result<bool> verify_with_trusted_time(const actor&, std::string_view artifact_type,
+    std::span<const std::byte> canonical_body, const signature&, const signature_timestamp&);
+result<bool> verify_with_trusted_time(const actor&, std::span<const identity_document> chain,
+    std::string_view, std::span<const std::byte>, const signature&, const signature_timestamp&);
 struct identity_custody_options { std::string custody;            // passphrase | keychain | <custody URI> | file
   std::function<result<std::string>(bool confirm)> passphrase; };   // asked when no passphrase file is set
 void set_identity_custody_options(identity_custody_options);      // process-wide, read by local_signer
@@ -1980,9 +1987,11 @@ verification distinguishes *unsigned* from *invalid*.
 For §5.5 and §18.7, `compromised_keys` is an optional signed identity-document array of
 `{ key_fingerprint_base32, declared_at, reason? }`; its fingerprint is SHA-512/256 of the
 canonical public-key object, encoded as unpadded uppercase base32, and `declared_at` is RFC 3339
-UTC. A successor naming its predecessor key there may carry only the new-key signature. Signatures
-from that key at or after `declared_at` fail; earlier signatures remain valid and
-`verified_identity` reports compromised history. `signer::rotate` persists the chain under
+UTC. A successor naming its predecessor key there may carry only the new-key signature, and
+`verified_identity` reports compromised history. `verify` refuses every signature by that key,
+whatever its signer-chosen `signed_at` says; `verify_with_trusted_time` accepts one only with
+`signature_timestamp` evidence (an RFC 3161 token or RFC 4998 evidence record over the signature
+bytes, checked against caller-supplied TSA roots) that predates `declared_at` (#391). `signer::rotate` persists the chain under
 `identity/<identity-fingerprint>/documents/NNN.cbor`, replaces the active local private key after
 the successor is signed, and `verify_chain` returns the current key set. Initial and successor
 documents share the `identity_document` type. `signer::document()` exposes the held signed public

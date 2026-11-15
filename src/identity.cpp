@@ -36,6 +36,7 @@
 #include "identity/key_version.hpp"
 #include "identity/keys/backend.hpp"
 #include "identity/taap.hpp"
+#include "liquid/transparency.hpp"
 #include "monocypher-ed25519.h"
 #include "monocypher.h"
 #include "store/pack.hpp"
@@ -1530,7 +1531,8 @@ auto verify_against_chain(const actor& by,
                           bool require_continuity,
                           std::string_view artifact_type,
                           std::span<const std::byte> canonical_body,
-                          const signature& signed_value) -> result<bool> {
+                          const signature& signed_value,
+                          const signature_timestamp* evidence) -> result<bool> {
     if (documents.empty()) {
         return std::unexpected(unknown_signer(by.taap_id));
     }
@@ -1559,8 +1561,20 @@ auto verify_against_chain(const actor& by,
             const auto* declaration =
                 declares_compromised(documents[successor], candidate.key_fingerprint);
             if (declaration) {
-                if (!valid_timestamp(signed_value.signed_at) ||
-                    signed_value.signed_at >= declaration->declared_at) {
+                // `signed_at` is chosen by the signer, so whoever holds the compromised key can
+                // backdate it (liquid #391). Only third-party time before the declaration counts.
+                if (evidence == nullptr) {
+                    return std::unexpected(
+                        identity_error(errc::unauthorized,
+                                       "signature by a key declared compromised has no trusted "
+                                       "time before the declaration",
+                                       candidate.taap_id));
+                }
+                auto trusted = trusted_signature_time(signed_value, *evidence);
+                if (!trusted) {
+                    return std::unexpected(trusted.error());
+                }
+                if (*trusted >= declaration->declared_at) {
                     return std::unexpected(identity_error(errc::unauthorized,
                                                           "signature was made after key compromise",
                                                           candidate.taap_id));
@@ -1588,7 +1602,8 @@ result<bool> verify(const actor& by,
     for (auto& document : *stored) {
         documents.push_back(std::move(document.document));
     }
-    return verify_against_chain(by, documents, false, artifact_type, canonical_body, signed_value);
+    return verify_against_chain(
+        by, documents, false, artifact_type, canonical_body, signed_value, nullptr);
 }
 
 result<bool> verify(const actor& by,
@@ -1596,7 +1611,80 @@ result<bool> verify(const actor& by,
                     std::string_view artifact_type,
                     std::span<const std::byte> canonical_body,
                     const signature& signed_value) {
-    return verify_against_chain(by, chain, true, artifact_type, canonical_body, signed_value);
+    return verify_against_chain(
+        by, chain, true, artifact_type, canonical_body, signed_value, nullptr);
+}
+
+result<std::string> trusted_signature_time(const signature& signed_value,
+                                           const signature_timestamp& evidence) {
+    if (signed_value.bytes.empty()) {
+        return std::unexpected(identity_error(errc::invalid_argument,
+                                              "an unsigned record has no signature to timestamp"));
+    }
+    if (evidence.rfc3161_token.empty() == evidence.evidence_record.empty()) {
+        return std::unexpected(identity_error(
+            errc::invalid_argument,
+            "signature timestamp needs exactly one RFC 3161 token or evidence record"));
+    }
+    if (evidence.trust.empty()) {
+        return std::unexpected(identity_error(errc::unauthorized,
+                                              "no trusted timestamp authority is configured",
+                                              "signature timestamp"));
+    }
+    auto generated_at = std::chrono::sys_seconds{};
+    if (!evidence.rfc3161_token.empty()) {
+        auto verified = transparency::timestamp_token::verify(
+            evidence.rfc3161_token, signed_value.bytes, evidence.trust);
+        if (!verified) {
+            return std::unexpected(
+                identity_error(errc::unauthorized,
+                               "signature timestamp does not verify: " + verified.error().message,
+                               "signature timestamp"));
+        }
+        generated_at = verified->generated_at;
+    } else {
+        auto verified = transparency::evidence_record::verify(
+            evidence.evidence_record, signed_value.bytes, evidence.trust);
+        if (!verified || verified->archive_timestamps.empty()) {
+            return std::unexpected(
+                identity_error(errc::unauthorized,
+                               "signature evidence record does not verify: " +
+                                   (verified ? std::string{"it has no archive timestamp"}
+                                             : verified.error().message),
+                               "signature timestamp"));
+        }
+        // The initial archive timestamp covers the signature; renewals cover earlier timestamps.
+        generated_at = verified->archive_timestamps.front().timestamp.generated_at;
+    }
+    return std::format("{:%FT%TZ}", generated_at);
+}
+
+result<bool> verify_with_trusted_time(const actor& by,
+                                      std::string_view artifact_type,
+                                      std::span<const std::byte> canonical_body,
+                                      const signature& signed_value,
+                                      const signature_timestamp& evidence) {
+    auto stored = stored_chain(by.taap_id);
+    if (!stored) {
+        return std::unexpected(stored.error());
+    }
+    auto documents = std::vector<identity_document>{};
+    documents.reserve(stored->size());
+    for (auto& document : *stored) {
+        documents.push_back(std::move(document.document));
+    }
+    return verify_against_chain(
+        by, documents, false, artifact_type, canonical_body, signed_value, &evidence);
+}
+
+result<bool> verify_with_trusted_time(const actor& by,
+                                      std::span<const identity_document> chain,
+                                      std::string_view artifact_type,
+                                      std::span<const std::byte> canonical_body,
+                                      const signature& signed_value,
+                                      const signature_timestamp& evidence) {
+    return verify_against_chain(
+        by, chain, true, artifact_type, canonical_body, signed_value, &evidence);
 }
 
 result<bool> verify_key_signature(const actor& key,

@@ -15,6 +15,7 @@
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/x509.hpp"
 
 namespace liquid {
 
@@ -127,6 +128,40 @@ private:
                                                 std::string_view artifact_type,
                                                 std::span<const std::byte> canonical_body,
                                                 const signature& signed_value);
+
+// Third-party evidence of when a signature existed (liquid #391): either an RFC 3161
+// TimeStampToken or an RFC 4998 evidence record whose initial archive timestamp covers the
+// signature, with a message imprint of SHA-256 over the signature's `bytes`. It is checked against
+// `trust`, the timestamp-authority roots the caller trusts; never take `trust` from a repository,
+// a peer or the evidence itself. Set exactly one of the two evidence fields.
+struct LIQUID_EXPORT signature_timestamp {
+    std::vector<std::byte> rfc3161_token;
+    std::vector<std::byte> evidence_record;
+    x509::trust_anchor_set trust;
+};
+
+// Verifies `evidence` for `signed_value` and returns the time it proves, as an RFC 3339 UTC time
+// ("YYYY-MM-DDTHH:MM:SSZ"). A signature's own `signed_at` is the signer's claim and proves nothing.
+[[nodiscard]] LIQUID_EXPORT result<std::string>
+trusted_signature_time(const signature& signed_value, const signature_timestamp& evidence);
+
+// A key named in a compromise declaration verifies no signature through `verify`, whatever its
+// `signed_at` says: whoever holds the compromised key can choose that field. These variants accept
+// such a signature only when `evidence` proves, by third-party time, that it existed strictly
+// before the declaration. For any other key they behave as `verify`.
+[[nodiscard]] LIQUID_EXPORT result<bool>
+verify_with_trusted_time(const actor& by,
+                         std::string_view artifact_type,
+                         std::span<const std::byte> canonical_body,
+                         const signature& signed_value,
+                         const signature_timestamp& evidence);
+[[nodiscard]] LIQUID_EXPORT result<bool>
+verify_with_trusted_time(const actor& by,
+                         std::span<const identity_document> chain,
+                         std::string_view artifact_type,
+                         std::span<const std::byte> canonical_body,
+                         const signature& signed_value,
+                         const signature_timestamp& evidence);
 
 // Checks only that `key` made the signature. It says nothing about who holds the key: use it
 // solely for a key the caller itself bound to a name, such as a session key it minted and stored.

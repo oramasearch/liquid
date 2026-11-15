@@ -25,8 +25,12 @@ chain with `liquid identity show --chain` and accept it with `liquid identity tr
 ([identity.md](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)). Which
 identity may issue the policy is liquid#384. It counts distinct
 TAAP identity identifiers that appear in the policy. Repeated approvals from one identity count
-once. An approval from an unlisted identity, for another artifact or policy, after policy expiry,
-or at or after that key's signed compromise declaration does not count. The result reports
+once. An approval from an unlisted identity, for another artifact or policy, or after policy
+expiry does not count, and neither does any approval by a key that a later identity document
+declares compromised: its `signed_at` is the signer's own claim, so an approval made before the
+declaration is indistinguishable from one a thief backdated (liquid #391). Approvals carry no
+third-party timestamp yet, so such an approval must be made again with the identity's new key
+([identity.md](identity.md#rotation)). The result reports
 `satisfied`, the sorted `distinct_valid_signers`, and the policy identities still `missing`.
 
 These are the same role and distinct-issuer semantics used by TUF metadata. Client-side TUF
@@ -64,7 +68,7 @@ The directory is not a private-key store.
 `ReleaseApproval.threshold_counts_distinct_valid_identities` covers one-of-three refusal,
 duplicate-identity counting, and two-of-three success.
 `ReleaseApproval.approval_after_declared_compromise_is_rejected` proves that the identity chain's
-signing-time compromise rule applies to release approvals. The threshold test first verifies with no
+compromise rule applies to release approvals. The threshold test first verifies with no
 other identity trusted (the policy is refused), then with only the policy issuer trusted (both
 approvals are `unknown_signers`), before trusting the approvers. `cli-release` does the same through
 `liquid identity show --chain` and `liquid identity trust`.

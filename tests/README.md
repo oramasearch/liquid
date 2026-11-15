@@ -299,7 +299,11 @@ identity through the CLI, then decodes, re-encodes, and verifies the stored cano
 through the public API. `test_hardware_keys.cpp` drives CTAP2, PIV, and TPM command-level doubles,
 cross-backend identity rotation, private-key absence in CLI document output for software, FIDO2
 EdDSA/ES256, and PIV custody, malformed signature rejection, and threshold release approval
-including compromise-time refusal and refusal of signers whose identity chain is not trusted.
+including refusal of every approval by a key later declared compromised and of signers whose
+identity chain is not trusted. `Identity.BackdatedSignatureByCompromisedKeyIsRefused` shows that a
+signer-chosen `signed_at` before the declaration does not rescue a compromised key's signature, and
+`TransparencyTimestamp.SignatureTrustedTimeComesOnlyFromVerifiedEvidence` checks the trusted-time
+evidence that can (liquid#391).
 Signer attribution (liquid#383) is covered where each verifier lives: `test_identity.cpp` (chain
 rules and the unknown-signer result), `test_sync.cpp` (identity frames), `attestation/`,
 `admission/`, `build/test_policy.cpp`, `test_hot_update.cpp`, and `cli/release.cmake`. Tests that

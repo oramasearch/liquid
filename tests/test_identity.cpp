@@ -260,15 +260,66 @@ TEST(Identity, CompromisedKeyRotationUsesNewSignatureAndFlagsHistory) {
     ASSERT_TRUE(verified) << verified.error().message;
     EXPECT_TRUE(verified->has_compromised_history);
 
-    auto before_compromise = *old_signature;
-    before_compromise.signed_at = "2000-01-01T00:00:00Z";
-    const auto before_valid = liquid::verify(successor->subject, "drip", body, before_compromise);
-    ASSERT_TRUE(before_valid) << before_valid.error().message;
-    EXPECT_TRUE(*before_valid);
-
     const auto at_compromise = liquid::verify(initial, "drip", body, *old_signature);
     ASSERT_FALSE(at_compromise);
     EXPECT_EQ(at_compromise.error().code, liquid::errc::unauthorized);
+
+    // The new key is not compromised: its signatures verify as before.
+    auto current = liquid::runtime::block_on(signer->sign("drip", body));
+    ASSERT_TRUE(current) << current.error().message;
+    const auto current_valid = liquid::verify(successor->subject, "drip", body, *current);
+    ASSERT_TRUE(current_valid) << current_valid.error().message;
+    EXPECT_TRUE(*current_valid);
+    std::error_code code;
+    std::filesystem::remove_all(home, code);
+}
+
+// Whoever holds a compromised key chooses `signed_at`, so a signature that claims to predate the
+// declaration proves nothing (liquid #391). It is refused through the stored chain and a carried
+// chain alike, and evidence that does not verify against a trusted timestamp authority does not
+// rescue it.
+TEST(Identity, BackdatedSignatureByCompromisedKeyIsRefused) {
+    const auto home = rotation_home("backdated");
+    set_identity_home(home);
+    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    ASSERT_TRUE(signer) << signer.error().message;
+    const auto initial = signer->identity();
+    const auto body = bytes("drip signed with a stolen key");
+    const auto stolen = liquid::runtime::block_on(signer->sign("drip", body));
+    ASSERT_TRUE(stolen) << stolen.error().message;
+    const auto successor = liquid::runtime::block_on(signer->rotate(liquid::compromise_declaration{
+        initial.key_fingerprint, liquid::identity_detail::now(), "private key exposure"}));
+    ASSERT_TRUE(successor) << successor.error().message;
+
+    auto backdated = *stolen;
+    backdated.signed_at = "2000-01-01T00:00:00Z";
+    const auto stored = liquid::verify(successor->subject, "drip", body, backdated);
+    ASSERT_FALSE(stored);
+    EXPECT_EQ(stored.error().code, liquid::errc::unauthorized);
+
+    auto chain = liquid::load_identity_chain(initial.taap_id);
+    ASSERT_TRUE(chain) << chain.error().message;
+    const auto carried = liquid::verify(successor->subject, *chain, "drip", body, backdated);
+    EXPECT_FALSE(carried);
+
+    // No configured timestamp authority, and a token that is not DER, both stay refused.
+    auto untrusted = liquid::signature_timestamp{};
+    untrusted.rfc3161_token = bytes("not a timestamp token");
+    const auto without_trust =
+        liquid::verify_with_trusted_time(successor->subject, "drip", body, backdated, untrusted);
+    ASSERT_FALSE(without_trust);
+    EXPECT_EQ(without_trust.error().code, liquid::errc::unauthorized);
+    const auto no_evidence = liquid::verify_with_trusted_time(
+        successor->subject, "drip", body, backdated, liquid::signature_timestamp{});
+    EXPECT_FALSE(no_evidence);
+
+    // A key that was never declared compromised needs no evidence.
+    auto current = liquid::runtime::block_on(signer->sign("drip", body));
+    ASSERT_TRUE(current) << current.error().message;
+    const auto current_valid = liquid::verify_with_trusted_time(
+        successor->subject, "drip", body, *current, liquid::signature_timestamp{});
+    ASSERT_TRUE(current_valid) << current_valid.error().message;
+    EXPECT_TRUE(*current_valid);
     std::error_code code;
     std::filesystem::remove_all(home, code);
 }
