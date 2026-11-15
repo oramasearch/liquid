@@ -96,9 +96,10 @@ bounded validity window and its revocation status is asked through the caller's
 `delegation_status_resolver` when the session is forked and before every lease and publish, so a
 revoked or expired delegation neither starts nor continues a session
 ([#514](https://github.com/oramasearch/liquid/issues/514)); the CLI uses this machine's revocation
-list, `$LIQUID_HOME/trust/delegation-revocations`. What does not hold yet: a delegation is not bound to the agent,
-dispatcher or repository using it ([#515](https://github.com/oramasearch/liquid/issues/515)),
-`open_session` trusts stored session authority without verifying it again
+list, `$LIQUID_HOME/trust/delegation-revocations`. A delegation is bound to the agent it names, its dispatcher must be its issuer, and it names the
+one repository it may be used in, so `drip.by` and `liquid blame` name the delegated agent
+([#515](https://github.com/oramasearch/liquid/issues/515)); `liquid session start <delegation> --as
+<agent>` starts a session as that agent. What does not hold yet: `open_session` trusts stored session authority without verifying it again
 ([#516](https://github.com/oramasearch/liquid/issues/516)), and sub-delegation containment
 over-approximates scopes and does not link the chain
 ([#517](https://github.com/oramasearch/liquid/issues/517)).

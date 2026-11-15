@@ -24,6 +24,11 @@ threshold the log cannot meet, rejects missing, tampered, and unavailable proofs
 omitting `--log` retains local-only verification (liquid #389).
 The target compiles the private attestation encoder and its canonical CBOR dependency directly so
 the same fixture works with hidden symbols in shared-library builds.
+`session.cmake` issues a delegation with `session_fixture.cpp` and checks that
+`liquid session start <delegation> --as <agent>` refuses a missing `--as` and any agent other than
+the delegation's subject, then that the agent's published line is attributed to it with
+`agent=true` (liquid #515). Like `verify_log.cpp`, the fixture compiles the private attestation
+encoder directly.
 `verify-log-guide.cmake` reads the transparency guide's all-actions invocation and requires the
 built command to accept it past argument parsing.
 

@@ -23,7 +23,7 @@ the public encoder.
 | Profile | Subject kind | Required attributes | Optional attributes | Status policy |
 |---|---|---|---|---|
 | `org_membership/1` | actor | `organization:text`, `role:text` | `display_name:text` | revocable; fresh status evidence no older than 24 hours |
-| `delegation/1` | actor | `scopes:text_list`, `may_publish:boolean`, `may_lease:boolean`, `depth_remaining:unsigned_integer`, `dispatcher:text`, `not_after:unsigned_integer` | `model:text` | revocable; fresh status evidence no older than 1 hour; valid from `at` to `not_after`, at most 30 days |
+| `delegation/1` | actor | `scopes:text_list`, `may_publish:boolean`, `may_lease:boolean`, `depth_remaining:unsigned_integer`, `dispatcher:text`, `not_after:unsigned_integer`, `repository:text` | `model:text` | revocable; fresh status evidence no older than 1 hour; valid from `at` to `not_after`, at most 30 days |
 | `authorship/1` | drip | `author:text` | none | none |
 | `review_approval/1` | change | `reviewer:text`, `approved:boolean` | `comment:text*` | none |
 | `slsa_provenance/1` | artifact | typed `buildDefinition` and `runDetails` SLSA v1 predicate | none | none |
@@ -49,7 +49,13 @@ plaintext value. A required field is satisfied by its committed value when the p
 subject is the agent actor. `scopes` contains repository-relative path globs; `may_publish` and
 `may_lease` are independent capabilities; `depth_remaining` limits further delegation; `model`
 records the optional model label; `dispatcher` names who launched the agent; and `not_after` is the
-end of its validity, in seconds since the Unix epoch.
+end of its validity, in seconds since the Unix epoch; and `repository` is the hex id of the one
+repository it may be used in.
+
+A delegation is bound to the agent, the dispatcher and the repository (liquid #515). Its subject is
+`delegation_subject(agent)`, the BLAKE3 digest of the agent's TAAP id, and `fork_session` refuses
+it for any other acting agent; `dispatcher` must be its own issuer; and `repository` must be the id
+of the repository the session forks. All three refusals are `errc::unauthorized`.
 
 `check_delegation_window(value, now)` refuses a delegation that has expired (`now` is at or past
 `not_after`) or was issued more than `delegation_clock_skew` (5 minutes) in the future, with

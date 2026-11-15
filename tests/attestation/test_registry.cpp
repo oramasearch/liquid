@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -7,6 +8,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 
 #include "identity/taap.hpp"
@@ -38,7 +40,8 @@ auto example(std::string_view profile) -> liquid::attestation {
                             {"depth_remaining", std::uint64_t{2}},
                             {"model", "liquid-agent"},
                             {"dispatcher", "taap:1:ed25519:dispatcher"},
-                            {"not_after", std::uint64_t{3700}}};
+                            {"not_after", std::uint64_t{3700}},
+                            {"repository", "00112233445566778899aabbccddeeff"}};
     } else if (profile == "authorship/1") {
         value.subject_kind = liquid::attestation_subject_kind::drip;
         value.attributes = {{"author", "taap:1:ed25519:author"}};
@@ -203,7 +206,8 @@ TEST(AttestationRegistry, delegation_chains_only_attenuate_authority) {
                         {"may_lease", true},
                         {"depth_remaining", std::uint64_t{1}},
                         {"dispatcher", "taap:1:ed25519:dispatcher"},
-                        {"not_after", std::uint64_t{3700}}};
+                        {"not_after", std::uint64_t{3700}},
+                        {"repository", "00112233445566778899aabbccddeeff"}};
     EXPECT_TRUE(liquid::validate_delegation(child, &parent));
 
     auto broad = child;
@@ -293,19 +297,26 @@ TEST(AttestationRegistry, delegation_window_refuses_expired_future_and_unbounded
     EXPECT_EQ(early.error().code, liquid::errc::unauthorized);
     EXPECT_TRUE(liquid::check_delegation_window(value, issued - liquid::delegation_clock_skew));
 
+    const auto not_after = [](liquid::attestation& target) -> liquid::attestation_value& {
+        return std::ranges::find(target.attributes,
+                                 std::string_view{"not_after"},
+                                 &liquid::attestation_attribute::name)
+            ->value;
+    };
     auto unbounded = value;
-    unbounded.attributes.back().value = std::uint64_t{
+    not_after(unbounded) = std::uint64_t{
         100 + static_cast<std::uint64_t>(liquid::delegation_maximum_lifetime.count()) + 1};
     auto too_long = liquid::check_delegation_window(unbounded, issued);
     ASSERT_FALSE(too_long);
     EXPECT_EQ(too_long.error().code, liquid::errc::invalid_argument);
 
     auto backwards = value;
-    backwards.attributes.back().value = std::uint64_t{100};
+    not_after(backwards) = std::uint64_t{100};
     EXPECT_FALSE(liquid::check_delegation_window(backwards, issued));
 
     auto undated = value;
-    undated.attributes.pop_back();
+    std::erase_if(undated.attributes,
+                  [](const auto& attribute) { return attribute.name == "not_after"; });
     EXPECT_FALSE(liquid::check_delegation_window(undated, issued));
     EXPECT_FALSE(liquid::validate_delegation(undated));
 }

@@ -46,8 +46,9 @@ values.
 claims, exclusive checkout rules and records, transient presence, and epoch compaction reports.
 `session_options::status` and `session_open_options::status` carry the required
 `delegation_status_resolver` (`attestation.hpp`), asked at fork and before every lease and publish
-(liquid #514); `attestation.hpp` also defines `check_delegation_window` and
-`local_delegation_status`.
+(liquid #514); `attestation.hpp` also defines `check_delegation_window`,
+`local_delegation_status`, and `delegation_subject`, the subject that binds a delegation to its
+agent (liquid #515).
 `repository.hpp` exposes lock acquisition, holder-only release, configuration, enumeration, and
 the optional connected authorization callback. `daemon.hpp` exposes lock requests and complete
 lock-set delivery to local targets.

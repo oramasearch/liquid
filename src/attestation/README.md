@@ -21,6 +21,7 @@ overlay tree digests in addition to its target, source, normalisation, and tool 
 `delegation/1` validates attenuation-only scoped agent authority for session publication and lease
 claims. `check_delegation_window` bounds its validity to `not_after` (at most 30 days), and
 `local_delegation_status` answers revocation from `$LIQUID_HOME/trust/delegation-revocations`
-(liquid #514).
+(liquid #514). `delegation_subject` is the subject a delegation names for its agent, and its
+`repository` attribute binds it to one repository (liquid #515).
 `platform_signature/1` binds a projected unsigned digest to the signed installer digest,
 certificate fingerprint, native verification, and optional notarisation or timestamp evidence.

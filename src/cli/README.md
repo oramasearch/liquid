@@ -40,6 +40,9 @@ to the checkout daemon and acquires or releases exclusive checkout through the p
 platforms without daemon transport use the public repository operations directly.
 
 `session.cpp` starts, publishes, and discards private replicas through the public session API.
+`session start <delegation> --as <agent>` acts as the delegated agent, which must be the
+delegation's subject (liquid #515), and every session command answers revocation from
+`$LIQUID_HOME/trust/delegation-revocations` (liquid #514).
 `attestation.cpp` renders delegation attributes, and `repo.cpp` renders their signed drip digest.
 `identity.cpp` exports the public signed document with `show --document`, using the public signer
 accessor and canonical codec, and selects software, FIDO2, or PIV rotation custody. It also

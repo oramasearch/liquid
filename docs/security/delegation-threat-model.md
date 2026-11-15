@@ -14,7 +14,7 @@ hold, and each is filed:
 | Issue | Defect |
 |---|---|
 | [#514](https://github.com/oramasearch/liquid/issues/514) | `fork_session` accepts revoked and expired delegations: it made up its own "not revoked, checked now" status, and `delegation/1` had no expiry. **Fixed**: a required `not_after` and a required status resolver, asked at fork, lease and publish. |
-| [#515](https://github.com/oramasearch/liquid/issues/515) | A delegation is not bound to the agent, the dispatcher or the repository that uses it. |
+| [#515](https://github.com/oramasearch/liquid/issues/515) | A delegation was not bound to the agent, the dispatcher or the repository that uses it. **Fixed**: subject, dispatcher and a required `repository` attribute are checked at fork, and `liquid session start --as <agent>` acts as the delegated agent. |
 | [#516](https://github.com/oramasearch/liquid/issues/516) | `open_session` restores authority from unsigned session state without verifying it again. |
 | [#517](https://github.com/oramasearch/liquid/issues/517) | `validate_delegation` lets a sub-delegation broaden its scopes and does not link it to its parent; chains are never checked when a session acts. |
 
@@ -51,7 +51,7 @@ sync item carries a session), Lake's own handling of delegations, and exclusive 
 | **Principal** | The local identity (`identity_detail::local_signer()`). Issues delegations; owns the repository and its key. Trusted. |
 | **Agent** | The delegate. Names itself in `session_options.actor`. Holds only the delegation and a session id. Untrusted beyond what the delegation grants. |
 | **Subagent** | An agent that received a sub-delegation. Untrusted beyond its own delegation and every ancestor. |
-| **Dispatcher** | Whoever launched the agent; recorded as the `dispatcher` attribute. Not verified (#515). |
+| **Dispatcher** | Whoever launched the agent; recorded as the `dispatcher` attribute, which must be the delegation's issuer (#515). |
 | **Library caller** | Lake, liquify or the CLI, calling `fork_session` and `session::*`. Chooses the actor, supplies the delegation, and supplies the `delegation_status_resolver` that answers revocation (#514; the CLI reads `$LIQUID_HOME/trust/delegation-revocations`). |
 | **State or store writer** | Anything that can write the repository's state backend or object store: a remote backend, a transferred copy, another local process. Untrusted. |
 
@@ -103,8 +103,8 @@ Each row: the property, where it is enforced, the test that proves it, and its s
 | D5 | A sub-delegation keeps or raises `depth_remaining`, delegates from depth 0, or adds `may_publish` or `may_lease`. | `registry.cpp:532-537` | `delegation_chains_only_attenuate_authority`; `sub_delegation_reduces_depth_and_never_adds_leases` (**new**) | Holds in `validate_delegation`; never applied when a session acts (D7) |
 | D6 | A sub-delegation's scopes match a path its parent's scopes do not. | `within`, `registry.cpp:515-531` | `delegation_chains_only_attenuate_authority` (disjoint case only) | **Does not hold — [#517](https://github.com/oramasearch/liquid/issues/517)**: parent `src/*.cpp` admits `src/secret/**` |
 | D7 | An unlinked chain is accepted, or a session acts on a link that was never checked against its parent. | Not enforced: no issuer/subject link in `validate_delegation`; `fork_session` passes no parent `repository_impl.cpp:8738` | No test | **Does not hold — [#517](https://github.com/oramasearch/liquid/issues/517)** |
-| D8 | A session acts as, or is attributed to, an agent other than the delegation's subject; or names a dispatcher who did not issue it. | Not enforced: `options.actor` is never compared with `delegation.subject` (`repository_impl.cpp:8730-8845`); `dispatcher` never read | No test | **Does not hold — [#515](https://github.com/oramasearch/liquid/issues/515)** |
-| D9 | A delegation issued for one repository authorises work in another. | Not enforced: `delegation/1` names no repository | No test | **Does not hold — [#515](https://github.com/oramasearch/liquid/issues/515)** |
+| D8 | A session acts as, or is attributed to, an agent other than the delegation's subject; or names a dispatcher who did not issue it. | `check_delegation_binding` in `fork_session`: `delegation.subject == delegation_subject(options.actor)` and `dispatcher == issuer.taap_id`; the CLI acts as `--as <agent>` | `fork_session_binds_the_agent_dispatcher_and_repository`; `cli-session` | Holds ([#515](https://github.com/oramasearch/liquid/issues/515)) |
+| D9 | A delegation issued for one repository authorises work in another. | `check_delegation_binding`: the required `repository` attribute equals the forked repository's id | `fork_session_binds_the_agent_dispatcher_and_repository` | Holds ([#515](https://github.com/oramasearch/liquid/issues/515)) |
 
 ### Session authority
 
@@ -132,11 +132,11 @@ Each row: the property, where it is enforced, the test that proves it, and its s
 
 | Threat | Where | Today |
 |---|---|---|
-| **Spoofing** the agent | `options.actor` is free (D8) | Open, #515 |
+| **Spoofing** the agent | `options.actor` must be the delegation's subject (D8) | Mitigated, #515 |
 | **Spoofing** the issuer | issuer check and identity chain (D2, D3) | Mitigated |
 | **Tampering** with the delegation in flight | signature (D2) | Mitigated |
 | **Tampering** with stored session authority | `LIQUID_SESSION` is unsigned and trusted on open (M1) | Open, #516 |
-| **Repudiation** of agent work | version-3 drips carry the delegation digest, signed by the principal (S8) | Mitigated, though the named agent is unbound |
+| **Repudiation** of agent work | version-3 drips carry the delegation digest, signed by the principal, and name the delegation's subject (S8, D8) | Mitigated |
 | **Information disclosure** | a session reads the whole private replica, not only its scopes | Accepted: scopes limit writes, not reads (below) |
 | **Denial of service** | an in-scope lease blocks the human's writes until it expires | Accepted: leases are time-bounded; Lake can authorise them (`authorize_lease`) |
 | **Elevation of privilege** | broadening sub-delegation (D6, D7) | Open, #517 |
@@ -150,12 +150,11 @@ principal did not intend.
 
 - **Who may present authority.** Only a delegation the principal signed (D2, D3). This is the strong
   part: a delegation from another identity, or an edited one, is refused.
-- **For whom.** Not checked (#515). The delegation's subject names an agent, but the caller states
-  the acting agent separately and nothing compares them. Through the CLI the acting agent is
-  always the principal (`session.cpp:75-80`), so CLI history attributes agent work to the human
-  with `agent=true`.
-- **Where.** Not checked (#515). Scopes are path globs with no repository, so a delegation is valid
-  in every repository the principal opens.
+- **For whom.** Checked (#515). The acting agent must be the delegation's subject
+  (`delegation_subject`, the BLAKE3 digest of its TAAP id), and the dispatcher must be the issuer.
+  The CLI acts as the agent named by `--as`, so CLI history names the agent, not the human.
+- **Where.** Checked (#515). The required `repository` attribute names the one repository a
+  delegation may be used in.
 - **When.** Checked (#514). A delegation is valid from `at` (5 minutes of skew) to `not_after`, at
   most 30 days, and its status comes from the caller's resolver at fork and before every lease and
   publish.
