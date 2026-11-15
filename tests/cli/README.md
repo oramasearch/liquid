@@ -58,6 +58,9 @@ that `current` exposes the first tree again.
 same document twice to pin idempotence.
 `locks.cmake` lowers a repository lock rule during initialization, then acquires with an explicit
 reason and releases through the checkout daemon.
+`serve-listen.cmake` requires `serve reapi` to refuse, before anything binds, a plaintext listener
+on a non-loopback IPv4 or IPv6 address, a token without TLS, TLS without authentication, a
+group-readable token file, and a certificate without its key (liquid#415).
 The help/documentation comparison also pins the `scheduler` and `worker` command names.
 The scenario also pins `remote_bytes` in the status JSON contract.
 `conflict.cmake` creates a CRDT-suspicious conflict through a public-API fixture, verifies the

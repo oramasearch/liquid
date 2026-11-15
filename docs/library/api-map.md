@@ -134,7 +134,8 @@ owning issue in `error::context`.
 | `liquid/daemon.hpp` | #21, #23, #193, #195, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets including configured drive sync, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
 | `liquid/daemon.hpp` | #21, #23, #85, #193, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, flow watermarks and in-process consumer lag, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
-| `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
+| `liquid/reapi.hpp` | #16, #415 | implemented | `reapi_serve_options` with its listener security and the coroutine-native repository CAS/ActionCache server entry point |
+| `liquid/listener.hpp` | #415, #403 | implemented | `listener_security` (TLS, mutual TLS, bearer token), the loopback-only default check, owner-only token files, and constant-time bearer comparison |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
 | `liquid/sync.hpp` | #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
 | `liquid/forge.hpp` | #201 | implemented | plain review, comment, mapped-anchor, branch-protection, and polling-event values plus a move-only coroutine client and watch; HTTP and JSON remain private |
@@ -711,6 +712,9 @@ struct reapi_serve_options {
   std::filesystem::path store_directory;
   std::string listen, instance_name;
   reapi_upload_limits uploads;
+struct reapi_serve_options {
+    std::filesystem::path store_directory; std::string listen, instance_name;
+    listener_security security;
 };
 runtime::task<void> serve_reapi(reapi_serve_options);
 ```
@@ -719,6 +723,23 @@ The server exposes the repository's SHA-256 CAS, ByteStream, Capabilities, and A
 not expose transport implementation types. `uploads` bounds retained payload capacity, upload count,
 resource-name length, idle expiry and active handling time; the same policy is available through
 `scheduler_options::uploads`. Defaults and CLI configuration are in [reapi.md](reapi.md).
+not expose transport implementation types. A non-loopback `listen` is refused unless `security`
+has TLS and a bearer token or a client CA ([`reapi.md`](reapi.md#listener-security-liquid415)).
+
+### `liquid/listener.hpp`
+
+```cpp
+struct listener_security {
+    std::optional<std::filesystem::path> tls_certificate, tls_key, client_certificate_authority;
+    std::string bearer_token;
+};
+bool is_loopback_address(std::string_view host) noexcept;
+result<void> validate_listener_security(bool loopback, const listener_security&);
+result<std::string> read_token_file(const std::filesystem::path&);
+bool bearer_authorized(std::string_view expected, std::string_view authorization) noexcept;
+```
+
+Shared by `serve_reapi` and the `liquid serve sync` adapter. Plaintext is served only on loopback.
 
 ### `liquid/sync.hpp`
 

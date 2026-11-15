@@ -30,6 +30,7 @@
 #include "cli/reapi_options.hpp"
 #include "liquid/admission.hpp"
 #include "liquid/error.hpp"
+#include "liquid/listener.hpp"
 #include "liquid/reapi.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
@@ -395,6 +396,45 @@ auto parse_options(int argc, char** argv) -> std::optional<serve_options> {
     return options;
 }
 
+// The host of a `host:port` listen address: `[v6]:port`, `v4:port`, or the whole value.
+auto listen_host(std::string_view listen) -> std::string_view {
+    if (listen.starts_with('[')) {
+        const auto close = listen.find(']');
+        return close == std::string_view::npos ? listen : listen.substr(0, close + 1);
+    }
+    const auto colon = listen.rfind(':');
+    return colon == std::string_view::npos ? listen : listen.substr(0, colon);
+}
+
+// Applies one transport-security option shared by the REAPI and sync listeners. Returns nullopt
+// when `name` is not one; otherwise the exit status on failure, or 0. The bearer token is read
+// from an owner-only file, never from argv or the environment.
+auto security_option(liquid::listener_security& security,
+                     std::string_view name,
+                     std::string_view value) -> std::optional<int> {
+    if (name == "--tls-cert") {
+        security.tls_certificate = std::filesystem::path{value};
+        return 0;
+    }
+    if (name == "--tls-key") {
+        security.tls_key = std::filesystem::path{value};
+        return 0;
+    }
+    if (name == "--client-ca") {
+        security.client_certificate_authority = std::filesystem::path{value};
+        return 0;
+    }
+    if (name == "--token-file") {
+        auto token = liquid::read_token_file(std::filesystem::path{value});
+        if (!token) {
+            return fail(token.error());
+        }
+        security.bearer_token = std::move(*token);
+        return 0;
+    }
+    return std::nullopt;
+}
+
 auto serve_reapi(int argc, char** argv) -> int {
     auto options = liquid::reapi_serve_options{.store_directory = std::filesystem::current_path() /
                                                                   ".liquid-store"};
@@ -419,7 +459,24 @@ auto serve_reapi(int argc, char** argv) -> int {
             options.instance_name = argv[index];
             continue;
         }
-        return usage("serve reapi --listen <address> [--instance <name>]");
+        if (argument == "--tls-cert" || argument == "--tls-key" || argument == "--client-ca" ||
+            argument == "--token-file") {
+            if (++index == argc) {
+                return usage("serve reapi security options require a path");
+            }
+            const auto applied = security_option(options.security, argument, argv[index]);
+            if (applied && *applied != 0) {
+                return *applied;
+            }
+            continue;
+        }
+        return usage("serve reapi --listen <address> [--instance <name>] [--tls-cert <path> "
+                     "--tls-key <path>] [--token-file <path>] [--client-ca <path>]");
+    }
+    const auto secured = liquid::validate_listener_security(
+        liquid::is_loopback_address(listen_host(options.listen)), options.security);
+    if (!secured) {
+        return fail(secured.error());
     }
     if (!std::filesystem::exists(options.store_directory)) {
         return usage("serve reapi must run from a liquid repository");

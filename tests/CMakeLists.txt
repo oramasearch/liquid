@@ -37,6 +37,7 @@ add_executable(liquid-tests
   test_identity_custody.cpp
   test_install.cpp
   test_hardware_keys.cpp
+  test_listener.cpp
   test_node_store.cpp
   test_object.cpp
   test_projection.cpp
@@ -147,7 +148,8 @@ if(BUILD_SHARED_LIBS)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
 endif()
 if(UNIX)
-  target_sources(liquid-tests PRIVATE test_sync.cpp test_runtime_sockets.cpp admission/test_server.cpp)
+  target_sources(liquid-tests PRIVATE test_sync.cpp test_runtime_sockets.cpp admission/test_server.cpp
+    reapi/test_server_auth.cpp)
 endif()
 target_link_libraries(liquid-tests PRIVATE
   # liquid_forge_double links liquid::liquid publicly, so naming it here too put
@@ -627,6 +629,13 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_LOCK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lock-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/locks.cmake)
+  if(UNIX)
+    add_test(NAME cli-serve-listen
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -DLIQUID_SERVE_ROOT=${CMAKE_CURRENT_BINARY_DIR}/serve-listen-cli
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/serve-listen.cmake)
+  endif()
   set(LIQUID_LOG_URL_SANDBOX_ARGS)
   if(UNIX)
     list(APPEND LIQUID_LOG_URL_SANDBOX_ARGS
@@ -1040,6 +1049,7 @@ add_executable(liquid-header-tests
   headers/install.cpp
   headers/import.cpp
   headers/liquid.cpp
+  headers/listener.cpp
   headers/node_store.cpp
   headers/main.cpp
   headers/object.cpp

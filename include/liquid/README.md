@@ -53,6 +53,11 @@ attribution records used by the repository and daemon APIs.
 `tuf.hpp` defines the repository-backed trusted-root bootstrap, ordered metadata update verifier,
 and complete target-byte verification gate used by registry and drive clients.
 
+`listener.hpp` defines `listener_security`, the TLS, mutual-TLS and bearer-token configuration of
+the REAPI and sync listeners, and the checks they share: only a loopback listener may run without
+TLS and client authentication, tokens come from owner-only files, and bearer comparison is
+constant-time. `reapi.hpp` carries it in `reapi_serve_options::security`.
+
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.

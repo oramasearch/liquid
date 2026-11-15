@@ -16,7 +16,7 @@ Serve repository synchronization, the repository CAS and ActionCache, or image a
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
-| `--listen` | `<address>` | Select the listener address. | 127.0.0.1 |
+| `--listen` | `<address>` | Select the listener address. A REAPI listener off loopback requires TLS and --token-file or --client-ca. | 127.0.0.1 |
 | `--port` | `<port>` | Select the sync listener port. | 8080 |
 | `--allow-ref` | `<glob>` | Permit a reference-name glob; repeatable. | all references |
 | `--instance` | `<name>` | Select the REAPI instance name. | empty |
@@ -24,8 +24,10 @@ Serve repository synchronization, the repository CAS and ActionCache, or image a
 | `--policy` | `<file>` | Read the admission policy from this file. | none |
 | `--policies` | `<dir>` | Read admission policies from this directory. | none |
 | `--control-listen` | `<address>` | Select the admission control listener. | none |
-| `--tls-cert` | `<path>` | Read the admission TLS certificate from this file. | none |
-| `--tls-key` | `<path>` | Read the admission TLS private key from this file. | none |
+| `--tls-cert` | `<path>` | Read the listener TLS certificate chain from this file. | none |
+| `--tls-key` | `<path>` | Read the listener TLS private key from this file. | none |
+| `--client-ca` | `<path>` | Require a REAPI client certificate signed by this CA (mutual TLS). | none |
+| `--token-file` | `<path>` | Require on every REAPI request the bearer token in this owner-only file. | none |
 | `--attestation-source` | `<url>` | Read admission attestations from this source. | none |
 | `--store` | `<path>` | Read admission attestations from this store. | none |
 | `--log-cache` | `<path>` | Store admission log cache data at this path. | none |

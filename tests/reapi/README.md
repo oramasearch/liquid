@@ -20,3 +20,7 @@ and resumption. Its loopback server tests exercise limits across separate RPC co
 expiry, malformed or compressed later messages, resource changes, finishing-message ordering and
 a zero HTTP/2 response window that must time out and release its active upload.
 The tests use small configured budgets and deterministic clock values for unit checks.
+`test_server_auth.cpp` starts the real `liquid serve reapi --token-file` on loopback and proves that
+`UpdateActionResult`, `BatchUpdateBlobs` and `GetCapabilities` without the token, or with a wrong
+one, are refused and leave no ActionCache entry, while the same write with the token is stored
+(liquid#415). It runs on Unix static builds that build the CLI.

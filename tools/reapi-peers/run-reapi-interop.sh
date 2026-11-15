@@ -87,7 +87,9 @@ fi
 mkdir -p "$temporary/server/.liquid-store"
 (
   cd "$temporary/server"
-  "$liquid" serve reapi --listen 0.0.0.0:50161
+  # Loopback only: a plaintext listener on any other address is refused (liquid#415). Host
+  # networking on Linux and Docker Desktop's host.docker.internal both reach the host's loopback.
+  "$liquid" serve reapi --listen 127.0.0.1:50161
 ) >"$temporary/server.log" 2>&1 &
 server_pid=$!
 for _ in $(seq 1 30); do

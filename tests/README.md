@@ -346,6 +346,13 @@ The privileged Linux build suite also proves eligible actions reject and name a 
 `reapi/` covers the dependency-free protobuf wire forms, the pinned REAPI message fixtures,
 unknown-field retention, hash selection, and liquid record conversion. The codec stays private to
 libliquid, so this target compiles its private sources directly for static and shared builds.
+`reapi/test_server_auth.cpp` runs the real `serve reapi` with a bearer token and proves that
+unauthenticated or wrongly authenticated writes and reads are refused and store nothing (#415).
+`test_listener.cpp` covers the shared listener rules: loopback detection, the refusal of a
+non-loopback listener without TLS and authentication, token strength, owner-only token files,
+constant-time bearer comparison, and `serve_reapi` refusing a plaintext public address.
+`cli/serve-listen.cmake` (`cli-serve-listen`) requires the built CLI to refuse those listeners
+before binding.
 
 `consumer/` is an independent CMake project that finds the installed liquid package, then builds
 and runs an executable linked to `liquid::liquid`. `consumer-project-build` installs the already-
