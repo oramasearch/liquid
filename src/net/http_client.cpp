@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "net/http_client.hpp"
 
 #include <utility>

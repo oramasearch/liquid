@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Sockets opened and closed concurrently inside runtime::block_on (liquid #329).
 //
 // block_on runs its private io_context on several runner threads. A reactor pass on one runner

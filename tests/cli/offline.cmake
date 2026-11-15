@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_OFFLINE_CHILD)
   foreach(required IN ITEMS
       LIQUID_OFFLINE_RUNNER

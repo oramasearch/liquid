@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI_SOURCE)
   message(FATAL_ERROR "LIQUID_CLI_SOURCE is required")
 endif()

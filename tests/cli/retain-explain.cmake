@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 file(READ "${LIQUID_RETAIN_REPOSITORY}/RETAINED_DIGEST" retained_digest)
 string(STRIP "${retained_digest}" retained_digest)
 

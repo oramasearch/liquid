@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "encoding/cbor.hpp"
 
 #include <cctype>

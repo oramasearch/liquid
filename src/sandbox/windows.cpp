@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "sandbox/sandbox.hpp"
 
 #if defined(_WIN32)

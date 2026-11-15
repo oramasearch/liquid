@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "identity/taap.hpp"
 
 #include <array>

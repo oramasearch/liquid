@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT EXISTS "${LIQUID_REALWORLD_GIT_DIRECTORY}/.git")
   message(FATAL_ERROR "LIQUID_REALWORLD_GIT_DIRECTORY must contain a Git checkout")
 endif()

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_WRAP_TIER_ROOT OR
    NOT DEFINED CMAKE_COMMAND)
   message(FATAL_ERROR "wrap tier test arguments are required")

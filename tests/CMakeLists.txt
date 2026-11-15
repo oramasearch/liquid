@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 set(LIQUID_HTTP2_TEST_SOURCES
   ${PROJECT_SOURCE_DIR}/src/http2/connection.cpp
   ${PROJECT_SOURCE_DIR}/src/http2/frame.cpp

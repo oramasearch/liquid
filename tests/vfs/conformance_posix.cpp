@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "conformance_operations.hpp"
 
 #if !defined(_WIN32)

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "mapped_file.hpp"
 
 #include "backend.hpp"

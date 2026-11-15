@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/attestation.hpp"
 
 #include <algorithm>

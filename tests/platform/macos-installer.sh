@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 set -euo pipefail
 
 liquid_binary=$(realpath "$1")

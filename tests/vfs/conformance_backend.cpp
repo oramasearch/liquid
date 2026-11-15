@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "conformance_backend.hpp"
 
 #include <array>

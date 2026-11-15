@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/builtin.hpp"
 #include "formats/tar/writer.hpp"
 

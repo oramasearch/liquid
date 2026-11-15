@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "build/materialise.hpp"
 
 #include <fstream>

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #if defined(_WIN32)
 #define DEMO_EXPORT __declspec(dllexport)
 #else

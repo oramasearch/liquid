@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/abi.hpp"
 
 void use_abi_header() {

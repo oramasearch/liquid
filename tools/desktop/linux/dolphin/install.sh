@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT
+
 set -eu
 
 install_prefix="${XDG_DATA_HOME:-${HOME}/.local/share}"

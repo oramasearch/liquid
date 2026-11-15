@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "cli/metadata.hpp"
 
 #include <algorithm>

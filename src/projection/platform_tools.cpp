@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "projection/platform_tools.hpp"
 
 #include <atomic>

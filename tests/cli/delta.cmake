@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 file(REMOVE_RECURSE "${LIQUID_DELTA_ROOT}")
 file(MAKE_DIRECTORY "${LIQUID_DELTA_ROOT}")
 file(WRITE "${LIQUID_DELTA_ROOT}/source.txt" "release artifact\nold payload\n")

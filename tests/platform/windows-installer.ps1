@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 $ErrorActionPreference = "Stop"
 
 $LiquidBinary = (Resolve-Path $args[0]).Path

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "projection/appimage_runtime.hpp"
 
 #include <cstdint>

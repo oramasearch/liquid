@@ -429,3 +429,9 @@ When liquid gains or loses a capability, update the
 The open-source licence has not yet been chosen
 ([release decision](https://github.com/oramasearch/liquid-bridge/issues/2)).
 Third-party notices are in [NOTICE](NOTICE).
+
+## License
+
+MIT, see [LICENSE](LICENSE). Third-party components and their licenses are in
+[THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES). Contributions are welcome under the Developer
+Certificate of Origin; see [CONTRIBUTING.md](CONTRIBUTING.md).

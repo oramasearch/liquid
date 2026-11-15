@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/hot_abi.h"
 
 #include <stdio.h>

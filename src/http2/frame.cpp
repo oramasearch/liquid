@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "http2/frame.hpp"
 
 #include <limits>

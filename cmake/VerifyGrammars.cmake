@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_GRAMMAR_LOCK OR NOT DEFINED LIQUID_GRAMMAR_SOURCE_MAP)
   message(FATAL_ERROR "grammar digest verification requires the lock and source map")
 endif()

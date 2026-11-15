@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_SYMBOLS_PYTHON_ROOT)
   message(FATAL_ERROR "Python symbols test requires the CLI and fixture root")
 endif()

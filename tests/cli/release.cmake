@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_RELEASE_ROOT)
   message(FATAL_ERROR "release CLI test requires the CLI and root")
 endif()

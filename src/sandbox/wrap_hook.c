@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #if defined(__linux__)
 
 #define _GNU_SOURCE

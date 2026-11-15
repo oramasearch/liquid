@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "admission/internal.hpp"
 
 #include <charconv>

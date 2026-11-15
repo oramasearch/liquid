@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends autoconf automake ca-certificates wget gnupg lsb-release software-properties-common build-essential ninja-build git libstdc++-14-dev zlib1g-dev libssl-dev libfuse3-dev fuse3 libpcsclite-dev pkg-config postgresql postgresql-client python3 swtpm time >/dev/null \

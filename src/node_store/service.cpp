@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "node_store/service.hpp"
 
 #include <algorithm>

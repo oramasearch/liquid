@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/drive.hpp"
 
 #include <algorithm>

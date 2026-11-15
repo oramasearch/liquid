@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "projection/oci.hpp"
 
 #include <algorithm>

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/frontend.hpp"
 
 void use_frontend_header() {

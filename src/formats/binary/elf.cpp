@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/binary/elf.hpp"
 
 #include <algorithm>

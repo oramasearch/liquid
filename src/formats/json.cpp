@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/json.hpp"
 
 #include <array>

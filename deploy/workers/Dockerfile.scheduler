@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 ARG LIQUID_BASE=liquid-linux-ci
 FROM ${LIQUID_BASE}
 

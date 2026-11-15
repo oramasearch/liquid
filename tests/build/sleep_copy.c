@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>

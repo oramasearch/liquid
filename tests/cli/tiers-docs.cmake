@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_UNIVERSALITY_DOC OR
    NOT DEFINED LIQUID_FORMATS_DOC)
   message(FATAL_ERROR "tiers docs test arguments are required")

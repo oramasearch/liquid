@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 foreach(required IN ITEMS LIQUID_CLI LIQUID_API_TESTS LIQUID_LOG_URL_WORK)
   if(NOT DEFINED ${required})
     message(FATAL_ERROR "${required} is required")

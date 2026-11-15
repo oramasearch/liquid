@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "workers/scheduler.hpp"
 
 #include <algorithm>

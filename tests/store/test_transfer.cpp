@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // liquid #328: a whole repository is copied between two open stores, from a disk store into a
 // remote-shaped store held by an injected owner. The copy keeps every digest, resumes after an
 // interruption copying only what is missing, writes nothing on a rerun, and a verify mode proves

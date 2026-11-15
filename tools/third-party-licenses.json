@@ -1,0 +1,663 @@
+{
+ "repository": "liquid",
+ "preamble": "NOTICE keeps the short human-readable list of the notices liquid's own binaries carry; this file is\nthe complete list with the license texts. Versions of system libraries are the ones installed where\nliquid is built.",
+ "components": [
+  {
+   "name": "Boost.Capy",
+   "submodule": "modules/capy",
+   "license": "BSL-1.0",
+   "use": "submodule, linked publicly by libliquid",
+   "source": "https://github.com/cppalliance/capy",
+   "github": "cppalliance/capy"
+  },
+  {
+   "name": "Boost.Corosio (Orama's fork)",
+   "submodule": "modules/corosio",
+   "license": "BSL-1.0",
+   "use": "submodule, linked privately",
+   "source": "https://github.com/cppalliance/corosio (upstream)",
+   "github": "oramasearch/corosio"
+  },
+  {
+   "name": "Boost.HTTP (Orama's fork, oramasearch/http)",
+   "submodule": "modules/http",
+   "license": "BSL-1.0",
+   "use": "submodule, linked privately",
+   "source": "https://github.com/cppalliance/http (upstream)",
+   "github": "oramasearch/http"
+  },
+  {
+   "name": "automerge-cpp",
+   "submodule": "modules/automerge-cpp",
+   "license": "MIT",
+   "use": "submodule, linked privately",
+   "source": "https://github.com/homer6/automerge-cpp",
+   "github": "oramasearch/automerge-cpp",
+   "note": "automerge-cpp is Steve Sperandeo's MIT library, public at https://github.com/homer6/automerge-cpp; liquid pins a copy of it. Its own third-party notices (for example the nlohmann/json copy under upstream/json) are in that repository."
+  },
+  {
+   "name": "oramacore-cpp",
+   "submodule": "modules/oramacore-cpp",
+   "license": "MIT",
+   "use": "submodule, pinned; not built by liquid's CMake today",
+   "source": "https://github.com/oramasearch/oramacore-cpp",
+   "file": "LICENSE",
+   "note": "oramacore-cpp is Orama Search Inc.'s own library, released with this stack under the same MIT License as this repository."
+  },
+  {
+   "name": "Boost (CMake release: json, url, assert, config, core, mp11, system, throw_exception, type_traits, winapi)",
+   "version": "1.91.0-1",
+   "license": "BSL-1.0",
+   "use": "fetched at build, linked privately",
+   "source": "https://github.com/boostorg/boost",
+   "github": "boostorg/boost",
+   "ref": "boost-1.91.0",
+   "path": "LICENSE_1_0.txt"
+  },
+  {
+   "name": "BLAKE3 (C implementation)",
+   "version": "1.8.7",
+   "license": "CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception",
+   "use": "fetched at build, compiled privately",
+   "source": "https://github.com/BLAKE3-team/BLAKE3",
+   "github": "BLAKE3-team/BLAKE3",
+   "ref": "1.8.7",
+   "path": "LICENSE_A2",
+   "note": "BLAKE3 is offered under CC0-1.0, Apache-2.0 or Apache-2.0 WITH LLVM-exception; liquid uses it under Apache-2.0, whose text is below."
+  },
+  {
+   "name": "Monocypher",
+   "version": "4.0.3",
+   "license": "BSD-2-Clause OR CC0-1.0",
+   "use": "fetched at build (SHA-256 pinned), compiled privately",
+   "source": "https://monocypher.org",
+   "github": "LoupVaillant/Monocypher",
+   "ref": "4.0.3",
+   "path": "LICENCE.md"
+  },
+  {
+   "name": "Zstandard",
+   "version": "v1.5.7",
+   "license": "BSD-3-Clause (dual BSD-3-Clause OR GPL-2.0-only; used under BSD)",
+   "use": "fetched at build, compiled privately",
+   "source": "https://github.com/facebook/zstd",
+   "github": "facebook/zstd",
+   "ref": "v1.5.7",
+   "path": "LICENSE"
+  },
+  {
+   "name": "SHA-256 implementation (Brad Conte, crypto-algorithms)",
+   "version": "cfbde48414baacf51fc7c74f275190881f037d32",
+   "license": "public domain",
+   "use": "vendored in src/hash/",
+   "source": "https://github.com/B-Con/crypto-algorithms",
+   "text": "The files src/hash/sha256.c and src/hash/sha256.h are Brad Conte's SHA-256 implementation from\nhttps://github.com/B-Con/crypto-algorithms. Its README says: \"This code is released into the public\ndomain free of any restrictions. The author requests acknowledgement if the code is used, but does\nnot require it. This code is provided free of any liability and without any quality claims by the\nauthor.\" This entry is that acknowledgement. The files keep their original header and carry no\nSPDX tag."
+  },
+  {
+   "name": "tree-sitter runtime",
+   "version": "a467ea8502d95562171f97953a6dc5b2a8622609",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter",
+   "github": "tree-sitter/tree-sitter",
+   "ref": "a467ea8502d95562171f97953a6dc5b2a8622609"
+  },
+  {
+   "name": "tree-sitter grammar: bash",
+   "version": "a06c2e4415e9bc0346c6b86d401879ffb44058f7",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-bash",
+   "github": "tree-sitter/tree-sitter-bash",
+   "ref": "a06c2e4415e9bc0346c6b86d401879ffb44058f7"
+  },
+  {
+   "name": "tree-sitter grammar: c",
+   "version": "b780e47fc780ddc8da13afa35a3f4ed5c157823d",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-c",
+   "github": "tree-sitter/tree-sitter-c",
+   "ref": "b780e47fc780ddc8da13afa35a3f4ed5c157823d"
+  },
+  {
+   "name": "tree-sitter grammar: c#",
+   "version": "9150f7d56bb47f1a809fa23623f1ba1413e93fa9",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-c-sharp",
+   "github": "tree-sitter/tree-sitter-c-sharp",
+   "ref": "9150f7d56bb47f1a809fa23623f1ba1413e93fa9"
+  },
+  {
+   "name": "tree-sitter grammar: c++",
+   "version": "8b5b49eb196bec7040441bee33b2c9a4838d6967",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-cpp",
+   "github": "tree-sitter/tree-sitter-cpp",
+   "ref": "8b5b49eb196bec7040441bee33b2c9a4838d6967"
+  },
+  {
+   "name": "tree-sitter grammar: cmake",
+   "version": "ca627bb5828616b6246aafdc3c3222789e728e37",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/uyha/tree-sitter-cmake",
+   "github": "uyha/tree-sitter-cmake",
+   "ref": "ca627bb5828616b6246aafdc3c3222789e728e37"
+  },
+  {
+   "name": "tree-sitter grammar: css",
+   "version": "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-css",
+   "github": "tree-sitter/tree-sitter-css",
+   "ref": "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f"
+  },
+  {
+   "name": "tree-sitter grammar: dart",
+   "version": "be07cf7118d3dba06236a3f19541685a68209934",
+   "license": "ISC",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/UserNobody14/tree-sitter-dart",
+   "github": "UserNobody14/tree-sitter-dart",
+   "ref": "be07cf7118d3dba06236a3f19541685a68209934"
+  },
+  {
+   "name": "tree-sitter grammar: dockerfile",
+   "version": "971acdd908568b4531b0ba28a445bf0bb720aba5",
+   "license": "ISC",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/camdencheek/tree-sitter-dockerfile",
+   "github": "camdencheek/tree-sitter-dockerfile",
+   "ref": "971acdd908568b4531b0ba28a445bf0bb720aba5"
+  },
+  {
+   "name": "tree-sitter grammar: elixir",
+   "version": "4b0c7118760af58a2e7081bbc8396e136f820b37",
+   "license": "Apache-2.0",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/elixir-lang/tree-sitter-elixir",
+   "github": "elixir-lang/tree-sitter-elixir",
+   "ref": "4b0c7118760af58a2e7081bbc8396e136f820b37"
+  },
+  {
+   "name": "tree-sitter grammar: elm",
+   "version": "e1e8fea161a1e66f3997855d316be2a43e4e956f",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/elm-tooling/tree-sitter-elm",
+   "github": "elm-tooling/tree-sitter-elm",
+   "ref": "e1e8fea161a1e66f3997855d316be2a43e4e956f"
+  },
+  {
+   "name": "tree-sitter grammar: erlang",
+   "version": "6ba4c762eb3065495e3db85697ffeecdf364ce35",
+   "license": "Apache-2.0",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/WhatsApp/tree-sitter-erlang",
+   "github": "WhatsApp/tree-sitter-erlang",
+   "ref": "6ba4c762eb3065495e3db85697ffeecdf364ce35"
+  },
+  {
+   "name": "tree-sitter grammar: fortran",
+   "version": "7edacd2b21aa80057d9725384a1304a1c758e0f8",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/stadelmanma/tree-sitter-fortran",
+   "github": "stadelmanma/tree-sitter-fortran",
+   "ref": "7edacd2b21aa80057d9725384a1304a1c758e0f8"
+  },
+  {
+   "name": "tree-sitter grammar: go",
+   "version": "2346a3ab1bb3857b48b29d779a1ef9799a248cd7",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-go",
+   "github": "tree-sitter/tree-sitter-go",
+   "ref": "2346a3ab1bb3857b48b29d779a1ef9799a248cd7"
+  },
+  {
+   "name": "tree-sitter grammar: haskell",
+   "version": "0975ef72fc3c47b530309ca93937d7d143523628",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-haskell",
+   "github": "tree-sitter/tree-sitter-haskell",
+   "ref": "0975ef72fc3c47b530309ca93937d7d143523628"
+  },
+  {
+   "name": "tree-sitter grammar: hcl",
+   "version": "64ad62785d442eb4d45df3a1764962dafd5bc98b",
+   "license": "Apache-2.0",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter-grammars/tree-sitter-hcl",
+   "github": "tree-sitter-grammars/tree-sitter-hcl",
+   "ref": "64ad62785d442eb4d45df3a1764962dafd5bc98b"
+  },
+  {
+   "name": "tree-sitter grammar: html",
+   "version": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-html",
+   "github": "tree-sitter/tree-sitter-html",
+   "ref": "73a3947324f6efddf9e17c0ea58d454843590cc0"
+  },
+  {
+   "name": "tree-sitter grammar: java",
+   "version": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-java",
+   "github": "tree-sitter/tree-sitter-java",
+   "ref": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11"
+  },
+  {
+   "name": "tree-sitter grammar: javascript",
+   "version": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-javascript",
+   "github": "tree-sitter/tree-sitter-javascript",
+   "ref": "58404d8cf191d69f2674a8fd507bd5776f46cb11"
+  },
+  {
+   "name": "tree-sitter grammar: json",
+   "version": "254c42a6476413b776221e03982ac8ae159eeb72",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-json",
+   "github": "tree-sitter/tree-sitter-json",
+   "ref": "254c42a6476413b776221e03982ac8ae159eeb72"
+  },
+  {
+   "name": "tree-sitter grammar: julia",
+   "version": "e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-julia",
+   "github": "tree-sitter/tree-sitter-julia",
+   "ref": "e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3"
+  },
+  {
+   "name": "tree-sitter grammar: kotlin",
+   "version": "1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/fwcd/tree-sitter-kotlin",
+   "github": "fwcd/tree-sitter-kotlin",
+   "ref": "1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1"
+  },
+  {
+   "name": "tree-sitter grammar: latex",
+   "version": "a6c812704b3d3e1541b0853aa0d6d561301320e1",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/latex-lsp/tree-sitter-latex",
+   "github": "latex-lsp/tree-sitter-latex",
+   "ref": "a6c812704b3d3e1541b0853aa0d6d561301320e1"
+  },
+  {
+   "name": "tree-sitter grammar: lua",
+   "version": "10fe0054734eec83049514ea2e718b2a56acd0c9",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter-grammars/tree-sitter-lua",
+   "github": "tree-sitter-grammars/tree-sitter-lua",
+   "ref": "10fe0054734eec83049514ea2e718b2a56acd0c9"
+  },
+  {
+   "name": "tree-sitter grammar: make",
+   "version": "a4b9187417d6be349ee5fd4b6e77b4172c6827dd",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/alemuller/tree-sitter-make",
+   "github": "alemuller/tree-sitter-make",
+   "ref": "a4b9187417d6be349ee5fd4b6e77b4172c6827dd"
+  },
+  {
+   "name": "tree-sitter grammar: markdown",
+   "version": "a0a00f817d02412bd92c54d316f164d827b57b5c",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
+   "github": "tree-sitter-grammars/tree-sitter-markdown",
+   "ref": "a0a00f817d02412bd92c54d316f164d827b57b5c"
+  },
+  {
+   "name": "tree-sitter grammar: nix",
+   "version": "3d0173d903e630b6e14d17f1cf79488791379ded",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/nix-community/tree-sitter-nix",
+   "github": "nix-community/tree-sitter-nix",
+   "ref": "3d0173d903e630b6e14d17f1cf79488791379ded"
+  },
+  {
+   "name": "tree-sitter grammar: objective-c",
+   "version": "181a81b8f23a2d593e7ab4259981f50122909fda",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter-grammars/tree-sitter-objc",
+   "github": "tree-sitter-grammars/tree-sitter-objc",
+   "ref": "181a81b8f23a2d593e7ab4259981f50122909fda"
+  },
+  {
+   "name": "tree-sitter grammar: ocaml",
+   "version": "a4ce49a6c17e88e7ca8350cfb666749d9a5c6630",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-ocaml",
+   "github": "tree-sitter/tree-sitter-ocaml",
+   "ref": "a4ce49a6c17e88e7ca8350cfb666749d9a5c6630"
+  },
+  {
+   "name": "tree-sitter grammar: perl",
+   "version": "5b97493ce70686e22ec8b9ea261437147e342b49",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/ganezdragon/tree-sitter-perl",
+   "github": "ganezdragon/tree-sitter-perl",
+   "ref": "5b97493ce70686e22ec8b9ea261437147e342b49"
+  },
+  {
+   "name": "tree-sitter grammar: php",
+   "version": "3fda2fb9577166c6399834917f9844f30370beea",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-php",
+   "github": "tree-sitter/tree-sitter-php",
+   "ref": "3fda2fb9577166c6399834917f9844f30370beea"
+  },
+  {
+   "name": "tree-sitter grammar: protocol-buffers",
+   "version": "e9f6b43f6844bd2189b50a422d4e2094313f6aa3",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/treywood/tree-sitter-proto",
+   "github": "treywood/tree-sitter-proto",
+   "ref": "e9f6b43f6844bd2189b50a422d4e2094313f6aa3"
+  },
+  {
+   "name": "tree-sitter grammar: python",
+   "version": "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-python",
+   "github": "tree-sitter/tree-sitter-python",
+   "ref": "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64"
+  },
+  {
+   "name": "tree-sitter grammar: r",
+   "version": "58a22794466c0fc15b0d3b40531db751593721e8",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/r-lib/tree-sitter-r",
+   "github": "r-lib/tree-sitter-r",
+   "ref": "58a22794466c0fc15b0d3b40531db751593721e8"
+  },
+  {
+   "name": "tree-sitter grammar: ruby",
+   "version": "ad907a69da0c8a4f7a943a7fe012712208da6dee",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-ruby",
+   "github": "tree-sitter/tree-sitter-ruby",
+   "ref": "ad907a69da0c8a4f7a943a7fe012712208da6dee"
+  },
+  {
+   "name": "tree-sitter grammar: rust",
+   "version": "77a3747266f4d621d0757825e6b11edcbf991ca5",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-rust",
+   "github": "tree-sitter/tree-sitter-rust",
+   "ref": "77a3747266f4d621d0757825e6b11edcbf991ca5"
+  },
+  {
+   "name": "tree-sitter grammar: scala",
+   "version": "db390f312a54b04b13790e1767bfac32665c17ac",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-scala",
+   "github": "tree-sitter/tree-sitter-scala",
+   "ref": "db390f312a54b04b13790e1767bfac32665c17ac"
+  },
+  {
+   "name": "tree-sitter grammar: scss",
+   "version": "c478c6868648eff49eb04a4df90d703dc45b312a",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/serenadeai/tree-sitter-scss",
+   "github": "serenadeai/tree-sitter-scss",
+   "ref": "c478c6868648eff49eb04a4df90d703dc45b312a"
+  },
+  {
+   "name": "tree-sitter grammar: solidity",
+   "version": "048fe686cb1fde267243739b8bdbec8fc3a55272",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/JoranHonig/tree-sitter-solidity",
+   "github": "JoranHonig/tree-sitter-solidity",
+   "ref": "048fe686cb1fde267243739b8bdbec8fc3a55272"
+  },
+  {
+   "name": "tree-sitter grammar: sql",
+   "version": "84a2b208f072a2ca78fc59b5fa51cbdbf9c5aa37",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/DerekStride/tree-sitter-sql",
+   "github": "DerekStride/tree-sitter-sql",
+   "ref": "84a2b208f072a2ca78fc59b5fa51cbdbf9c5aa37"
+  },
+  {
+   "name": "tree-sitter grammar: svelte",
+   "version": "ae5199db47757f785e43a14b332118a5474de1a2",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter-grammars/tree-sitter-svelte",
+   "github": "tree-sitter-grammars/tree-sitter-svelte",
+   "ref": "ae5199db47757f785e43a14b332118a5474de1a2"
+  },
+  {
+   "name": "tree-sitter grammar: swift",
+   "version": "f47512c92fb3183b5b56c9ef40a442fdeb942853",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/alex-pinkus/tree-sitter-swift",
+   "github": "alex-pinkus/tree-sitter-swift",
+   "ref": "f47512c92fb3183b5b56c9ef40a442fdeb942853"
+  },
+  {
+   "name": "tree-sitter grammar: toml",
+   "version": "64b56832c2cffe41758f28e05c756a3a98d16f41",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter-grammars/tree-sitter-toml",
+   "github": "tree-sitter-grammars/tree-sitter-toml",
+   "ref": "64b56832c2cffe41758f28e05c756a3a98d16f41"
+  },
+  {
+   "name": "tree-sitter grammar: tsx",
+   "version": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-typescript",
+   "github": "tree-sitter/tree-sitter-typescript",
+   "ref": "75b3874edb2dc714fb1fd77a32013d0f8699989f"
+  },
+  {
+   "name": "tree-sitter grammar: verilog",
+   "version": "227d277b6a1a5e2bf818d6206935722a7503de08",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter/tree-sitter-verilog",
+   "github": "tree-sitter/tree-sitter-verilog",
+   "ref": "227d277b6a1a5e2bf818d6206935722a7503de08"
+  },
+  {
+   "name": "tree-sitter grammar: vue",
+   "version": "ce8011a414fdf8091f4e4071752efc376f4afb08",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter-grammars/tree-sitter-vue",
+   "github": "tree-sitter-grammars/tree-sitter-vue",
+   "ref": "ce8011a414fdf8091f4e4071752efc376f4afb08"
+  },
+  {
+   "name": "tree-sitter grammar: xml",
+   "version": "5000ae8f22d11fbe93939b05c1e37cf21117162d",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter-grammars/tree-sitter-xml",
+   "github": "tree-sitter-grammars/tree-sitter-xml",
+   "ref": "5000ae8f22d11fbe93939b05c1e37cf21117162d"
+  },
+  {
+   "name": "tree-sitter grammar: yaml",
+   "version": "a1c4812a73ec5e089de8e441fdea3a921e8d5079",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/tree-sitter-grammars/tree-sitter-yaml",
+   "github": "tree-sitter-grammars/tree-sitter-yaml",
+   "ref": "a1c4812a73ec5e089de8e441fdea3a921e8d5079"
+  },
+  {
+   "name": "tree-sitter grammar: zig",
+   "version": "a80a6e9be81b33b182ce6305ae4ea28e29211bd5",
+   "license": "MIT",
+   "use": "fetched at build, compiled into the bundled frontend modules",
+   "source": "https://github.com/maxxnino/tree-sitter-zig",
+   "github": "maxxnino/tree-sitter-zig",
+   "ref": "a80a6e9be81b33b182ce6305ae4ea28e29211bd5"
+  },
+  {
+   "name": "AppImage type 2 runtime",
+   "version": "75849dce7cc37e4319b633df1f116ca895c71a12",
+   "license": "MIT (with statically linked LGPL-2.1, BSD-2-Clause, MIT, BSD-3-Clause and Zlib components)",
+   "use": "vendored binaries in third_party/appimage-runtimes/, embedded in liquid",
+   "source": "https://github.com/AppImage/type2-runtime",
+   "file": "third_party/appimage-runtimes/LICENSE"
+  },
+  {
+   "name": "libfuse (inside the AppImage runtime)",
+   "version": "as built by the runtime at the commit above",
+   "license": "LGPL-2.1-only (library)",
+   "use": "statically linked into the vendored AppImage runtime binaries",
+   "source": "https://github.com/libfuse/libfuse",
+   "github": "libfuse/libfuse",
+   "ref": "master",
+   "path": "LGPL2.txt",
+   "note": "The vendored AppImage runtime statically links libfuse (LGPL-2.1). The runtime's complete source, including the libfuse it builds, is public at https://github.com/AppImage/type2-runtime at the commit above, which also lets a recipient relink it as the LGPL requires."
+  },
+  {
+   "name": "squashfuse (inside the AppImage runtime)",
+   "version": "as built by the runtime",
+   "license": "BSD-2-Clause",
+   "use": "statically linked into the vendored AppImage runtime binaries",
+   "source": "https://github.com/vasi/squashfuse",
+   "github": "vasi/squashfuse",
+   "ref": "master",
+   "path": "LICENSE"
+  },
+  {
+   "name": "zlib (inside the AppImage runtime; also linked from the system by liquid)",
+   "version": "1.3.1",
+   "license": "Zlib",
+   "use": "statically linked into the AppImage runtime; system library for liquid",
+   "source": "https://zlib.net",
+   "github": "madler/zlib",
+   "ref": "v1.3.1",
+   "path": "LICENSE"
+  },
+  {
+   "name": "OpenSSL",
+   "version": "3.x (system)",
+   "license": "Apache-2.0",
+   "use": "system library, linked dynamically, not distributed",
+   "source": "https://github.com/openssl/openssl",
+   "github": "openssl/openssl",
+   "ref": "openssl-3.5.0",
+   "path": "LICENSE.txt"
+  },
+  {
+   "name": "libfuse3 (Linux)",
+   "version": "3.x (system)",
+   "license": "LGPL-2.1-only (library)",
+   "use": "system library, linked dynamically on Linux, not distributed",
+   "source": "https://github.com/libfuse/libfuse",
+   "table_only": true
+  },
+  {
+   "name": "macFUSE (macOS, optional)",
+   "version": "system install",
+   "license": "macFUSE license (not open source)",
+   "use": "optional system library, linked dynamically if installed, not distributed",
+   "source": "https://macfuse.github.io",
+   "table_only": true,
+   "note": "macFUSE is optional on macOS and is never bundled. Its license restricts redistribution, so a liquid package for macOS must not include it; users install it themselves."
+  },
+  {
+   "name": "GoogleTest",
+   "version": "v1.17.0",
+   "license": "BSD-3-Clause",
+   "use": "fetched at build, tests only",
+   "source": "https://github.com/google/googletest",
+   "github": "google/googletest",
+   "ref": "v1.17.0",
+   "path": "LICENSE"
+  },
+  {
+   "name": "RocksDB",
+   "version": "v10.10.1",
+   "license": "Apache-2.0 (dual GPL-2.0-only OR Apache-2.0; used under Apache-2.0)",
+   "use": "fetched at build, benchmark only (bench/chunk-index)",
+   "source": "https://github.com/facebook/rocksdb",
+   "github": "facebook/rocksdb",
+   "ref": "v10.10.1",
+   "path": "LICENSE.Apache"
+  },
+  {
+   "name": "LMDB",
+   "version": "LMDB_0.9.36",
+   "license": "OLDAP-2.8",
+   "use": "fetched at build, benchmark only (bench/chunk-index)",
+   "source": "https://github.com/LMDB/lmdb",
+   "github": "LMDB/lmdb",
+   "ref": "LMDB_0.9.36",
+   "path": "libraries/liblmdb/LICENSE"
+  },
+  {
+   "name": "age test vectors (C2SP CCTV)",
+   "version": "4448f2097b2daa812c91a26141f9f36c2096b9ca",
+   "license": "0BSD OR CC0-1.0 OR Unlicense",
+   "use": "test fixtures (tests/fixtures/age/)",
+   "source": "https://github.com/C2SP/CCTV",
+   "text": "The vectors in the age/testdata folder are available under the terms of the Zero-Clause BSD,\nCC0 1.0, or Unlicense license, to your choice (https://github.com/C2SP/CCTV/blob/main/age/README.md).\n\nCopyright (c) 2022 The age Authors\n\nPermission to use, copy, modify, and/or distribute this software for any purpose with or without\nfee is hereby granted.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS\nSOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE\nAUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\nWHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT,\nNEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE\nOF THIS SOFTWARE."
+  },
+  {
+   "name": "Spack package metadata export",
+   "version": "2bfcc69fa870d3c6919be87593f22647981b648a",
+   "license": "Apache-2.0 OR MIT",
+   "use": "test fixtures (tests/import/fixtures/), derived from Spack's package recipes",
+   "source": "https://github.com/spack/spack",
+   "github": "spack/spack",
+   "ref": "2bfcc69fa870d3c6919be87593f22647981b648a",
+   "path": "LICENSE-MIT",
+   "note": "The Spack interchange fixtures were exported from Spack's package recipes, which Spack offers under Apache-2.0 OR MIT; the MIT text is below."
+  },
+  {
+   "name": "HIP test patch (hip.patch)",
+   "version": "-",
+   "license": "MIT",
+   "use": "test fixture (tests/import/fixtures/hip.patch), a patch from ROCm HIP",
+   "source": "https://github.com/ROCm/HIP",
+   "github": "ROCm/HIP",
+   "ref": "develop",
+   "path": "LICENSE.md"
+  }
+ ]
+}

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/install.hpp"
 
 auto install_header_isolated() -> int {

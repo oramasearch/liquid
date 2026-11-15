@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "scan/detectors.hpp"
 
 #include <algorithm>
