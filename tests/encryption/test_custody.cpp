@@ -498,3 +498,19 @@ TEST(Custody, EveryCustodyPairRewrapsWithoutChangingPackBytes) {
         }
     }
 }
+
+// L-29 (liquid#405): a key file's Argon2i parameters are bounded above, so a hostile file cannot size
+// the work area or the passes past what a machine can give.
+TEST(Custody, Argon2ParametersAreBoundedAbove) {
+    auto provider = liquid::passphrase_provider{"correct horse battery staple"};
+    auto salt = std::array<std::byte, 16>{};
+    salt[0] = std::byte{0x52};
+    for (const auto parameters : {liquid::argon2_parameters{0xffffffffU, 3, 1},
+                                  liquid::argon2_parameters{8, 1'000'000, 1},
+                                  liquid::argon2_parameters{8U * 1024U, 3, 1'000}}) {
+        const auto derived = provider.derive(salt, parameters);
+        ASSERT_FALSE(derived);
+        EXPECT_EQ(derived.error().code, liquid::errc::invalid_argument);
+    }
+    EXPECT_TRUE(provider.derive(salt, liquid::argon2_parameters{8, 3, 1}));
+}
