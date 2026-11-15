@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 #include <chrono>
+#include "credential_token.hpp"
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
@@ -245,7 +246,7 @@ auto drive(int argc, char** argv) -> int {
         return usage("drive sync <folder> <remote> [--watch]");
     }
     auto options = liquid::drive_options{};
-    if (const auto* token = std::getenv("LIQUID_TOKEN")) {
+    if (const auto token = liquid::token_detail::lake_token(); !token.empty()) {
         options.bearer_token = token;
     }
     const auto folder = std::filesystem::path{argv[1]};
