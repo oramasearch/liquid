@@ -1,6 +1,7 @@
 #include <charconv>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <format>
 #include <optional>
 #include <print>
@@ -9,6 +10,7 @@
 #include <system_error>
 #include <vector>
 
+#include "cli/lake.hpp"
 #include "liquid/forge.hpp"
 #include "liquid/runtime.hpp"
 
@@ -32,7 +34,7 @@ auto fail(const liquid::error& value) -> int {
 auto usage() -> int {
     std::println(stderr,
                  "error: usage: review <list|show|open|comment|approve|close|protections|watch> "
-                 "--lake <repository-url> [--json] ...");
+                 "[--lake <name|repository-url>] [--json] ...");
     return 2;
 }
 
@@ -119,7 +121,7 @@ auto parse_options(int argc, char** argv) -> std::optional<options> {
         }
         output.arguments.emplace_back(argument);
     }
-    if (output.lake.empty() || (output.state && output.verb != "list")) {
+    if (output.state && output.verb != "list") {
         return std::nullopt;
     }
     return output;
@@ -427,12 +429,25 @@ auto review(int argc, char** argv) -> int {
     if (!parsed) {
         return usage();
     }
-    auto client_options = liquid::forge_client_options{};
-    if (const auto* token = std::getenv("LIQUID_TOKEN")) {
-        client_options.bearer_token = token;
+    // Without --lake, or with a lake name, the repository in this directory names the lake and
+    // the repository on it. Only that lake's token is sent (docs/library/lakes.md).
+    auto repository = std::optional<liquid::repository>{};
+    if (!parsed->lake.starts_with("https://") && !parsed->lake.starts_with("http://")) {
+        auto opened =
+            liquid::runtime::block_on(liquid::repository::open(std::filesystem::current_path()));
+        if (opened) {
+            repository = std::move(*opened);
+        }
     }
+    auto target = prepare_lake(repository ? &*repository : nullptr, parsed->lake);
+    repository.reset();
+    if (!target) {
+        return fail(target.error());
+    }
+    auto client_options = liquid::forge_client_options{};
+    client_options.bearer_token = target->token.value;
     try {
-        auto client = liquid::forge_client{parsed->lake, std::move(client_options)};
+        auto client = liquid::forge_client{target->repository_url, std::move(client_options)};
         if (parsed->verb == "list") {
             return list(client, *parsed);
         }

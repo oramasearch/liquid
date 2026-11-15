@@ -79,6 +79,11 @@ auto json_request(const net_detail::parsed_url& url,
             code = errc::conflict;
         } else if (code_name == "store_unavailable") {
             code = errc::unavailable;
+        } else if (code_name == "unsupported_client_version") {
+            // The same error a sync path gives: `unsupported`, context unsupported_client_version.
+            co_return std::unexpected(forge_error(errc::unsupported,
+                                                  failure.value("message", "lake request failed"),
+                                                  "unsupported_client_version"));
         }
         co_return std::unexpected(forge_error(code,
                                               failure.value("message", "lake request failed"),

@@ -5,18 +5,18 @@
 ## Synopsis
 
 ```text
-liquid review <list|show|open|comment|approve|close|protections|watch> --lake <url> [--json] ...
+liquid review <list|show|open|comment|approve|close|protections|watch> [--lake <name|url>] [--json] ...
 ```
 
 ## Description
 
-Open, inspect, comment on, approve, close, or watch a Lake review for a repository change.
+Open, inspect, comment on, approve, close, or watch a Lake review for a repository change. Without --lake, the repository's lake is used.
 
 ## Options
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
-| `--lake` | `<url>` | Select the Lake repository that owns the review. | none |
+| `--lake` | `<name\|url>` | Select the lake, by name or repository URL, that owns the review. | the repository's lake |
 | `--json` | — | Write stable JSON instead of text. | false |
 | `--state` | `<open\|approved\|closed>` | Limit list results to this review state. | all |
 
@@ -27,7 +27,8 @@ available
 ## Examples
 
 ```sh
-liquid review list --lake https://lake.example.invalid --state open --json
+liquid review list --state open --json
+liquid review list --lake https://lake.example.invalid/v1/repositories/example
 ```
 
 ## Exit status

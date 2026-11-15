@@ -5,18 +5,19 @@
 ## Synopsis
 
 ```text
-liquid clone <url|drive-folder> [<dir>] [--json]
+liquid clone <url|drive-folder> [<dir>] [--json] | clone --lake <name> <repository> [<dir>]
 ```
 
 ## Description
 
-Create a repository from a sync endpoint or configured drive folder, persist its remote, and materialize every file.
+Create a repository from a sync endpoint or configured drive folder, persist its remote, and materialize every file. A URL on a named lake, or `--lake <name>` with a repository identifier, records that lake in the clone, so push, pull and review need no URL. The lake's version is checked first.
 
 ## Options
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
 | `--json` | — | Write stable JSON instead of text. | false |
+| `--lake` | `<name>` | Clone the repository from this named lake. | none |
 
 ## Availability
 
@@ -25,7 +26,8 @@ available
 ## Examples
 
 ```sh
-liquid clone https://lake.example.invalid/repositories/example ./example --json
+liquid clone --lake dev 0b6c2f ./example
+liquid clone https://lake.example.invalid/v1/repositories/example ./example --json
 ```
 
 ## Exit status

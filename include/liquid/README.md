@@ -24,6 +24,9 @@ versioned presence, lease, and attribution event table.
 
 `data.hpp` defines persisted PostgreSQL application-database configuration and the coroutine-native
 per-session branch lifecycle. Database client and server implementation types remain private.
+`lake.hpp` names the lakes liquid works with, keeps one per repository and a token per lake behind
+`lake_credential_store`, and checks a lake's `server_info` versions before the first sync
+([`docs/library/lakes.md`](../../docs/library/lakes.md)).
 `sync.hpp` includes metadata-only tree receipt for node-store and other lazy-hydration clients.
 It records remote blob locations without fetching content chunks and exposes the endpoint operation
 used by drive clients to import metadata before an on-demand read.

@@ -14,7 +14,9 @@ available, but daemon attachment returns the documented unsupported result becau
 Corosio revision has no named-pipe transport.
 
 `clone <url|drive-folder> [<dir>]` creates a plain checkout through the public drive client. A
-configured drive folder supplies its persisted remote URL; an endpoint URL is used directly. When
+configured drive folder supplies its persisted remote URL; an endpoint URL is used directly.
+`clone --lake <name> <repository>` builds the URL from a named lake, and a clone from a named lake
+records it, so `push`, `pull` and `review` in the clone need no URL ([lakes](../library/lakes.md)). When
 `dir` is omitted, the last endpoint path component is used, with `repository` as the fallback.
 Clone pins the repository root, so every pulled file is materialized even when it exceeds the
 drive client's ordinary on-demand hydration threshold. The remote remains configured for later
@@ -59,7 +61,7 @@ built binary under the build directory before CTest compares it with the committ
 | `version` | `version [--json]` | Print the library version. | available |
 | `tiers` | `tiers [--json\|--markdown] [--language <name>\|--format <name>]` | Print declared language, format, and platform support. | available |
 | `init` | `init [path]` | Create a repository and import its regular files. | available |
-| `clone` | `clone <url\|drive-folder> [<dir>] [--json]` | Clone, configure, and fully materialize a repository. | available |
+| `clone` | `clone <url\|drive-folder> [<dir>] [--json]` or `clone --lake <name> <repository> [<dir>]` | Clone, configure, and fully materialize a repository, recording its lake. | available |
 | `status` | `status [--json]` | Show repository status. | available |
 | `conflict` | `conflict <show\|resolve> <path>` | Inspect or resolve an unresolved conflict. | available |
 | `conflicts` | `conflicts [--json]` | List unresolved conflicts with kinds, paths, reasons, and nodes. | available |
@@ -77,9 +79,10 @@ built binary under the build directory before CTest compares it with the committ
 | `config` | `config check <file\|dir> \| config lower <file> [--json] [--trace] \| config format <file>` | Check, lower, trace, or canonically format `.liquid` configuration. | available |
 | `cut` | `cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
-| `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
-| `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
-| `review` | `review <list\|show\|open\|comment\|approve\|close\|protections\|watch> --lake <url> [--json] ...` | Review a lake change in place. | available |
+| `lake` | `lake <add\|list\|use\|remove\|login\|logout\|check> ...` | Name lakes, choose one per repository, keep a token per lake, and check a lake's version ([lakes](../library/lakes.md)). | available |
+| `push` | `push [--atomic] [<lake>\|<url>]` | Push signed metadata and missing objects to the repository's lake, a named lake, or a URL. | available |
+| `pull` | `pull [<lake>\|<url>]` | Pull signed metadata and missing objects from the repository's lake, a named lake, or a URL. | available |
+| `review` | `review <list\|show\|open\|comment\|approve\|close\|protections\|watch> [--lake <name\|url>] [--json] ...` | Review a lake change in place. | available |
 | `deploy` | `deploy [--control <url>] [--env <name>] [--image <ref@sha256:...>] [--to <change\|deployment>] [--wait]` or `deploy <status\|list> [--control <url>] [--env <name>] [--json]` | Create, inspect, or roll back an environment deployment. | available |
 | `serve` | `serve admission <--policy <file>\|--policies <dir>> [--listen <address>] [--control-listen <address>] (--tls-cert <file> --tls-key <file>\|--insecure-http) [--attestation-source <url>\|--store <path>] [--log-cache <path>] [--decision-replay <count>]` | Serve named image-admission policies, structured decisions, and the control API. | available |
 | `mv` | `mv <from> <to>` | Record a path move. `move` is accepted as an older spelling. | available |

@@ -129,19 +129,24 @@ alternative costs plus every planner input. It does not read the index files dir
 the public package-universe loader, resolver, and explanation projections. Text graphs are indented
 by dependency; conflict and package-choice explanations use the stable library formats.
 
-`sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes an
-optional `LIQUID_TOKEN` and push `--atomic` choice to the endpoint, prints stable metadata, object,
+`lake.cpp` implements `liquid lake` over the public `lake_registry`, and `prepare_lake` /
+`remember_lake`, which push, pull, clone and review use to choose the lake, take only that lake's
+token, check its version once, and record a named lake in a repository that has none
+([`docs/library/lakes.md`](../../docs/library/lakes.md)).
+`sync.cpp` implements `push` and `pull` through the public repository and sync APIs. It passes the
+chosen lake's token and push `--atomic` choice to the endpoint, prints stable metadata, object,
 byte, cursor, and per-ref outcome lines, and returns failure when any ref is refused.
 `clone.cpp` resolves either a sync URL or a configured drive folder, refuses a non-empty target,
 and composes `drive_client::open`, root pinning, and one synchronization. This adopts the remote
 repository identity, retains the remote configuration, and fully materializes the plain checkout.
-It passes `LIQUID_TOKEN` without storing it and prints either the landing path or stable JSON.
+It passes the chosen lake's token without storing it, records a named lake in the clone, and prints
+either the landing path or stable JSON.
 `deploy.cpp` implements deployment creation, listing, rollback, and status through the public
 deployment API. It resolves the operator control-plane URL from `--control`, `LIQUID_CONTROL_PLANE`,
 or persisted repository configuration, and passes `LIQUID_TOKEN` only as a bearer credential.
 `review.cpp` implements lake review listing, display, creation, anchored comments, state updates,
-branch protections, and the polling watch entirely through `forge_client`. It reads `LIQUID_TOKEN`
-for the bearer and pins both line-oriented text and JSON output without exposing the token.
+branch protections, and the polling watch entirely through `forge_client`. It takes the bearer
+from the chosen lake (the repository's, a named one, or a URL's) and pins both line-oriented text and JSON output without exposing the token.
 `secret.cpp` fetches Lake sealing keys, seals stdin or file values, emits canonical CBOR or base64,
 and performs local break-glass unsealing through the public secret API. Private-key files must be
 32 raw bytes with mode `0600` on POSIX systems; key and value bytes are never written to errors.

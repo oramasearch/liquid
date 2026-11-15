@@ -137,6 +137,7 @@ owning issue in `error::context`.
 | `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
 | `liquid/sync.hpp` | #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
+| `liquid/lake.hpp` | #525 | implemented | named lakes (`lake_registry`), per-lake tokens and the `lake_credential_store` interface, the repository's recorded lake, `resolve_lake_target`, and the `server_info` version check; see [`lakes.md`](lakes.md) |
 | `liquid/forge.hpp` | #201 | implemented | plain review, comment, mapped-anchor, branch-protection, and polling-event values plus a move-only coroutine client and watch; HTTP and JSON remain private |
 | `liquid/secret.hpp` | #204 | implemented | X25519 sealing keys, exact deployment scopes, canonical-CBOR sealed-secret encode/decode, synchronous seal/unseal, keypair generation, and coroutine-native Lake public-key fetch |
 | `liquid/sync.hpp` | #160, #165, #177, #189, #202, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, whole-graph and metadata-only `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull, node stores, and lake clients |
@@ -772,6 +773,53 @@ and applies the entire span against candidates before one checkpoint. The endpoi
 in [sync.md](sync.md); pack frames remain private wire data.
 `receive_metadata` accepts tree roots, stores only tree and blob records, registers blob content at
 the session's remote source and instance, and reports fetched record counts plus bytes still remote.
+
+### `liquid/lake.hpp`
+
+```cpp
+struct lake { std::string name, url; };
+class lake_credential_store { public:
+  virtual result<std::optional<std::string>> read(std::string_view key) = 0;
+  virtual result<void> write(std::string_view key, std::string_view token) = 0;
+  virtual result<void> erase(std::string_view key) = 0; };
+std::shared_ptr<lake_credential_store> os_lake_credential_store();
+std::shared_ptr<lake_credential_store> memory_lake_credential_store();
+struct lake_registry_options { std::filesystem::path path;
+                               std::shared_ptr<lake_credential_store> credentials; };
+enum class lake_token_source : std::uint8_t { none, credential_store, lake_environment,
+                                              shared_environment };
+struct lake_token { std::string value; lake_token_source source; };
+class lake_registry { public:
+  static runtime::task<lake_registry> open(lake_registry_options = {});
+  std::span<const lake> list() const;
+  std::optional<lake> find(std::string_view name) const;
+  std::optional<lake> match(std::string_view url) const;
+  runtime::task<lake> add(std::string name, std::string url);
+  runtime::task<void> remove(std::string name);
+  runtime::task<void> set_token(std::string name, std::string token);
+  runtime::task<void> clear_token(std::string name);
+  runtime::task<lake_token> token(std::string name) const; };
+struct repository_lake { std::string lake, repository; };
+runtime::task<std::optional<repository_lake>> read_repository_lake(repository&);
+runtime::task<void> write_repository_lake(repository&, repository_lake);
+result<std::string> repository_path_for(const lake&, std::string_view repository);
+struct lake_target { std::optional<lake> named; std::string base_url, repository_url;
+                     lake_token token; };
+runtime::task<lake_target> resolve_lake_target(const lake_registry&, repository*,
+                                               std::string argument);
+struct lake_server_info { std::string api, name, version, revision;
+  std::vector<std::uint32_t> sync_protocol_versions, forge_api_versions;
+  std::string liquid_oldest, liquid_newest; };
+std::span<const std::uint32_t> supported_sync_protocol_versions();
+std::span<const std::uint32_t> supported_forge_api_versions();
+enum class lake_compatibility_kind : std::uint8_t { compatible = 1, unknown, unsupported };
+struct lake_compatibility { lake_compatibility_kind kind; std::string message;
+                            lake_server_info info; };
+runtime::task<lake_server_info> fetch_lake_server_info(std::string base_url);
+lake_compatibility check_lake_compatibility(std::string_view label, const lake_server_info&);
+runtime::task<lake_compatibility> check_lake(const lake_target&);
+runtime::task<lake_compatibility> require_compatible_lake(const lake_target&);
+```
 
 ### `liquid/forge.hpp`
 

@@ -5,12 +5,12 @@
 ## Synopsis
 
 ```text
-liquid pull <url>
+liquid pull [<lake>|<url>]
 ```
 
 ## Description
 
-Receive signed metadata and missing objects from a sync endpoint.
+Receive signed metadata and missing objects from a sync endpoint. The lake is chosen and checked as for push.
 
 ## Options
 
@@ -23,6 +23,7 @@ available
 ## Examples
 
 ```sh
+liquid pull
 liquid pull http://127.0.0.1:8080
 ```
 

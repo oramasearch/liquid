@@ -85,6 +85,7 @@ preserved and `path` becomes `error::context`.
 | `not_found` | `not_found` |
 | `conflict` | `conflict` |
 | `store_unavailable` | `unavailable` |
+| `unsupported_client_version` | `unsupported`, context `unsupported_client_version`, as on a sync path ([lakes](lakes.md)) |
 | any other code | `internal` |
 
 ## Test double
@@ -105,7 +106,9 @@ POST /v1/map_review_anchors
 GET  /v1/list_branch_protections
 ```
 
-It also serves the repository sync routes used by `watch`. Its envelopes, errors, and three-state
+It also serves the repository sync routes used by `watch`, recording the bearer they receive, and
+`GET /v1/server_info` with a body a test sets through `set_server_info` (404 when unset), so the
+[named-lake](lakes.md) version check runs against it; `server_info_requests()` counts the reads. Its envelopes, errors, and three-state
 review transitions match lake, and anchor mapping covers `same`, `shifted`, `approximate`, and
 `deleted`. C++ integration tests can include `<liquid/test/forge_double.hpp>` and construct HTTPS
 mode with a certificate and private key. The standalone process uses HTTP for local downstream

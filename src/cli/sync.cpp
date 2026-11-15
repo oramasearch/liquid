@@ -3,6 +3,7 @@
 #include <print>
 #include <string_view>
 
+#include "cli/lake.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/sync.hpp"
@@ -17,7 +18,7 @@ auto fail(const liquid::error& error) -> int {
 }
 
 auto usage(std::string_view command) -> int {
-    const auto arguments = command == "push" ? "[--atomic] <url>" : "<url>";
+    const auto arguments = command == "push" ? "[--atomic] [<lake>|<url>]" : "[<lake>|<url>]";
     std::println(stderr, "error: usage: {} {}", command, arguments);
     return 2;
 }
@@ -37,7 +38,7 @@ auto run(int argc, char** argv, bool push) -> int {
         }
         return usage(push ? "push" : "pull");
     }
-    if (url.empty() || (!push && atomic)) {
+    if (!push && atomic) {
         return usage(push ? "push" : "pull");
     }
     auto opened =
@@ -45,18 +46,23 @@ auto run(int argc, char** argv, bool push) -> int {
     if (!opened) {
         return fail(opened.error());
     }
-    auto options = liquid::sync_endpoint_options{};
-    if (const auto* token = std::getenv("LIQUID_TOKEN")) {
-        options.bearer_token = token;
+    // An empty argument is the repository's recorded lake; a name is that lake; a URL is matched
+    // to a named lake by host. Only that lake's token is sent (docs/library/lakes.md).
+    auto target = prepare_lake(&*opened, std::string{url});
+    if (!target) {
+        return fail(target.error());
     }
+    auto options = liquid::sync_endpoint_options{};
+    options.bearer_token = target->token.value;
     options.atomic = atomic;
     try {
-        auto endpoint = liquid::sync_endpoint{std::string{url}, std::move(options)};
+        auto endpoint = liquid::sync_endpoint{target->repository_url, std::move(options)};
         auto synced = push ? liquid::runtime::block_on(endpoint.push(*opened))
                            : liquid::runtime::block_on(endpoint.pull(*opened));
         if (!synced) {
             return fail(synced.error());
         }
+        remember_lake(*opened, *target);
         if (synced->retry_after_ms != 0) {
             std::println("flow_rejected scope={} retry_after_ms={}",
                          synced->exhausted_scope,

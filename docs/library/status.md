@@ -309,6 +309,15 @@ blobs when the patch or target remains remote, otherwise falling back to content
 The executable-aware algorithm id is reserved because its measured Mach-O candidate was larger
 than the generic patch.
 
+**Named lakes.** liquid keeps a list of named lakes with no built-in entry, records one lake per
+repository (on clone, on the first push or pull to a URL on a named lake, or with `liquid lake
+use`), keeps a token per lake in the macOS keychain or Windows Credential Manager with
+`LIQUID_TOKEN_<NAME>` and `LIQUID_TOKEN` as environment fallbacks, and reads a lake's
+`server_info` once per process before syncing, refusing a lake whose sync protocol or supported
+liquid range excludes this liquid. `push`, `pull`, `clone` and `review` use it; there is no Linux
+credential store yet, and the build cache's remote endpoints do not use it yet
+([`lakes.md`](lakes.md), liquid#525).
+
 ## Phase 4: the incremental engine
 
 **Query graph.** Phase 4 includes the persisted demand-driven query graph, continuous clean
@@ -483,6 +492,8 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
   signature is trusted elsewhere only by `liquid identity trust --accept-compromise-rotation`.
   Who may issue a release policy or a hot-update patch is still open (#384, #388).
 - The executable-aware delta algorithm id is reserved and unused.
+- Lake tokens have no operating-system credential store on Linux; they come from
+  `LIQUID_TOKEN_<NAME>` or `LIQUID_TOKEN` there ([`lakes.md`](lakes.md)).
 - The data-branch reflink fast path requires local cluster control metadata.
 - The projection page has no recorded credentialed Apple notarisation proof; image booting is
   outside the projection implementation.

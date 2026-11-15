@@ -98,6 +98,7 @@ auto compact(int argc, char** argv) -> int;
 auto tiers(int argc, char** argv) -> int;
 auto registry(int argc, char** argv) -> int;
 auto blame(int argc, char** argv) -> int;
+auto lake_command(int argc, char** argv) -> int;
 
 } // namespace liquid_cli
 
@@ -396,8 +397,18 @@ constexpr auto flags_secret = std::to_array<flag>({
     {"--out", "<file>", "Write a sealed secret record to this file.", "standard output"},
     {"--private-key-file", "<path>", "Read the unsealing private key from this file.", "none"},
 });
+constexpr auto flags_clone = std::to_array<flag>({
+    {"--json", {}, "Write stable JSON instead of text.", "false"},
+    {"--lake", "<name>", "Clone the repository from this named lake.", "none"},
+});
+constexpr auto flags_lake = std::to_array<flag>({
+    {"--json", {}, "Write stable JSON instead of text, for list and check.", "false"},
+});
 constexpr auto flags_review = std::to_array<flag>({
-    {"--lake", "<url>", "Select the Lake repository that owns the review.", "none"},
+    {"--lake",
+     "<name|url>",
+     "Select the lake, by name or repository URL, that owns the review.",
+     "the repository's lake"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
     {"--state", "<open|approved|closed>", "Limit list results to this review state.", "all"},
 });
@@ -523,13 +534,16 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::repo_init},
     {"clone",
-     "clone <url|drive-folder> [<dir>] [--json]",
+     "clone <url|drive-folder> [<dir>] [--json] | clone --lake <name> <repository> [<dir>]",
      "clone and materialize a repository",
      "available",
-     flag_json,
+     flags_clone,
      "Create a repository from a sync endpoint or configured drive folder, persist its remote, "
-     "and materialize every file.",
-     "liquid clone https://lake.example.invalid/repositories/example ./example --json",
+     "and materialize every file. A URL on a named lake, or `--lake <name>` with a repository "
+     "identifier, records that lake in the clone, so push, pull and review need no URL. The "
+     "lake's version is checked first.",
+     "liquid clone --lake dev 0b6c2f ./example\n"
+     "liquid clone https://lake.example.invalid/v1/repositories/example ./example --json",
      "0 on success, 1 when authorization, repository lookup, target validation, or transfer "
      "fails, and 2 for invalid usage.",
      argument_policy::ordinary,
@@ -769,36 +783,63 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::registry},
     {"push",
-     "push [--atomic] <url>",
+     "push [--atomic] [<lake>|<url>]",
      "push repository changes and objects",
      "available",
      flags_atomic,
-     "Send signed metadata, requested references, and missing objects to a sync endpoint.",
-     "liquid push http://127.0.0.1:8080",
+     "Send signed metadata, requested references, and missing objects to a sync endpoint. With "
+     "no argument, push to the repository's lake; a lake name uses that lake; a full URL is "
+     "matched to a named lake by host. Only that lake's token is sent, and a lake whose version "
+     "this liquid does not support is refused before anything is sent.",
+     "liquid push\nliquid push http://127.0.0.1:8080",
      "0 when every reference applied, 1 when transport fails or a reference is refused, 2 for "
      "invalid usage, and 69 when offline mode refuses the push.",
      argument_policy::ordinary,
      liquid_cli::sync_push},
     {"pull",
-     "pull <url>",
+     "pull [<lake>|<url>]",
      "pull repository changes and objects",
      "available",
      {},
-     "Receive signed metadata and missing objects from a sync endpoint.",
-     "liquid pull http://127.0.0.1:8080",
+     "Receive signed metadata and missing objects from a sync endpoint. The lake is chosen and "
+     "checked as for push.",
+     "liquid pull\nliquid pull http://127.0.0.1:8080",
      network_exit,
      argument_policy::ordinary,
      liquid_cli::sync_pull},
     {"review",
-     "review <list|show|open|comment|approve|close|protections|watch> --lake <url> [--json] ...",
+     "review <list|show|open|comment|approve|close|protections|watch> [--lake <name|url>] "
+     "[--json] ...",
      "review a lake change in place",
      "available",
      flags_review,
-     "Open, inspect, comment on, approve, close, or watch a Lake review for a repository change.",
-     "liquid review list --lake https://lake.example.invalid --state open --json",
+     "Open, inspect, comment on, approve, close, or watch a Lake review for a repository change. "
+     "Without --lake, the repository's lake is used.",
+     "liquid review list --state open --json\n"
+     "liquid review list --lake https://lake.example.invalid/v1/repositories/example",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::review},
+    {"lake",
+     "lake <add|list|use|remove|login|logout|check> ...",
+     "choose which lake liquid works with",
+     "available",
+     flags_lake,
+     "Name the lakes liquid works with and choose one per repository. `lake add <name> <url>` "
+     "names a lake; `lake list` shows them, where each token comes from and the repository's "
+     "lake; `lake use <name> [<repository>]` records the lake and the repository on it; `lake "
+     "remove <name>` forgets a lake and its stored token; `lake login <name>` stores a token "
+     "read from standard input in the operating system's credential store; `lake logout <name>` "
+     "removes it; `lake check [<name>]` reads the lake's version and says whether this liquid "
+     "works with it. There is no built-in lake.",
+     "liquid lake add dev https://lake.example.invalid\n"
+     "printf '%s\\n' \"$TOKEN\" | liquid lake login dev\n"
+     "liquid lake use dev 0b6c2f\n"
+     "liquid lake check dev",
+     "0 on success, 1 when an operation fails or `check` finds an unsupported lake, and 2 for "
+     "invalid usage.",
+     argument_policy::ordinary,
+     liquid_cli::lake_command},
     {"deploy",
      "deploy [--control <url>] [--env <name>] [--image <ref@sha256:...>] [--to "
      "<change|deployment>] "
@@ -1373,6 +1414,7 @@ constexpr auto group_compose = std::to_array<std::string_view>({
     "data",
 });
 constexpr auto group_share = std::to_array<std::string_view>({
+    "lake",
     "push",
     "pull",
     "review",
@@ -1549,6 +1591,9 @@ constexpr auto git_hints = std::to_array<git_hint>({
     {"mergetool", "use `liquid conflicts` to list conflicts and `liquid resolve` to settle one"},
     {"restore", "use `liquid history <path> --restore <change>`"},
     {"branch", "use `liquid refs` to list the repository's references"},
+    {"remote",
+     "use `liquid lake`: `liquid lake add <name> <url>` names a lake, and `liquid lake use "
+     "<name> <repository>` chooses it for this repository"},
 });
 
 auto unknown_command_message(std::string_view name) -> std::string {
