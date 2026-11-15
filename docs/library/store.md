@@ -824,7 +824,11 @@ opening the repository and writing a file in a loop, and the CLI appending to tr
 running `liquid status` and `liquid cut` for 60 seconds (`LIQUID_STORE_STRESS_SECONDS` changes it);
 every command succeeds, the daemon shuts down cleanly, every pack frame verifies, the store opens
 with no repair, and the repository opens and walks its whole reachable graph in a dry-run
-collection. Without the lock the process cases fail (see the pull request for the counts).
+collection. On `dev` before this change the same tests fail as liquify#95 reported: the two-handle
+case reads `chunk header digest differs from index`; the writer processes fail `in rename: No such
+file or directory […/LIQUID_STORE.backend-tmp]` and `backend object was not found
+(packs/objects.meta.tmp)`; and in the checkout case the library client fails and `liquid status`
+fails `in rename: No such file or directory […/index/MANIFEST.backend-tmp]`.
 
 ### Injected owners and fencing
 
