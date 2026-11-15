@@ -27,4 +27,6 @@ The implementation is private to libliquid. Message mapping, digest rules, and f
 are documented in `docs/library/reapi-codec.md`; RPCs, configuration, CLI, and peer proof are in
 `docs/library/reapi.md`.
 The worker protocol and scheduler capability map are documented in `docs/library/workers.md` and
-`docs/api/scheduler.md`.
+`docs/api/scheduler.md`. `serve_scheduler` runs the same listener check as `serve_reapi`
+(`check_listener`) before it starts its control server, and passes `scheduler_options::security`
+on, so TLS and the per-RPC bearer check apply to the scheduler too (liquid#520).

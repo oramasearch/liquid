@@ -301,7 +301,8 @@ messages, and native tree/action/result conversions are implemented
 ActionCache, and Execution RPCs; `wrap` and `build --profile` use its validated remote cache tier,
 and `liquid serve reapi` exposes liquid's CAS and ActionCache ([`reapi.md`](reapi.md)). That server
 binds loopback by default and refuses any other address unless it has TLS and a bearer token or a
-client CA; a configured token is required, compared in constant time, on every RPC (#415). Liquid's
+client CA; a configured token is required, compared in constant time, on every RPC (#415).
+`liquid scheduler` applies the same listener rules (#520). Liquid's
 action-digest scheduler and TAAP-signed worker fleet are implemented, including one bounded requeue
 after worker loss, size-class placement from #18's recorded decision, REAPI Execution and
 ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces
@@ -540,8 +541,7 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
   `serve sync --client-ca` listener only through another client; `--token-file` works with them.
   Sync flow budgets are per author, so replaying an author's genuinely signed records still spends
   that author's budget (#403).
-- `liquid scheduler` serves the REAPI listener without the #415 TLS and token options. A REAPI
-  client CA file must hold a single certificate: the vendored Corosio TLS context loads only the
+- A REAPI client CA file must hold a single certificate: the vendored Corosio TLS context loads only the
   first certificate of a CA file.
 - The executable-aware delta algorithm id is reserved and unused.
 - The data-branch reflink fast path requires local cluster control metadata.

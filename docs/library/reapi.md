@@ -103,8 +103,12 @@ ActionCache entry it reads. The listener is therefore secured by `reapi_serve_op
 - The client CA file must hold one PEM certificate: the vendored Corosio TLS context loads only the
   first certificate of a CA file.
 
-`liquid scheduler` uses the same server with Execution enabled but does not yet take these options;
-its worker authentication is tracked separately.
+`liquid scheduler` uses the same server with Execution enabled and the same rules (liquid #520):
+`scheduler_options::security` is checked by `serve_scheduler` before anything is opened, a
+non-loopback `--listen` is refused without TLS and `--token-file` or `--client-ca`, and a configured
+token is required on every RPC, the worker lease queue included. `liquid worker` reaches a secured
+scheduler with `--scheduler-tls` or `--scheduler-ca`, `--client-cert` and `--client-key`, and
+`--token-file`. Worker authentication by identity is tracked separately.
 
 ## Configuration and CLI
 

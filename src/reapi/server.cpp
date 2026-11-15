@@ -1477,19 +1477,33 @@ runtime::task<void> serve_reapi_impl(reapi_serve_options options,
     }
 }
 
-runtime::task<void> serve_reapi(reapi_serve_options options) {
+namespace {
+
+// Refuses a listener on a non-loopback address unless it has TLS and a bearer token or a client
+// certificate authority (liquid#415). Shared by `serve_reapi` and `serve_scheduler` (liquid#520),
+// and run before anything is opened or bound.
+auto check_listener(const std::string& listen, const listener_security& security) -> result<void> {
     auto endpoint = boost::corosio::endpoint{};
-    if (const auto code = boost::corosio::parse_endpoint(options.listen, endpoint)) {
-        co_return std::unexpected(
-            server_error(errc::invalid_argument, code.message(), options.listen));
+    if (const auto code = boost::corosio::parse_endpoint(listen, endpoint)) {
+        return std::unexpected(server_error(errc::invalid_argument, code.message(), listen));
     }
     const auto loopback = endpoint.is_v4() ? endpoint.v4_address().is_loopback()
                                            : endpoint.v6_address().is_loopback();
-    auto secured = validate_listener_security(loopback, options.security);
+    auto secured = validate_listener_security(loopback, security);
     if (!secured) {
         auto refused = secured.error();
-        refused.context = options.listen + ": " + refused.context;
-        co_return std::unexpected(std::move(refused));
+        refused.context = listen + ": " + refused.context;
+        return std::unexpected(std::move(refused));
+    }
+    return {};
+}
+
+} // namespace
+
+runtime::task<void> serve_reapi(reapi_serve_options options) {
+    auto secured = check_listener(options.listen, options.security);
+    if (!secured) {
+        co_return std::unexpected(secured.error());
     }
     co_return co_await serve_reapi_impl(std::move(options), {});
 }
@@ -1498,6 +1512,13 @@ runtime::task<void> serve_scheduler(scheduler_options options) {
     if (options.lease_duration <= std::chrono::milliseconds{}) {
         co_return std::unexpected(
             server_error(errc::invalid_argument, "scheduler lease duration must be positive"));
+    }
+    // The scheduler serves the same CAS, ActionCache and Execution services as `serve_reapi`, plus
+    // the worker lease queue, so it gets the same listener rules and per-RPC bearer check
+    // (liquid#520).
+    auto secured = check_listener(options.listen, options.security);
+    if (!secured) {
+        co_return std::unexpected(secured.error());
     }
     auto executions = std::make_shared<workers::scheduler>(options.lease_duration);
     runtime::spawn(
@@ -1531,7 +1552,8 @@ runtime::task<void> serve_scheduler(scheduler_options options) {
         });
     auto reapi_options = reapi_serve_options{.store_directory = std::move(options.store_directory),
                                              .listen = std::move(options.listen),
-                                             .instance_name = std::move(options.instance_name)};
+                                             .instance_name = std::move(options.instance_name),
+                                             .security = std::move(options.security)};
     co_return co_await serve_reapi_impl(std::move(reapi_options), std::move(executions));
 }
 

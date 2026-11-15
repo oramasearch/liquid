@@ -118,7 +118,7 @@ mkdir -p "$runtime/scheduler" "$runtime/worker-one" "$runtime/worker-two"
 docker run -d --name "$scheduler" --network host \
   -v "$runtime/scheduler:/var/lib/liquid-scheduler" \
   "$scheduler_image" \
-  --listen 0.0.0.0:50051 \
+  --listen 127.0.0.1:50051 \
   --control-listen 0.0.0.0:8080 \
   --store /var/lib/liquid-scheduler \
   --lease-ms 8000 >/dev/null

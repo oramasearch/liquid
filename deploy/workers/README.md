@@ -15,6 +15,10 @@ docker compose -f deploy/workers/compose.yaml up
 The Compose example uses host networking because that is the acceptance environment. It mounts a
 separate liquid store for each process and gives workers the namespace and FUSE privileges needed
 by the Phase 2 executor. Scheduler control is on port 8080 and the workers use 8081 and 8082.
+The scheduler's REAPI listener binds `127.0.0.1:50051`, which the host-network workers reach. A
+scheduler on any other address is refused unless it is given `--tls-cert`, `--tls-key`, and
+`--token-file` or `--client-ca`, and its workers then need `--scheduler-ca` (or
+`--scheduler-tls`) and `--token-file` or a client certificate (liquid #520).
 
 Each worker signs its results with its own TAAP identity, and the scheduler accepts a result only
 from a worker whose identity chain it trusts (liquid#383). After the workers have started once,

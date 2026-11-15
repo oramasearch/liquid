@@ -7,6 +7,7 @@
 
 #include "liquid/build.hpp"
 #include "liquid/export.hpp"
+#include "liquid/listener.hpp"
 #include "liquid/remote.hpp"
 #include "liquid/runtime.hpp"
 
@@ -18,6 +19,10 @@ struct LIQUID_EXPORT scheduler_options {
     std::string control_listen{"127.0.0.1:8080"};
     std::string instance_name;
     std::chrono::milliseconds lease_duration{std::chrono::seconds{2}};
+    // TLS and client authentication for `listen`, with the rules of `serve_reapi` (liquid#520): a
+    // non-loopback address is refused unless this has TLS and a bearer token or a client
+    // certificate authority, and a configured bearer token is required on every RPC.
+    listener_security security;
 };
 
 struct LIQUID_EXPORT worker_options {

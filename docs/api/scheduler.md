@@ -1,7 +1,13 @@
 # Scheduler API
 
-The scheduler has an h2c gRPC data listener and an HTTP/1 control listener. The configured REAPI
+The scheduler has a gRPC data listener and an HTTP/1 control listener. The configured REAPI
 instance name is validated on every instance-scoped request.
+
+The data listener follows the rules of `liquid serve reapi` (liquid #520): h2c on loopback by
+default, and on any other address only with TLS (ALPN `h2`) and a bearer token (`--token-file`) or
+mutual TLS (`--client-ca`). With a token, every RPC below, the lease queue included, must carry
+`authorization: Bearer <token>`; without it the scheduler answers gRPC status 16
+(`UNAUTHENTICATED`) before reading the request body and closes the connection.
 
 ## Standard gRPC services
 

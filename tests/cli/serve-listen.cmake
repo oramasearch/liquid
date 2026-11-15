@@ -1,4 +1,4 @@
-# `liquid serve reapi` and `liquid serve sync` refuse a non-loopback listener unless it has TLS and
+# `liquid serve reapi`, `liquid serve sync` and `liquid scheduler` refuse a non-loopback listener unless it has TLS and
 # client authentication (liquid#415, liquid#403). Every refusal happens before anything binds, so
 # each command must exit at once; the timeout turns a regression that starts serving into a failure.
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_SERVE_ROOT)
@@ -60,6 +60,22 @@ expect_refused("reapi group-readable token file" "readable only by its owner"
   serve reapi --listen 127.0.0.1:50991 --token-file "${shared_token_file}")
 expect_refused("reapi certificate without key" "must be given together"
   serve reapi --listen 127.0.0.1:50991 --tls-cert cert.pem)
+
+# liquid#520: the scheduler serves the same REAPI services and follows the same rules.
+set(scheduler_store "${LIQUID_SERVE_ROOT}/scheduler-store")
+expect_refused("scheduler plaintext on any address" "${off_loopback}"
+  scheduler --listen 0.0.0.0:50993 --control-listen 127.0.0.1:50994 --store "${scheduler_store}")
+expect_refused("scheduler plaintext on an IPv6 address" "${off_loopback}"
+  scheduler --listen [::]:50993 --control-listen 127.0.0.1:50994 --store "${scheduler_store}")
+expect_refused("scheduler token without TLS" "${off_loopback}"
+  scheduler --listen 0.0.0.0:50993 --control-listen 127.0.0.1:50994 --store "${scheduler_store}"
+  --token-file "${token_file}")
+expect_refused("scheduler TLS without authentication" "${off_loopback}"
+  scheduler --listen 0.0.0.0:50993 --control-listen 127.0.0.1:50994 --store "${scheduler_store}"
+  --tls-cert cert.pem --tls-key key.pem)
+expect_refused("scheduler group-readable token file" "readable only by its owner"
+  scheduler --listen 127.0.0.1:50993 --control-listen 127.0.0.1:50994 --store "${scheduler_store}"
+  --token-file "${shared_token_file}")
 
 set(repository "${LIQUID_SERVE_ROOT}/repository")
 expect_refused("sync plaintext on any address" "${off_loopback}"
