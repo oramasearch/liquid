@@ -225,6 +225,20 @@ As of this change `main` compiles on Linux, and both the mount and drip restart 
 there. To change the toolchain, edit the Dockerfile and the workflow together; they must agree on
 the compiler version.
 
+The image's inputs are pinned (lake#1003). `ubuntu:24.04` is named by its multi-platform index
+digest (`sha256:2198e4c6…`), and the CMake 3.31.5 installer is checked against the SHA-256 Kitware
+publishes for each architecture before it runs. The REAPI generator image (`tests/reapi/Dockerfile`)
+pins `python:3.13.7-slim-bookworm` the same way (`sha256:adafcc17…`), beside the commits it already
+pins for its proto sources. Not pinned: the LLVM apt script (`llvm.sh` installs packages signed by a
+key fetched from the same host, so a hash of the script alone would not help) and the Ubuntu and
+Debian `apt-get install` packages, which come from the archive's current state. To move a pin, read
+the new value without building and change it in a reviewed commit:
+
+```sh
+docker buildx imagetools inspect ubuntu:24.04 | grep '^Digest:'
+curl -sL https://github.com/Kitware/CMake/releases/download/v<version>/cmake-<version>-SHA-256.txt
+```
+
 The CLI documentation check extracts the backticked command cell from each Markdown table row.
 It must not split table rows into CMake lists: CMake policy CMP0007 differs on whether the leading
 empty field before a Markdown row's first `|` is retained.

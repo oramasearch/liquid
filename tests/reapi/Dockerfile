@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 
-FROM python:3.13.7-slim-bookworm
+# Pinned by its multi-platform index digest (lake#1003); a new base is a reviewed change of the digest.
+FROM python:3.13.7-slim-bookworm@sha256:adafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d
 
 ARG REMOTE_APIS_COMMIT=77ec630134abbf9aa525f921eee4e5d11dc20f7e
 ARG GOOGLEAPIS_COMMIT=64aa30b277168edd20efee0c9ceb4ca01248931d
