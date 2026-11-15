@@ -66,7 +66,22 @@ std::vector<std::byte> pseudo_random(std::size_t size, std::uint64_t seed) {
     return output;
 }
 
-liquid::result<liquid::attestation> delegation(const liquid::actor& agent) {
+// The hex id `delegation/1` names in its `repository` attribute (liquid#515).
+std::string repository_text(const liquid::repository& target) {
+    auto id = target.id();
+    EXPECT_TRUE(id) << message(id.error());
+    constexpr auto digits = std::string_view{"0123456789abcdef"};
+    auto output = std::string{};
+    for (const auto octet : id ? *id : liquid::node_id{}) {
+        const auto value = std::to_integer<unsigned char>(octet);
+        output.push_back(digits[value >> 4]);
+        output.push_back(digits[value & 0x0f]);
+    }
+    return output;
+}
+
+liquid::result<liquid::attestation> delegation(const liquid::repository& target,
+                                               const liquid::actor& agent) {
     auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
     if (!signer) {
         return std::unexpected(signer.error());
@@ -82,15 +97,16 @@ liquid::result<liquid::attestation> delegation(const liquid::actor& agent) {
         .at = now,
         .issuer = signer->identity(),
         .subject_kind = liquid::attestation_subject_kind::actor,
-        .attributes = {{"scopes", std::vector<std::string>{"**"}},
-                       {"may_publish", true},
-                       {"may_lease", true},
-                       {"depth_remaining", std::uint64_t{1}},
-                       {"model", "test-agent"},
-                       {"dispatcher", signer->identity().taap_id},
-                       {"not_after",
-                        static_cast<std::uint64_t>(
-                            (now + std::chrono::hours{1}).time_since_epoch().count())}}};
+        .attributes = {
+            {"scopes", std::vector<std::string>{"**"}},
+            {"may_publish", true},
+            {"may_lease", true},
+            {"depth_remaining", std::uint64_t{1}},
+            {"model", "test-agent"},
+            {"dispatcher", signer->identity().taap_id},
+            {"not_after",
+             static_cast<std::uint64_t>((now + std::chrono::hours{1}).time_since_epoch().count())},
+            {"repository", repository_text(target)}}};
     auto body = liquid::objects::encode_attestation_body(value);
     if (!body) {
         return std::unexpected(body.error());
@@ -167,7 +183,7 @@ expected_repository build_source(liquid::store& objects, const std::filesystem::
     auto agent = liquid::runtime::block_on(liquid::identity_detail::local_signer());
     EXPECT_TRUE(agent) << message(agent.error());
     if (agent) {
-        auto authority = delegation(agent->identity());
+        auto authority = delegation(repository, agent->identity());
         EXPECT_TRUE(authority) << message(authority.error());
         if (authority) {
             auto forked = liquid::runtime::block_on(

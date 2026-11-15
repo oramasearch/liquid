@@ -513,6 +513,10 @@ constexpr auto flags_config = std::to_array<flag>({
      "the only package"},
 });
 constexpr auto flags_session = std::to_array<flag>({
+    {"--as",
+     "<agent>",
+     "Start the session as this agent TAAP id, the delegation subject.",
+     "required for start"},
     {"--from", "<file>", "Read session-write content from this file.", "required for write"},
     {"--message", "<text>", "Record this message when publishing a session.", "empty"},
 });
@@ -979,8 +983,8 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::locks_unlock},
     {"session",
-     "session <start <delegation>|write <id> <path> --from <file>|publish <id> [--message "
-     "<text>]|discard <id>>",
+     "session <start <delegation> --as <agent>|write <id> <path> --from <file>|publish <id> "
+     "[--message <text>]|discard <id>>",
      "manage a private speculative replica",
      "available",
      flags_session,

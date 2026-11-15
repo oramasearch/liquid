@@ -12,6 +12,7 @@
 #include <fstream>
 #include <limits>
 #include <ranges>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -153,7 +154,8 @@ attestation_profile_registry::attestation_profile_registry()
                          field("depth_remaining", attestation_field_type::unsigned_integer, true),
                          field("model", attestation_field_type::text, false),
                          field("dispatcher", attestation_field_type::text, true),
-                         field("not_after", attestation_field_type::unsigned_integer, true)},
+                         field("not_after", attestation_field_type::unsigned_integer, true),
+                         field("repository", attestation_field_type::text, true)},
                         {attestation_subject_kind::actor},
                         attestation_status_kind::revocable,
                         std::chrono::hours{1}),
@@ -561,6 +563,15 @@ result<void> validate_delegation(const attestation& value, const attestation* pa
         return std::unexpected(invalid("sub-delegation does not reduce depth_remaining"));
     }
     return {};
+}
+
+result<digest> delegation_subject(const actor& agent) {
+    if (agent.taap_id.empty()) {
+        return std::unexpected(invalid("delegation agent has no TAAP id"));
+    }
+    return hash(
+        algorithm::blake3,
+        std::span{reinterpret_cast<const std::byte*>(agent.taap_id.data()), agent.taap_id.size()});
 }
 
 result<void> check_delegation_window(const attestation& value, std::chrono::sys_seconds now) {

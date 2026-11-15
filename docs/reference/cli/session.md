@@ -5,7 +5,7 @@
 ## Synopsis
 
 ```text
-liquid session <start <delegation>|write <id> <path> --from <file>|publish <id> [--message <text>]|discard <id>>
+liquid session <start <delegation> --as <agent>|write <id> <path> --from <file>|publish <id> [--message <text>]|discard <id>>
 ```
 
 ## Description
@@ -16,6 +16,7 @@ Start, write, publish, or discard a delegated private repository session.
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
+| `--as` | `<agent>` | Start the session as this agent TAAP id, the delegation subject. | required for start |
 | `--from` | `<file>` | Read session-write content from this file. | required for write |
 | `--message` | `<text>` | Record this message when publishing a session. | empty |
 

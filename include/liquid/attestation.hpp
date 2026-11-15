@@ -202,6 +202,10 @@ verify_attestation(const attestation& value, const attestation_verification_opti
 [[nodiscard]] LIQUID_EXPORT result<void> validate_delegation(const attestation& value,
                                                              const attestation* parent = nullptr);
 
+// The subject a `delegation/1` names for the agent it authorises: the BLAKE3 digest of the agent's
+// TAAP id (liquid#515). A session acts as `agent` only under a delegation with this subject.
+[[nodiscard]] LIQUID_EXPORT result<digest> delegation_subject(const actor& agent);
+
 // The validity window of a `delegation/1` (liquid#514). Every delegation carries `not_after`, in
 // seconds since the Unix epoch. A delegation is valid only when `at` is no later than `now` plus
 // `delegation_clock_skew`, `not_after` is after `at` and at most `delegation_maximum_lifetime`

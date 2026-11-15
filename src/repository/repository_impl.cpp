@@ -8998,6 +8998,38 @@ auto check_delegation_now(const attestation& delegation,
     return {};
 }
 
+// Whether `delegation` was issued to `agent`, by the dispatcher it names, for this repository
+// (liquid#515): its subject is `delegation_subject(agent)`, its `dispatcher` is its own issuer, and
+// its `repository` is `repository`, the hex id of the repository it is used in. Without this, a
+// delegation minted for one agent could be used by another, and one leaked from one repository
+// would grant the same scopes in every repository of the same principal.
+auto check_delegation_binding(const attestation& delegation,
+                              const actor& agent,
+                              std::string_view repository) -> result<void> {
+    auto subject = delegation_subject(agent);
+    if (!subject) {
+        return std::unexpected(
+            failure(errc::unauthorized, subject.error().message, "delegation subject"));
+    }
+    if (subject->alg != delegation.subject.alg || subject->bytes != delegation.subject.bytes) {
+        return std::unexpected(
+            failure(errc::unauthorized, "delegation was issued to another agent", agent.taap_id));
+    }
+    const auto* dispatcher =
+        std::get_if<std::string>(delegation_attribute(delegation, "dispatcher"));
+    if (!dispatcher || *dispatcher != delegation.issuer.taap_id) {
+        return std::unexpected(
+            failure(errc::unauthorized, "delegation dispatcher is not its issuer", "delegation/1"));
+    }
+    const auto* bound = std::get_if<std::string>(delegation_attribute(delegation, "repository"));
+    if (!bound || *bound != repository) {
+        return std::unexpected(failure(errc::unauthorized,
+                                       "delegation was issued for another repository",
+                                       std::string{repository}));
+    }
+    return {};
+}
+
 } // namespace
 
 runtime::task<session> repository::fork_session(session_options options) {
@@ -9011,6 +9043,11 @@ runtime::task<session> repository::fork_session(session_options options) {
     auto delegation_valid = validate_delegation(options.delegation);
     if (!delegation_valid) {
         co_return std::unexpected(delegation_valid.error());
+    }
+    auto bound = check_delegation_binding(
+        options.delegation, options.actor, node_text(impl_->current.repository));
+    if (!bound) {
+        co_return std::unexpected(bound.error());
     }
     auto encoded_delegation = encode_attestation(options.delegation);
     if (!encoded_delegation) {

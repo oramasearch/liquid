@@ -105,7 +105,22 @@ void set_attribute(liquid::attestation& value, std::string name, liquid::attesta
     }
 }
 
-auto delegation(const liquid::actor& agent,
+// The hex id `delegation/1` names in its `repository` attribute.
+auto repository_text(const liquid::repository& target) -> std::string {
+    auto id = target.id();
+    EXPECT_TRUE(id) << id.error().message;
+    constexpr auto digits = std::string_view{"0123456789abcdef"};
+    auto output = std::string{};
+    for (const auto octet : id ? *id : liquid::node_id{}) {
+        const auto value = std::to_integer<unsigned char>(octet);
+        output.push_back(digits[value >> 4]);
+        output.push_back(digits[value & 0x0f]);
+    }
+    return output;
+}
+
+auto delegation(const liquid::repository& target,
+                const liquid::actor& agent,
                 std::vector<std::string> scopes,
                 bool may_publish = true,
                 bool may_lease = true) -> liquid::result<liquid::attestation> {
@@ -113,7 +128,7 @@ auto delegation(const liquid::actor& agent,
     if (!signer) {
         return std::unexpected(signer.error());
     }
-    auto subject = liquid::hash(liquid::algorithm::blake3, bytes(agent.taap_id));
+    auto subject = liquid::delegation_subject(agent);
     if (!subject) {
         return std::unexpected(subject.error());
     }
@@ -130,7 +145,8 @@ auto delegation(const liquid::actor& agent,
                        {"depth_remaining", std::uint64_t{1}},
                        {"model", "test-agent"},
                        {"dispatcher", signer->identity().taap_id},
-                       {"not_after", epoch_seconds(now + std::chrono::hours{1})}}};
+                       {"not_after", epoch_seconds(now + std::chrono::hours{1})},
+                       {"repository", repository_text(target)}}};
     return sign_delegation(std::move(value));
 }
 
@@ -186,7 +202,7 @@ TEST(Collaboration, speculative_writes_are_private_and_publish_is_attributed_and
     EXPECT_FALSE(before->back().delegation.has_value());
 
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority) << authority.error().message;
     auto forked = liquid::runtime::block_on(
         shared.fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
@@ -237,7 +253,7 @@ TEST(Collaboration, speculative_writes_are_private_and_publish_is_attributed_and
     EXPECT_EQ(drips->back().by.taap_id, agent.taap_id);
     EXPECT_TRUE(drips->back().delegation.has_value());
 
-    auto restricted = delegation(agent, {"docs/**"});
+    auto restricted = delegation(shared, agent, {"docs/**"});
     ASSERT_TRUE(restricted);
     auto restricted_fork = liquid::runtime::block_on(
         shared.fork_session({.actor = agent, .delegation = *restricted, .status = not_revoked()}));
@@ -270,7 +286,7 @@ TEST(Collaboration, line_attribution_follows_changes_sessions_agents_and_moves) 
     ASSERT_TRUE(initial);
 
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority);
     auto forked = liquid::runtime::block_on(
         shared.fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
@@ -343,7 +359,7 @@ TEST(Collaboration, symbol_leases_refuse_intersections_allow_other_ranges_and_ex
     ASSERT_TRUE(stored) << stored.error().message;
 
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority);
     auto first = liquid::runtime::block_on(
         shared.fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
@@ -420,7 +436,7 @@ TEST(Collaboration, presence_is_transient_and_crosses_repository_sync) {
     ASSERT_TRUE(liquid::runtime::block_on(source.write("src/value.cpp", bytes("int value;\n"))));
     ASSERT_TRUE(liquid::runtime::block_on(source.cut("fork point")));
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(source, agent, {"src/**"});
     ASSERT_TRUE(authority);
     auto forked = liquid::runtime::block_on(
         source.fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
@@ -797,7 +813,7 @@ TEST(Collaboration, fork_session_refuses_altered_unsigned_and_empty_delegations)
     collaboration_directory directory;
     auto shared = forked_repository(directory.path() / "shared");
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority) << authority.error().message;
 
     auto widened = *authority;
@@ -807,7 +823,7 @@ TEST(Collaboration, fork_session_refuses_altered_unsigned_and_empty_delegations)
     ASSERT_FALSE(altered);
     EXPECT_EQ(altered.error().code, liquid::errc::unauthorized);
 
-    auto publishing = delegation(agent, {"src/**"}, false, false);
+    auto publishing = delegation(shared, agent, {"src/**"}, false, false);
     ASSERT_TRUE(publishing);
     publishing->attributes[1].value = true;
     auto escalated = liquid::runtime::block_on(
@@ -829,7 +845,7 @@ TEST(Collaboration, fork_session_refuses_altered_unsigned_and_empty_delegations)
     ASSERT_FALSE(profile_fork);
     EXPECT_EQ(profile_fork.error().code, liquid::errc::invalid_argument);
 
-    auto empty = delegation(agent, {});
+    auto empty = delegation(shared, agent, {});
     ASSERT_TRUE(empty) << empty.error().message;
     auto empty_fork = liquid::runtime::block_on(
         shared.fork_session({.actor = agent, .delegation = *empty, .status = not_revoked()}));
@@ -848,7 +864,7 @@ TEST(Collaboration, fork_session_refuses_a_delegation_issued_by_another_identity
     const auto restore = previous ? std::optional<std::string>{previous} : std::nullopt;
     const auto other_home = directory.path() / "other-home";
     setenv("LIQUID_HOME", other_home.c_str(), 1);
-    auto foreign = delegation(agent, {"**"});
+    auto foreign = delegation(shared, agent, {"**"});
     if (restore) {
         setenv("LIQUID_HOME", restore->c_str(), 1);
     } else {
@@ -869,7 +885,7 @@ TEST(Collaboration, session_without_capabilities_cannot_publish_or_lease) {
     collaboration_directory directory;
     auto shared = forked_repository(directory.path() / "shared");
     const auto agent = current_actor();
-    auto read_only = delegation(agent, {"src/**"}, false, false);
+    auto read_only = delegation(shared, agent, {"src/**"}, false, false);
     ASSERT_TRUE(read_only);
     auto forked = liquid::runtime::block_on(
         shared.fork_session({.actor = agent, .delegation = *read_only, .status = not_revoked()}));
@@ -900,7 +916,7 @@ TEST(Collaboration, session_lease_outside_delegation_scopes_is_refused) {
     collaboration_directory directory;
     auto shared = forked_repository(directory.path() / "shared");
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority);
     auto forked = liquid::runtime::block_on(
         shared.fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
@@ -927,7 +943,7 @@ TEST(Collaboration, publish_refuses_a_move_across_the_delegation_scopes) {
     collaboration_directory directory;
     auto shared = forked_repository(directory.path() / "shared");
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority);
 
     auto outward_fork = liquid::runtime::block_on(
@@ -966,7 +982,7 @@ TEST(Collaboration, finished_sessions_cannot_be_reused_or_reopened) {
     collaboration_directory directory;
     auto shared = forked_repository(directory.path() / "shared");
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority);
 
     auto published_fork = liquid::runtime::block_on(
@@ -1006,7 +1022,7 @@ TEST(Collaboration, a_session_cannot_release_another_sessions_lease) {
     collaboration_directory directory;
     auto shared = forked_repository(directory.path() / "shared");
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority);
     auto first_fork = liquid::runtime::block_on(
         shared.fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
@@ -1043,7 +1059,7 @@ TEST(Collaboration, fork_session_refuses_missing_revoked_and_stale_status) {
     collaboration_directory directory;
     auto shared = forked_repository(directory.path() / "shared");
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority) << authority.error().message;
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
 
@@ -1093,7 +1109,7 @@ TEST(Collaboration, fork_session_refuses_expired_future_and_unbounded_delegation
     collaboration_directory directory;
     auto shared = forked_repository(directory.path() / "shared");
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority) << authority.error().message;
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     const auto fork = [&](liquid::attestation value) {
@@ -1145,7 +1161,7 @@ TEST(Collaboration, publish_and_lease_refuse_after_revocation_or_expiry) {
     collaboration_directory directory;
     auto shared = forked_repository(directory.path() / "shared");
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(shared, agent, {"src/**"});
     ASSERT_TRUE(authority) << authority.error().message;
     auto revoked = std::make_shared<std::atomic_bool>(false);
     auto status = liquid::delegation_status_resolver{
@@ -1195,6 +1211,57 @@ TEST(Collaboration, publish_and_lease_refuse_after_revocation_or_expiry) {
     ASSERT_TRUE(still);
     EXPECT_EQ(text(*still), "int value = 1;\n");
     EXPECT_TRUE(liquid::runtime::block_on(expiring.discard()));
+}
+
+// Must-nevers D8 and D9 (liquid#515): a delegation starts a session only for the agent it names,
+// when its dispatcher is its issuer, and in the repository it was issued for; the session's work
+// is then attributed to that agent, not to the principal.
+TEST(Collaboration, fork_session_binds_the_agent_dispatcher_and_repository) {
+    collaboration_directory directory;
+    auto shared = forked_repository(directory.path() / "shared");
+    auto other = forked_repository(directory.path() / "other");
+    const auto principal = current_actor();
+    const auto agent = liquid::actor{.taap_id = "taap:1:ed25519:delegated-agent"};
+    auto authority = delegation(shared, agent, {"src/**"});
+    ASSERT_TRUE(authority) << authority.error().message;
+
+    const auto impostor = liquid::actor{.taap_id = "taap:1:ed25519:another-agent"};
+    auto as_impostor = liquid::runtime::block_on(shared.fork_session(
+        {.actor = impostor, .delegation = *authority, .status = not_revoked()}));
+    ASSERT_FALSE(as_impostor);
+    EXPECT_EQ(as_impostor.error().code, liquid::errc::unauthorized);
+    auto as_principal = liquid::runtime::block_on(shared.fork_session(
+        {.actor = principal, .delegation = *authority, .status = not_revoked()}));
+    ASSERT_FALSE(as_principal);
+    EXPECT_EQ(as_principal.error().code, liquid::errc::unauthorized);
+
+    auto misdispatched = *authority;
+    set_attribute(misdispatched, "dispatcher", std::string{"taap:1:ed25519:someone-else"});
+    auto misdispatched_signed = sign_delegation(std::move(misdispatched));
+    ASSERT_TRUE(misdispatched_signed);
+    auto dispatched = liquid::runtime::block_on(shared.fork_session(
+        {.actor = agent, .delegation = *misdispatched_signed, .status = not_revoked()}));
+    ASSERT_FALSE(dispatched);
+    EXPECT_EQ(dispatched.error().code, liquid::errc::unauthorized);
+
+    auto elsewhere = liquid::runtime::block_on(
+        other.fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
+    ASSERT_FALSE(elsewhere);
+    EXPECT_EQ(elsewhere.error().code, liquid::errc::unauthorized);
+
+    auto forked = liquid::runtime::block_on(
+        shared.fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
+    ASSERT_TRUE(forked) << forked.error().message;
+    auto agent_session = std::move(*forked);
+    ASSERT_TRUE(
+        liquid::runtime::block_on(agent_session.write("src/value.cpp", bytes("int value = 2;\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(agent_session.publish({.message = "agent"})));
+    auto drips = liquid::runtime::block_on(shared.drips());
+    ASSERT_TRUE(drips);
+    ASSERT_FALSE(drips->empty());
+    EXPECT_EQ(drips->back().by.taap_id, agent.taap_id);
+    EXPECT_NE(drips->back().by.taap_id, principal.taap_id);
+    EXPECT_TRUE(drips->back().delegation.has_value());
 }
 
 } // namespace

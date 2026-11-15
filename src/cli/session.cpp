@@ -26,10 +26,9 @@ auto fail(const liquid::error& error) -> int {
 }
 
 auto usage() -> int {
-    std::println(
-        stderr,
-        "error: usage: session <start <delegation>|write <id> <path> --from <file>|publish "
-        "<id> [--message <text>]|discard <id>>");
+    std::println(stderr,
+                 "error: usage: session <start <delegation> --as <agent>|write <id> <path> --from "
+                 "<file>|publish <id> [--message <text>]|discard <id>>");
     return 2;
 }
 
@@ -71,7 +70,11 @@ auto read_file(const std::filesystem::path& path) -> liquid::result<std::vector<
     return output;
 }
 
-auto start(liquid::repository& repository, std::string_view delegation_text) -> int {
+// Starts a session as `agent`, the TAAP id of the delegated agent (liquid#515). The repository
+// refuses unless the delegation was issued to that agent, so history names the agent that acted
+// and not the principal whose key signs its drips.
+auto start(liquid::repository& repository, std::string_view delegation_text, std::string_view agent)
+    -> int {
     auto id = liquid::parse_digest(delegation_text);
     if (!id) {
         return fail(id.error());
@@ -80,12 +83,8 @@ auto start(liquid::repository& repository, std::string_view delegation_text) -> 
     if (!authority) {
         return fail(authority.error());
     }
-    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
-    if (!signer) {
-        return fail(signer.error());
-    }
     auto created = liquid::runtime::block_on(
-        repository.fork_session({.actor = signer->identity(),
+        repository.fork_session({.actor = liquid::actor{.taap_id = std::string{agent}},
                                  .delegation = std::move(*authority),
                                  .status = liquid::local_delegation_status()}));
     if (!created) {
@@ -174,8 +173,9 @@ auto session(int argc, char** argv) -> int {
         return fail(repository.error());
     }
     const auto command = std::string_view{argv[0]};
-    if (command == "start" && argc == 2) {
-        return start(*repository, argv[1]);
+    if (command == "start" && argc == 4 && std::string_view{argv[2]} == "--as" &&
+        argv[3][0] != '\0') {
+        return start(*repository, argv[1], argv[3]);
     }
     if (command == "write") {
         return write(*repository, argc - 1, argv + 1);
