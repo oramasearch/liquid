@@ -77,3 +77,51 @@ TEST(Hash, RejectsInvalidTextAndAlgorithm) {
     ASSERT_FALSE(bad_algorithm.has_value());
     EXPECT_EQ(bad_algorithm.error().code, liquid::errc::invalid_argument);
 }
+
+// liquid#413: the project's own SHA-256 and SHA-1 agree with OpenSSL's on every length around each
+// block and padding boundary, and on random input, so a boundary bug cannot corrupt identities
+// silently.
+#include <openssl/evp.h>
+
+#include <random>
+#include <vector>
+
+#include "git/sha1.hpp"
+
+TEST(Hash, Sha256AndSha1MatchOpenSslAcrossBlockBoundaries) {
+    auto generator = std::mt19937_64{413};
+    const auto openssl = [](const EVP_MD* digest, std::span<const std::byte> input) {
+        auto output = std::vector<unsigned char>(EVP_MAX_MD_SIZE);
+        auto size = 0U;
+        EXPECT_EQ(EVP_Digest(input.data(), input.size(), output.data(), &size, digest, nullptr), 1);
+        output.resize(size);
+        return output;
+    };
+    auto lengths = std::vector<std::size_t>{};
+    for (std::size_t length = 0; length <= 1100; ++length) {
+        lengths.push_back(length);  // every length through 17 blocks: each 55/56/63/64 edge
+    }
+    for (int extra = 0; extra < 64; ++extra) {
+        lengths.push_back(std::uniform_int_distribution<std::size_t>{1101, 1U << 20}(generator));
+    }
+    for (const auto length : lengths) {
+        auto input = std::vector<std::byte>(length);
+        for (auto& value : input) {
+            value = static_cast<std::byte>(generator());
+        }
+        const auto ours = liquid::hash(liquid::algorithm::sha256, input);
+        ASSERT_TRUE(ours) << length;
+        const auto theirs = openssl(EVP_sha256(), input);
+        ASSERT_EQ(theirs.size(), ours->bytes.size());
+        EXPECT_TRUE(std::equal(theirs.begin(), theirs.end(), ours->bytes.begin(), [](unsigned char a, std::byte b) {
+            return a == std::to_integer<unsigned char>(b);
+        })) << "sha256 differs at length " << length;
+
+        const auto sha1 = liquid::git_detail::sha1_hash(input);
+        const auto expected = openssl(EVP_sha1(), input);
+        ASSERT_EQ(expected.size(), sha1.size());
+        EXPECT_TRUE(std::equal(expected.begin(), expected.end(), sha1.begin(), [](unsigned char a, std::byte b) {
+            return a == std::to_integer<unsigned char>(b);
+        })) << "sha1 differs at length " << length;
+    }
+}
