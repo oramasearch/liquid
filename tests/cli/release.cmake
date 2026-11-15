@@ -56,6 +56,65 @@ foreach(name IN ITEMS first second)
   endif()
 endforeach()
 
+# liquid#383: `first` verifies, and it binds a signer's name to a key only through an identity
+# chain it holds. Until it trusts the policy issuer, the policy names an unknown signer.
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
+          "${LIQUID_CLI}" release verify "${artifact}"
+  WORKING_DIRECTORY "${LIQUID_RELEASE_ROOT}/repo"
+  RESULT_VARIABLE unknown_policy_result
+  OUTPUT_VARIABLE unknown_policy_output
+  ERROR_VARIABLE unknown_policy_error)
+if(unknown_policy_result EQUAL 0 OR NOT unknown_policy_error MATCHES "unknown signer")
+  message(FATAL_ERROR
+    "release verify accepted a policy from an unknown signer: ${unknown_policy_error}")
+endif()
+
+function(trust from_name into_name)
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/${from_name}"
+            "${LIQUID_CLI}" identity show --chain
+    RESULT_VARIABLE chain_result
+    OUTPUT_VARIABLE chain_output
+    ERROR_VARIABLE chain_error)
+  if(NOT chain_result EQUAL 0 OR NOT chain_output MATCHES "^[A-Za-z0-9_-]+$")
+    message(FATAL_ERROR "identity show --chain failed: ${chain_error} ${chain_output}")
+  endif()
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/${into_name}"
+            "${LIQUID_CLI}" identity trust "${chain_output}" --json
+    RESULT_VARIABLE trust_result
+    OUTPUT_VARIABLE trust_output
+    ERROR_VARIABLE trust_error)
+  if(NOT trust_result EQUAL 0)
+    message(FATAL_ERROR "identity trust failed: ${trust_error}")
+  endif()
+  string(JSON trusted_id GET "${trust_output}" id)
+  set(trusted_id "${trusted_id}" PARENT_SCOPE)
+endfunction()
+
+trust(policy first)
+
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
+          "${LIQUID_CLI}" release verify "${artifact}"
+  WORKING_DIRECTORY "${LIQUID_RELEASE_ROOT}/repo"
+  RESULT_VARIABLE unknown_approver_result
+  OUTPUT_VARIABLE unknown_approver_output
+  ERROR_VARIABLE unknown_approver_error)
+if(unknown_approver_result EQUAL 0 OR
+   NOT unknown_approver_output MATCHES "satisfied=false" OR
+   NOT unknown_approver_output MATCHES "distinct_valid_signers=1" OR
+   NOT unknown_approver_output MATCHES "unknown_signer=${second_id}")
+  message(FATAL_ERROR
+    "release verify counted an approval from an unknown signer: ${unknown_approver_output}")
+endif()
+
+trust(second first)
+if(NOT trusted_id STREQUAL second_id)
+  message(FATAL_ERROR "identity trust reported ${trusted_id}, expected ${second_id}")
+endif()
+
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
           "${LIQUID_CLI}" release verify "${artifact}"

@@ -31,7 +31,8 @@ The complete topic index is in [`../README.md`](../README.md#library).
 filesystem and observation assertions, direct core calibration, adding a driver, and the Linux
 libfuse baseline still owed against #299. The [proof record](vfs-conformance-proof.md) preserves
 the passing cases, deliberate regression and native suite results.
-The [identity guide](identity.md) covers public document export, custody, and verification.
+The [identity guide](identity.md) covers public document export, custody, verification, and how a
+verifier obtains and trusts another person's identity chain.
 [Standalone splits](split.md) covers data ownership, retained history, identities, and cleanup.
 The [historical README record](readme-history.md) preserves earlier context and documents how
 competing front-door and index passages were reconciled.

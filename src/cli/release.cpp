@@ -261,6 +261,14 @@ auto verify(std::string_view artifact_text) -> int {
     for (const auto& missing : verified->missing) {
         std::println("missing={}", missing);
     }
+    for (const auto& unknown : verified->unknown_signers) {
+        std::println("unknown_signer={}", unknown);
+    }
+    if (!verified->unknown_signers.empty()) {
+        std::println(stderr,
+                     "hint: an unknown signer's approval counts only after its identity chain is "
+                     "trusted: liquid identity trust <chain>");
+    }
     return verified->satisfied ? 0 : 1;
 }
 
