@@ -5,7 +5,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <optional>
+#include <span>
 #include <string>
 #include <unistd.h>
 
@@ -37,7 +39,8 @@ auto example(std::string_view profile) -> liquid::attestation {
                             {"may_lease", true},
                             {"depth_remaining", std::uint64_t{2}},
                             {"model", "liquid-agent"},
-                            {"dispatcher", "taap:1:ed25519:dispatcher"}};
+                            {"dispatcher", "taap:1:ed25519:dispatcher"},
+                            {"not_after", std::uint64_t{3700}}};
     } else if (profile == "authorship/1") {
         value.subject_kind = liquid::attestation_subject_kind::drip;
         value.attributes = {{"author", "taap:1:ed25519:author"}};
@@ -201,7 +204,8 @@ TEST(AttestationRegistry, delegation_chains_only_attenuate_authority) {
                         {"may_publish", false},
                         {"may_lease", true},
                         {"depth_remaining", std::uint64_t{1}},
-                        {"dispatcher", "taap:1:ed25519:dispatcher"}};
+                        {"dispatcher", "taap:1:ed25519:dispatcher"},
+                        {"not_after", std::uint64_t{3700}}};
     EXPECT_TRUE(liquid::validate_delegation(child, &parent));
 
     auto broad = child;
@@ -271,6 +275,87 @@ TEST(AttestationRegistry, sub_delegation_reduces_depth_and_never_adds_leases) {
     EXPECT_FALSE(liquid::validate_delegation(leasing, &no_lease_parent));
     leasing.attributes[2].value = false;
     EXPECT_TRUE(liquid::validate_delegation(leasing, &no_lease_parent));
+}
+
+// docs/security/delegation-threat-model.md, must-never D4 (liquid#514): a delegation is valid only
+// inside its window, which is bounded and has an end.
+TEST(AttestationRegistry, delegation_window_refuses_expired_future_and_unbounded_delegations) {
+    const auto value = example("delegation/1");
+    const auto issued = value.at;
+    EXPECT_TRUE(liquid::check_delegation_window(value, issued));
+    EXPECT_TRUE(liquid::check_delegation_window(value, issued + std::chrono::seconds{3599}));
+
+    auto expired = liquid::check_delegation_window(value, issued + std::chrono::seconds{3600});
+    ASSERT_FALSE(expired);
+    EXPECT_EQ(expired.error().code, liquid::errc::unauthorized);
+
+    auto early = liquid::check_delegation_window(
+        value, issued - liquid::delegation_clock_skew - std::chrono::seconds{1});
+    ASSERT_FALSE(early);
+    EXPECT_EQ(early.error().code, liquid::errc::unauthorized);
+    EXPECT_TRUE(liquid::check_delegation_window(value, issued - liquid::delegation_clock_skew));
+
+    auto unbounded = value;
+    unbounded.attributes.back().value = std::uint64_t{
+        100 + static_cast<std::uint64_t>(liquid::delegation_maximum_lifetime.count()) + 1};
+    auto too_long = liquid::check_delegation_window(unbounded, issued);
+    ASSERT_FALSE(too_long);
+    EXPECT_EQ(too_long.error().code, liquid::errc::invalid_argument);
+
+    auto backwards = value;
+    backwards.attributes.back().value = std::uint64_t{100};
+    EXPECT_FALSE(liquid::check_delegation_window(backwards, issued));
+
+    auto undated = value;
+    undated.attributes.pop_back();
+    EXPECT_FALSE(liquid::check_delegation_window(undated, issued));
+    EXPECT_FALSE(liquid::validate_delegation(undated));
+}
+
+// liquid#514: the local revocation list revokes exactly the digests it lists, a missing list
+// revokes nothing, and a damaged list refuses instead of revoking nothing.
+TEST(AttestationRegistry, local_delegation_status_reads_the_revocation_list) {
+    const auto* previous = std::getenv("LIQUID_HOME");
+    const auto restore = previous ? std::optional<std::string>{previous} : std::nullopt;
+    const auto home = std::filesystem::temp_directory_path() /
+                      ("liquid-revocations-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(home);
+    std::filesystem::create_directories(home / "trust");
+    setenv("LIQUID_HOME", home.c_str(), 1);
+
+    const auto value = example("delegation/1");
+    auto listed = liquid::hash(liquid::algorithm::blake3, std::span<const std::byte>{});
+    auto other = liquid::digest{liquid::algorithm::blake3, {}};
+    ASSERT_TRUE(listed);
+    const auto status = liquid::local_delegation_status();
+
+    auto missing = status(value, *listed);
+    ASSERT_TRUE(missing) << missing.error().message;
+    EXPECT_FALSE(missing->revoked);
+
+    {
+        auto output = std::ofstream{home / "trust" / "delegation-revocations"};
+        output << "# revoked delegations\n\n" << liquid::to_string(*listed) << "  # leaked\n";
+    }
+    auto revoked = status(value, *listed);
+    ASSERT_TRUE(revoked) << revoked.error().message;
+    EXPECT_TRUE(revoked->revoked);
+    auto kept = status(value, other);
+    ASSERT_TRUE(kept) << kept.error().message;
+    EXPECT_FALSE(kept->revoked);
+
+    {
+        auto output = std::ofstream{home / "trust" / "delegation-revocations", std::ios::app};
+        output << "not a digest\n";
+    }
+    EXPECT_FALSE(status(value, other));
+
+    if (restore) {
+        setenv("LIQUID_HOME", restore->c_str(), 1);
+    } else {
+        unsetenv("LIQUID_HOME");
+    }
+    std::filesystem::remove_all(home);
 }
 
 TEST(AttestationRegistry, applies_maximum_age_freshness) {

@@ -28,7 +28,7 @@ the public encoder.
 | Profile | Subject kind | Required attributes | Optional attributes | Status policy |
 |---|---|---|---|---|
 | `org_membership/1` | actor | `organization:text`, `role:text` | `display_name:text` | revocable; fresh status evidence no older than 24 hours |
-| `delegation/1` | actor | `scopes:text_list`, `may_publish:boolean`, `may_lease:boolean`, `depth_remaining:unsigned_integer`, `dispatcher:text` | `model:text` | revocable; fresh status evidence no older than 1 hour |
+| `delegation/1` | actor | `scopes:text_list`, `may_publish:boolean`, `may_lease:boolean`, `depth_remaining:unsigned_integer`, `dispatcher:text`, `not_after:unsigned_integer` | `model:text` | revocable; fresh status evidence no older than 1 hour; valid from `at` to `not_after`, at most 30 days |
 | `authorship/1` | drip | `author:text` | none | none |
 | `review_approval/1` | change | `reviewer:text`, `approved:boolean` | `comment:text*` | none |
 | `slsa_provenance/1` | artifact | typed `buildDefinition` and `runDetails` SLSA v1 predicate | none | none |
@@ -53,12 +53,24 @@ plaintext value. A required field is satisfied by its committed value when the p
 `delegation/1` is the authority carried by an agent session. The issuer is the principal and the
 subject is the agent actor. `scopes` contains repository-relative path globs; `may_publish` and
 `may_lease` are independent capabilities; `depth_remaining` limits further delegation; `model`
-records the optional model label; and `dispatcher` names who launched the agent.
+records the optional model label; `dispatcher` names who launched the agent; and `not_after` is the
+end of its validity, in seconds since the Unix epoch.
+
+`check_delegation_window(value, now)` refuses a delegation that has expired (`now` is at or past
+`not_after`) or was issued more than `delegation_clock_skew` (5 minutes) in the future, with
+`errc::unauthorized`, and one without `not_after` or valid for longer than
+`delegation_maximum_lifetime` (30 days), with `errc::invalid_argument` (liquid #514). Revocation is
+answered by a `delegation_status_resolver`, given the delegation and its digest. There is no
+default: a session without a resolver, or whose resolver fails, is refused.
+`local_delegation_status()` reads this machine's list, `$LIQUID_HOME/trust/delegation-revocations`
+(one delegation digest per line, `#` comments), on every call; a missing file revokes nothing and a
+malformed one refuses every delegation.
 
 `validate_delegation(child, parent)` enforces attenuation. Every child scope must be contained by
 a parent scope, a denied capability cannot become allowed, and remaining depth must decrease.
-Session creation also verifies the signature, current revocation evidence, and that the local
-principal issued the delegation. Private writes need no publish capability. Scope and capability
+Session creation verifies the window, the signature, the status the caller's resolver returns, and
+that the local principal issued the delegation; every lease and publish checks the window and the
+status again, so a revoked or expired delegation stops a running session. Private writes need no publish capability. Scope and capability
 checks happen before lease or base validation, and version-3 signed drips record the delegation
 digest and agent actor. Versions 1 and 2 remain readable.
 

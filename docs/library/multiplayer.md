@@ -96,9 +96,12 @@ Delegated sessions are their own trust boundary. The threat model in
 lists every must-never for delegation acceptance, session authority, and session join and leave,
 where each is enforced, and the test that proves it. What holds: only a complete `delegation/1`
 signed by this repository's own principal starts a session, and publish and lease are refused
-outside the delegation's scopes and capabilities, at both ends of a move. What does not hold yet:
-revocation and expiry are not checked
-([#514](https://github.com/oramasearch/liquid/issues/514)), a delegation is not bound to the agent,
+outside the delegation's scopes and capabilities, at both ends of a move. A delegation has a
+bounded validity window and its revocation status is asked through the caller's
+`delegation_status_resolver` when the session is forked and before every lease and publish, so a
+revoked or expired delegation neither starts nor continues a session
+([#514](https://github.com/oramasearch/liquid/issues/514)); the CLI uses this machine's revocation
+list, `$LIQUID_HOME/trust/delegation-revocations`. What does not hold yet: a delegation is not bound to the agent,
 dispatcher or repository using it ([#515](https://github.com/oramasearch/liquid/issues/515)),
 `open_session` trusts stored session authority without verifying it again
 ([#516](https://github.com/oramasearch/liquid/issues/516)), and sub-delegation containment
