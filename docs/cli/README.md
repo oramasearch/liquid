@@ -281,8 +281,9 @@ liquid secret seal \
   --kid lake-key-2026-09 --cluster production < database-password.txt
 ```
 
-`--value <text>`, `--value-file <path>`, and stdin are mutually exclusive inputs; omitting both
-flags selects stdin. Without `--out`, seal writes one base64 line. With `--out`, it writes raw
+The value comes from `--value-file <path>` or, without it, from stdin. `--value <text>` is refused
+(L-12, liquid#394): a value on the command line is readable by every local user in `ps` and
+`/proc/<pid>/cmdline`, and lands in shell history. Without `--out`, seal writes one base64 line. With `--out`, it writes raw
 canonical CBOR and writes nothing to stdout.
 
 Break-glass unseal accepts a raw record file, `-` for raw-CBOR or base64 stdin, or an inline base64
