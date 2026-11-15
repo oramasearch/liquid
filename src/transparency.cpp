@@ -445,6 +445,25 @@ auto evidence_record::verify(std::span<const std::byte> record,
             failure.message = prefix + failure.message;
             return std::unexpected(std::move(failure));
         }
+        // A renewal proves its predecessor existed only while that predecessor could still be
+        // trusted (L-37, liquid#390): it must be issued no earlier than the token it wraps, while
+        // that token's signing certificate was still valid, and never in the future. Otherwise a
+        // token backdated with an expired or compromised TSA key, wrapped by an honest renewal,
+        // would prove a false existence time.
+        const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        if (verified->generated_at > now + std::chrono::minutes{5}) {
+            return std::unexpected(corrupt("archive timestamp " + std::to_string(index + 1) +
+                                           " is in the future"));
+        }
+        if (index > 0) {
+            const auto& previous = output.archive_timestamps.back().timestamp;
+            if (verified->generated_at < previous.generated_at ||
+                verified->generated_at > previous.signer.not_after) {
+                return std::unexpected(corrupt(
+                    "archive timestamp " + std::to_string(index + 1) +
+                    " was not issued while the timestamp it renews could still be trusted"));
+            }
+        }
         output.archive_timestamps.push_back(archive_timestamp_verification{
             .sequence = index + 1,
             .encoded = (*archive_values)[index].encoded,
