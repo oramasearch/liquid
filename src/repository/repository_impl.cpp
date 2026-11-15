@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "liquid/repository.hpp"
+#include "repository/ref_name.hpp"
 #include "liquid/store.hpp"
 
 #include <algorithm>
@@ -3804,8 +3805,9 @@ runtime::task<void> import_sync_item(sync_import_state& state, const sync_item& 
                                           state.device_id,
                                           item);
     case sync_item_kind::reference:
-        if (item.name.empty()) {
-            co_return std::unexpected(failure(errc::invalid_argument, "reference name is empty"));
+        if (!repository_detail::valid_ref_name(item.name)) {
+            co_return std::unexpected(failure(
+                errc::invalid_argument, "invalid reference name (git check-ref-format)", item.name));
         }
         state.imported_refs.emplace_back(item.name, item.reference);
         co_return result<void>{};

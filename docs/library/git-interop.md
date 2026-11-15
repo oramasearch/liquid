@@ -132,3 +132,13 @@ Export writes every imported ref, so those commits are retained in the exported 
 repository when needed. `liquid export git <path> [ref]` exports the repository rooted at the
 current directory. The client uses the normal command table and prints import counts and every
 reported export degradation.
+
+## Names that become paths (L-38, liquid#424 and liquid#387)
+
+A reference name follows `git check-ref-format` (`repository_detail::valid_ref_name`). Its
+components are separated by single `/`, and none is empty, starts with `.` or ends with `.lock`. It
+holds no `..`, no `@{`, and none of space, control characters or `~ ^ : ? * [ \`, and it is not `@`
+alone. A repository refuses another name when it is stored (sync included). An export refuses one
+it finds, so no name can write outside the export's `refs/` directory. A tree entry name exported
+to Git is one path component: never empty, `.` or `..`, and never holding `/` or NUL.
+

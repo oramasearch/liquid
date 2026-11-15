@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "liquid/git.hpp"
+#include "repository/ref_name.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -78,6 +79,13 @@ auto write_tree(repository& source,
             id = *written;
             mode = 040000;
             degradations.insert("nested repositories flattened as empty Git subtrees");
+        }
+        // A tree entry name is one path component (liquid#387): never empty, `.`, `..`, or one
+        // holding `/` or NUL, which Git would read as another path.
+        if (entry.name.empty() || entry.name == "." || entry.name == ".." ||
+            entry.name.find('/') != std::string::npos || entry.name.find('\0') != std::string::npos) {
+            co_return std::unexpected(
+                error{errc::invalid_argument, "invalid tree entry name", entry.name});
         }
         add(payload, octal(mode));
         add(payload, " ");
@@ -174,6 +182,11 @@ export_git(repository& source, std::filesystem::path target, std::string ref) {
         if (found == ids.end())
             co_return std::unexpected(
                 error{errc::internal, "exported ref is missing", source_ref.name});
+        // A stored name that is not a valid Git ref is never written as a path (liquid#424).
+        if (!repository_detail::valid_ref_name(source_ref.name)) {
+            co_return std::unexpected(
+                error{errc::invalid_argument, "invalid reference name", source_ref.name});
+        }
         auto name = source_ref.name;
         if (name.starts_with("tags/"))
             name = "refs/tags/" + name.substr(5);
