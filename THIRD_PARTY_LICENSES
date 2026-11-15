@@ -86,7 +86,7 @@ Spack package metadata export                                                   
 HIP test patch (hip.patch)                                                                                  -                                            MIT                                                                                         test fixture (tests/import/fixtures/hip.patch), a patch from ROCm HIP         https://github.com/ROCm/HIP
 
 automerge-cpp: automerge-cpp is Steve Sperandeo's MIT library, public at https://github.com/homer6/automerge-cpp; liquid pins a copy of it. Its own third-party notices (for example the nlohmann/json copy under upstream/json) are in that repository.
-oramacore-cpp: oramacore-cpp is Orama Search Inc.'s own library, released with this stack under the same MIT License as this repository.
+oramacore-cpp: oramacore-cpp is OramaSearch, Inc.'s own library, released with this stack under the same MIT License as this repository.
 BLAKE3 (C implementation): BLAKE3 is offered under CC0-1.0, Apache-2.0 or Apache-2.0 WITH LLVM-exception; liquid uses it under Apache-2.0, whose text is below.
 libfuse (inside the AppImage runtime): The vendored AppImage runtime statically links libfuse (LGPL-2.1). The runtime's complete source, including the libfuse it builds, is public at https://github.com/AppImage/type2-runtime at the commit above, which also lets a recipient relink it as the LGPL requires.
 macFUSE (macOS, optional): macFUSE is optional on macOS and is never bundled. Its license restricts redistribution, so a liquid package for macOS must not include it; users install it themselves.
@@ -208,7 +208,7 @@ https://github.com/oramasearch/oramacore-cpp
 --------------------------------------------------------------------------------
 MIT License
 
-Copyright (c) 2026 Orama Search Inc.
+Copyright (c) 2026 OramaSearch, Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

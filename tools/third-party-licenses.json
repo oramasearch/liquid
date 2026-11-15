@@ -42,7 +42,7 @@
    "use": "submodule, pinned; not built by liquid's CMake today",
    "source": "https://github.com/oramasearch/oramacore-cpp",
    "file": "LICENSE",
-   "note": "oramacore-cpp is Orama Search Inc.'s own library, released with this stack under the same MIT License as this repository."
+   "note": "oramacore-cpp is OramaSearch, Inc.'s own library, released with this stack under the same MIT License as this repository."
   },
   {
    "name": "Boost (CMake release: json, url, assert, config, core, mp11, system, throw_exception, type_traits, winapi)",
