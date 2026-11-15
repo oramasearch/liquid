@@ -42,7 +42,10 @@ platforms without daemon transport use the public repository operations directly
 `session.cpp` starts, publishes, and discards private replicas through the public session API.
 `attestation.cpp` renders delegation attributes, and `repo.cpp` renders their signed drip digest.
 `identity.cpp` exports the public signed document with `show --document`, using the public signer
-accessor and canonical codec, and selects software, FIDO2, or PIV rotation custody. `sign.cpp` signs a canonical digest
+accessor and canonical codec, and selects software, FIDO2, or PIV rotation custody. It also
+installs the terminal passphrase prompt (echo off, never an argument) that libliquid asks when an
+identity's wrapping key has passphrase custody, reports the wrapping-key custody in `show`, warns
+when only file permissions protect the key, and moves it with `custody --to` (liquid #402). `sign.cpp` signs a canonical digest
 with the active backend. `release.cpp` persists signed release policies and approvals and renders
 the distinct-signer threshold result.
 

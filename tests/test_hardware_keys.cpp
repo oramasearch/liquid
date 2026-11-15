@@ -867,6 +867,8 @@ auto expect_public_document(liquid::signer& signer, std::span<const std::byte> s
 }
 
 TEST(IdentityDocument, SoftwareOutputExcludesPrivateKey) {
+    // File custody keeps the wrapping key readable here, so the test can open the sealed key.
+    set_environment("LIQUID_IDENTITY_KEY_CUSTODY", "file");
     auto signer = open_identity("document-software");
     const auto home = liquid::test::fixture_path("liquid-hardware-document-software");
     const auto root = home / "identity";

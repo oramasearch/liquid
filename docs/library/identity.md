@@ -266,10 +266,59 @@ performs no device I/O.
 
 Identities live at `$LIQUID_HOME/identity` or `~/.liquid/identity`. `<fingerprint>.key` holds the
 encrypted active private key, `<fingerprint>.pub` the active public key, and
-`<fingerprint>.identity.cbor` the current document. The owner-only local wrapping-key provider and
-software private key are never logged; `signer` wipes its secret material on destruction.
-Hardware `.key` records contain only the public credential descriptor needed to find the token key
-again.
+`<fingerprint>.identity.cbor` the current document. The wrapping key and software private key are
+never logged; `signer` wipes its secret material on destruction. Hardware `.key` records contain
+only the public credential descriptor needed to find the token key again.
+
+### How the software signing key is protected at rest (liquid #402)
+
+A software `<fingerprint>.key` is sealed (XChaCha20-Poly1305) under a random 32-byte **wrapping
+key**. What protects the signing key is therefore whatever holds the wrapping key, its
+**custody**:
+
+| Custody | Where the wrapping key is | What an attacker who reads the identity directory needs |
+|---|---|---|
+| `passphrase` | `.wrapping.sealed`, sealed under an Argon2i key (64 MiB, 3 passes) derived from a passphrase | the passphrase |
+| `keychain` (macOS) | `.wrapping.sealed`, sealed under a random key held in the login Keychain (service `dev.liquid.custody`, not synchronised) | access to the unlocked Keychain as the user |
+| a key custody URI (`tpm:pcrs=0,7`, `age:...`, `aws-kms:...`, `gcp-kms:...`, `azure-kv:...`, `lake:...`) | `.wrapping.sealed`, sealed by that provider ([encryption](encryption.md)) | what that provider requires |
+| `file` | `.wrapping.key`, **in clear**, beside the key | nothing more: **the signing key is protected only by file permissions** |
+
+The custody is chosen when the identity is created: `identity_custody_options::custody`, else
+`LIQUID_IDENTITY_KEY_CUSTODY`, else `keychain` on macOS and `passphrase` elsewhere. A passphrase is
+read from the file named by `LIQUID_IDENTITY_PASSPHRASE_FILE` (it must be owner-only; one trailing
+newline is dropped), else from the injected `identity_custody_options::passphrase` source; the CLI
+installs a source that prompts on the terminal without echo. A passphrase is never taken from a
+command-line argument. With no passphrase available, creation fails with `errc::unauthorized` and
+writes no key. A wrong passphrase fails the same way. The signer keeps the unsealed wrapping key in
+memory, as it keeps the signing key, so a rotation in the same process does not ask again.
+
+`file` custody is an explicit opt-in for headless hosts and test runs that have no terminal and no
+other custody; the test suite sets `LIQUID_IDENTITY_KEY_CUSTODY=file` for every test process. It is
+what every identity created before #402 has. Such identities keep loading unchanged, `liquid
+identity show` reports `wrapping_key_custody=file` and `file_permissions_only=true` and prints a
+warning, and `liquid identity custody --to <custody>` (`migrate_local_identity_custody`) seals the
+existing wrapping key under another custody and deletes `.wrapping.key`. The signing key and the
+identity documents do not change. Deleting a file does not erase its old blocks from the device;
+treat a key that was ever in `file` custody on a shared or lost disk as exposed and rotate it.
+Moving away from `keychain` leaves the Keychain item in place.
+
+Every identity file (key, public key, documents, wrapping key, trusted chains) is written whole
+under a random temporary name created with `open(O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)`,
+synced, and renamed into place, so it never exists with a wider mode and a crash leaves either the
+old file or the new one. On Windows the temporary file is created by `CreateFileW` with a protected
+DACL granting full control to the current user only (`D:P(A;;FA;;;<user SID>)`) and moved into
+place with `MoveFileExW`. The identity directory is set to mode 0700 on POSIX. A clear
+`.wrapping.key` or a passphrase file with any group or other permission bit is refused.
+
+Linux has no desktop-keystore custody yet: the Secret Service is a D-Bus API, and liquid has no
+D-Bus client. Passphrase or TPM custody are the Linux choices.
+
+Tests: `IdentityCustody.KeyFilesNeverExistWithAWiderMode`,
+`IdentityCustody.FileCustodyIsReportedAsFilePermissionsOnly`,
+`IdentityCustody.PassphraseCustodyStoresNoClearWrappingKey`,
+`IdentityCustody.PassphraseFileMustBeOwnerOnly`, `IdentityCustody.InjectedPassphraseSourceIsAskedOnce`,
+and `IdentityCustody.FileCustodyMigratesToPassphrase`. The Keychain provider has no automated test:
+it needs an unlocked login Keychain.
 
 Creating the local identity is atomic
 ([#349](https://github.com/oramasearch/liquid/issues/349)). `local_signer` reads and creates it

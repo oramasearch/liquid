@@ -67,6 +67,15 @@ authenticated pusher, never to a record's claimed author (#508).
 double-hashed form is rejected. Proof is independent OpenSSL vectors and protocol-conforming doubles;
 no physical authenticator run exists yet ([`identity.md`](identity.md)).
 
+**Identity key custody (#402).** Every identity file is created owner-only and atomically (mode
+0600 through `open(O_CREAT|O_EXCL|O_NOFOLLOW)`, or an owner-only DACL on Windows, then a rename).
+A new software identity seals its wrapping key under a passphrase (`LIQUID_IDENTITY_PASSPHRASE_FILE`
+or a terminal prompt), the macOS Keychain, or a key custody URI (default: `keychain` on macOS,
+`passphrase` elsewhere); a clear `.wrapping.key`, which leaves the key protected only by file
+permissions, is written only for explicit `file` custody. Older identities keep loading;
+`liquid identity show` reports and warns about their custody, and `liquid identity custody --to`
+migrates them ([`identity.md`](identity.md#how-the-software-signing-key-is-protected-at-rest-liquid-402)).
+
 **Public API.** The public error, digest, identity document codec, signature decoder, and release
 approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers
 ([`api-map.md`](api-map.md), [`hash-agility.md`](hash-agility.md), [`identity.md`](identity.md),
@@ -594,6 +603,10 @@ Git objects and protobuf. Their first runs found five defects, fixed in the same
   identity that recovered from a compromise without its old key's
   signature is trusted elsewhere only by `liquid identity trust --accept-compromise-rotation`.
   Who may issue a release policy or a hot-update patch is still open (#384, #388).
+- A host without a terminal, a passphrase file or another custody cannot create a software
+  identity until `LIQUID_IDENTITY_KEY_CUSTODY` is set (#402); `file` is the explicit opt-in for
+  file-permission-only protection. Linux has no Secret Service custody (no D-Bus client), and the
+  macOS Keychain custody has no automated test.
 - The executable-aware delta algorithm id is reserved and unused.
 - The data-branch reflink fast path requires local cluster control metadata.
 - The projection page has no recorded credentialed Apple notarisation proof; image booting is
