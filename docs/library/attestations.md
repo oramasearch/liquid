@@ -67,8 +67,15 @@ default: a session without a resolver, or whose resolver fails, is refused.
 (one delegation digest per line, `#` comments), on every call; a missing file revokes nothing and a
 malformed one refuses every delegation.
 
-`validate_delegation(child, parent)` enforces attenuation. Every child scope must be contained by
-a parent scope, a denied capability cannot become allowed, and remaining depth must decrease.
+`validate_delegation(child, parent)` enforces attenuation and links the two (liquid #517). Every
+child scope must equal a parent scope or lie under a parent `P/**` (or `**`) scope; containment is
+decided conservatively, so `src/*.cpp` admits only `src/*.cpp` itself. A denied capability cannot
+become allowed, remaining depth must decrease, the child must be issued by the parent's subject,
+name the same repository, and be issued no earlier and end no later than its parent. A session
+acting under a chain passes the links above its delegation, root first, in
+`session_options::chain`; `fork_session` validates every link against the one before it, binds and
+verifies each, and requires the root to be the principal's. An intermediate link's issuer must have
+its identity chain in this machine's identity store.
 Session creation verifies the window, the signature, the status the caller's resolver returns, and
 that the local principal issued the delegation; every lease and publish checks the window and the
 status again, so a revoked or expired delegation stops a running session. Private writes need no publish capability. Scope and capability

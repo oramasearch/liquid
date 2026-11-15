@@ -100,9 +100,9 @@ list, `$LIQUID_HOME/trust/delegation-revocations`. A delegation is bound to the 
 one repository it may be used in, so `drip.by` and `liquid blame` name the delegated agent
 ([#515](https://github.com/oramasearch/liquid/issues/515)); `liquid session start <delegation> --as
 <agent>` starts a session as that agent. What does not hold yet: `open_session` trusts stored session authority without verifying it again
-([#516](https://github.com/oramasearch/liquid/issues/516)), and sub-delegation containment
-over-approximates scopes and does not link the chain
-([#517](https://github.com/oramasearch/liquid/issues/517)).
+([#516](https://github.com/oramasearch/liquid/issues/516)). Sub-delegation containment is
+conservative and every link of a chain (`session_options::chain`) is linked, validated and verified
+when a session acts ([#517](https://github.com/oramasearch/liquid/issues/517)).
 
 ## How to verify
 

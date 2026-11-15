@@ -34,6 +34,9 @@ auto example(std::string_view profile) -> liquid::attestation {
         value.attributes = {{"organization", "liquid"}, {"role", "maintainer"}};
     } else if (profile == "delegation/1") {
         value.subject_kind = liquid::attestation_subject_kind::actor;
+        value.issuer = liquid::actor{.taap_id = "taap:1:ed25519:principal"};
+        value.subject =
+            *liquid::delegation_subject(liquid::actor{.taap_id = "taap:1:ed25519:agent"});
         value.attributes = {{"scopes", std::vector<std::string>{"src/**"}},
                             {"may_publish", true},
                             {"may_lease", true},
@@ -125,6 +128,16 @@ auto example(std::string_view profile) -> liquid::attestation {
     return value;
 }
 
+// A sub-delegation of `parent`: issued by the agent `parent` delegates to, to a further agent,
+// with the parent's attributes until a test changes them.
+auto child_of(const liquid::attestation& parent) -> liquid::attestation {
+    auto child = parent;
+    child.issuer = liquid::actor{.taap_id = "taap:1:ed25519:agent"};
+    child.subject =
+        *liquid::delegation_subject(liquid::actor{.taap_id = "taap:1:ed25519:subagent"});
+    return child;
+}
+
 auto sign(liquid::attestation value) -> liquid::attestation {
     auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
     EXPECT_TRUE(signer) << signer.error().message;
@@ -200,7 +213,7 @@ TEST(AttestationRegistry, rejects_unknown_profiles) {
 
 TEST(AttestationRegistry, delegation_chains_only_attenuate_authority) {
     auto parent = example("delegation/1");
-    auto child = parent;
+    auto child = child_of(parent);
     child.attributes = {{"scopes", std::vector<std::string>{"src/library/**"}},
                         {"may_publish", false},
                         {"may_lease", true},
@@ -227,7 +240,7 @@ TEST(AttestationRegistry, delegation_refuses_other_profiles_and_incomplete_autho
     EXPECT_FALSE(liquid::validate_delegation(other));
 
     const auto parent = example("delegation/1");
-    auto child = parent;
+    auto child = child_of(parent);
     child.attributes[3].value = std::uint64_t{1};
     EXPECT_TRUE(liquid::validate_delegation(child, &parent));
     EXPECT_FALSE(liquid::validate_delegation(child, &other));
@@ -255,20 +268,20 @@ TEST(AttestationRegistry, delegation_refuses_other_profiles_and_incomplete_autho
 TEST(AttestationRegistry, sub_delegation_reduces_depth_and_never_adds_leases) {
     const auto parent = example("delegation/1");
 
-    const auto same_depth = parent;
+    const auto same_depth = child_of(parent);
     EXPECT_FALSE(liquid::validate_delegation(same_depth, &parent));
 
-    auto deeper = parent;
+    auto deeper = child_of(parent);
     deeper.attributes[3].value = std::uint64_t{3};
     EXPECT_FALSE(liquid::validate_delegation(deeper, &parent));
 
-    auto reduced = parent;
+    auto reduced = child_of(parent);
     reduced.attributes[3].value = std::uint64_t{1};
     EXPECT_TRUE(liquid::validate_delegation(reduced, &parent));
 
     auto exhausted = parent;
     exhausted.attributes[3].value = std::uint64_t{0};
-    const auto from_exhausted = exhausted;
+    const auto from_exhausted = child_of(exhausted);
     EXPECT_FALSE(liquid::validate_delegation(from_exhausted, &exhausted));
 
     auto no_lease_parent = parent;
@@ -365,6 +378,66 @@ TEST(AttestationRegistry, local_delegation_status_reads_the_revocation_list) {
         unsetenv("LIQUID_HOME");
     }
     std::filesystem::remove_all(home);
+}
+
+// docs/security/delegation-threat-model.md, must-never D6 (liquid#517): a sub-delegation's scopes
+// never match a path its parent's scopes do not. Containment is decided conservatively, so a
+// wildcard prefix never admits a child.
+TEST(AttestationRegistry, sub_delegation_scopes_are_contained_conservatively) {
+    const auto scoped = [](std::vector<std::string> parent_scopes,
+                           std::vector<std::string> child_scopes) {
+        auto parent = example("delegation/1");
+        parent.attributes[0].value = std::move(parent_scopes);
+        auto child = child_of(parent);
+        child.attributes[0].value = std::move(child_scopes);
+        child.attributes[3].value = std::uint64_t{1};
+        return liquid::validate_delegation(child, &parent).has_value();
+    };
+    EXPECT_FALSE(scoped({"src/*.cpp"}, {"src/secret/**"}));
+    EXPECT_FALSE(scoped({"src/*"}, {"src/**"}));
+    EXPECT_FALSE(scoped({"src/a?"}, {"src/a/**"}));
+    EXPECT_FALSE(scoped({"src/**"}, {"srcs/**"}));
+    EXPECT_FALSE(scoped({"src/**"}, {"**"}));
+    EXPECT_FALSE(scoped({"src/*.cpp"}, {"src/main.cpp"}));
+
+    EXPECT_TRUE(scoped({"src/*.cpp"}, {"src/*.cpp"}));
+    EXPECT_TRUE(scoped({"src/**"}, {"src/secret/**", "src/main.cpp", "src/*.cpp"}));
+    EXPECT_TRUE(scoped({"**"}, {"docs/*.md"}));
+    EXPECT_TRUE(scoped({"docs/**", "src/**"}, {"docs/guide.md", "src/lib/**"}));
+}
+
+// docs/security/delegation-threat-model.md, must-never D7 (liquid#517): a sub-delegation is linked
+// to its parent: issued by the parent's subject, for the same repository, inside the parent's
+// validity.
+TEST(AttestationRegistry, sub_delegation_must_be_linked_to_its_parent) {
+    const auto parent = example("delegation/1");
+    auto child = child_of(parent);
+    child.attributes[3].value = std::uint64_t{1};
+    EXPECT_TRUE(liquid::validate_delegation(child, &parent));
+
+    auto unlinked = child;
+    unlinked.issuer = liquid::actor{.taap_id = "taap:1:ed25519:stranger"};
+    EXPECT_FALSE(liquid::validate_delegation(unlinked, &parent));
+
+    auto self_issued = child;
+    self_issued.issuer = parent.issuer;
+    EXPECT_FALSE(liquid::validate_delegation(self_issued, &parent));
+
+    auto elsewhere = child;
+    std::ranges::find(
+        elsewhere.attributes, std::string_view{"repository"}, &liquid::attestation_attribute::name)
+        ->value = std::string{"ffeeddccbbaa99887766554433221100"};
+    EXPECT_FALSE(liquid::validate_delegation(elsewhere, &parent));
+
+    auto earlier = child;
+    earlier.at = parent.at - std::chrono::seconds{1};
+    EXPECT_FALSE(liquid::validate_delegation(earlier, &parent));
+
+    auto outliving = child;
+    std::ranges::find(
+        outliving.attributes, std::string_view{"not_after"}, &liquid::attestation_attribute::name)
+        ->value = std::uint64_t{3701};
+    EXPECT_FALSE(liquid::validate_delegation(outliving, &parent));
 }
 
 TEST(AttestationRegistry, applies_maximum_age_freshness) {

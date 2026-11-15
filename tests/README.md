@@ -201,7 +201,9 @@ and a path move. Its delegation cases prove the holding must-nevers of
 refused, a missing, unanswered, revoked or stale status and an expired, future-dated or unbounded
 delegation are refused at fork and stop a running session's lease and publish (liquid #514), a
 delegation is refused for another agent, a dispatcher that is not its issuer and another
-repository, and the agent it names is the one history records (liquid #515),
+repository, and the agent it names is the one history records (liquid #515), a chain is refused when a link
+broadens, does not reduce depth, is not linked or is revoked, or has no principal root, and a valid
+chain's publish names its last agent (liquid #517),
 sessions without a capability cannot publish or lease, leases and moves stay inside the
 scopes, finished sessions cannot be reused, and one session cannot release another's lease. `test_daemon.cpp` checks that the same attribution crosses the local wire, while
 `test_plugin_abi.c` is a real C plugin descriptor whose presence, lease, and attribution callbacks
