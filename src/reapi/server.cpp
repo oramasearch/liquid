@@ -18,11 +18,14 @@
 
 #include <boost/capy/io/any_stream.hpp>
 #include <boost/corosio/endpoint.hpp>
+#include <boost/corosio/openssl_stream.hpp>
 #include <boost/corosio/tcp_acceptor.hpp>
 #include <boost/corosio/tcp_socket.hpp>
+#include <boost/corosio/tls_context.hpp>
 
 #include "http2/connection.hpp"
 #include "http2/grpc.hpp"
+#include "liquid/listener.hpp"
 #include "liquid/store.hpp"
 #include "liquid/workers.hpp"
 #include "objects/records.hpp"
@@ -75,6 +78,8 @@ struct server_state {
     std::filesystem::path action_cache;
     std::string instance;
     std::shared_ptr<workers::scheduler> executions;
+    // When non-empty, every RPC must carry `authorization: Bearer <token>` (liquid#415).
+    std::string bearer_token;
     std::mutex mutex;
     std::map<std::string, std::vector<std::byte>> partial_writes;
 };
@@ -1284,9 +1289,19 @@ runtime::task<void> dispatch(http2::connection& connection,
     co_return co_await send_status(connection, stream, 12, "method is not implemented");
 }
 
-runtime::task<void> session(std::shared_ptr<server_state> state,
-                            std::shared_ptr<boost::corosio::tcp_socket> socket) {
-    auto stream = boost::capy::any_stream{socket.get()};
+// gRPC UNAUTHENTICATED: the request carried no valid credentials.
+constexpr auto unauthenticated_status = std::uint32_t{16};
+
+auto authenticated(const server_state& state, std::span<const http2::header_field> headers)
+    -> bool {
+    if (state.bearer_token.empty()) {
+        return true;
+    }
+    const auto authorization = header(headers, "authorization");
+    return authorization && bearer_authorized(state.bearer_token, *authorization);
+}
+
+runtime::task<void> serve_connection(server_state& state, boost::capy::any_stream& stream) {
     auto connection = http2::connection{stream, http2::endpoint_role::server};
     auto started = co_await connection.start();
     if (!started) {
@@ -1300,6 +1315,16 @@ runtime::task<void> session(std::shared_ptr<server_state> state,
         auto headers = co_await connection.receive_headers(*stream_id);
         if (!headers) {
             co_return std::unexpected(headers.error());
+        }
+        if (!authenticated(state, *headers)) {
+            // Refused before the request body is read; the connection is then closed, so an
+            // unauthenticated peer can neither write nor make the server buffer anything.
+            auto refused = co_await send_status(
+                connection, *stream_id, unauthenticated_status, "missing or invalid bearer token");
+            if (!refused) {
+                co_return std::unexpected(refused.error());
+            }
+            co_return co_await connection.goaway();
         }
         auto method = header(*headers, ":path");
         auto content_type = header(*headers, "content-type");
@@ -1315,7 +1340,7 @@ runtime::task<void> session(std::shared_ptr<server_state> state,
             co_return std::unexpected(body.error());
         }
         if (*method == write_method) {
-            auto handled = co_await handle_write(connection, *stream_id, *state, *body);
+            auto handled = co_await handle_write(connection, *stream_id, state, *body);
             if (!handled) {
                 co_return std::unexpected(handled.error());
             }
@@ -1329,11 +1354,73 @@ runtime::task<void> session(std::shared_ptr<server_state> state,
             }
             continue;
         }
-        auto handled = co_await dispatch(connection, *stream_id, *state, *method, *message);
+        auto handled = co_await dispatch(connection, *stream_id, state, *method, *message);
         if (!handled) {
             co_return std::unexpected(handled.error());
         }
     }
+}
+
+runtime::task<void> session(std::shared_ptr<server_state> state,
+                            std::shared_ptr<boost::corosio::tcp_socket> socket,
+                            std::shared_ptr<boost::corosio::tls_context> tls) {
+    if (!tls) {
+        auto stream = boost::capy::any_stream{socket.get()};
+        co_return co_await serve_connection(*state, stream);
+    }
+#if defined(BOOST_COROSIO_HAS_OPENSSL)
+    auto secure = boost::corosio::openssl_stream{socket.get(), *tls};
+    auto [handshake_error] = co_await secure.handshake(boost::corosio::openssl_stream::server);
+    if (handshake_error) {
+        co_return std::unexpected(
+            server_error(errc::unauthorized, handshake_error.message(), "REAPI TLS handshake"));
+    }
+    auto negotiated = http2::validate_tls_protocol(secure);
+    if (!negotiated) {
+        co_return std::unexpected(negotiated.error());
+    }
+    auto stream = boost::capy::any_stream{&secure};
+    co_return co_await serve_connection(*state, stream);
+#else
+    co_return std::unexpected(
+        server_error(errc::unsupported, "TLS support is unavailable in this build", "REAPI"));
+#endif
+}
+
+// The TLS context of a listener: its certificate chain and key, HTTP/2 by ALPN, and, with a client
+// certificate authority, a required client certificate that authority signs (mutual TLS).
+auto make_tls_context(const listener_security& security)
+    -> result<std::shared_ptr<boost::corosio::tls_context>> {
+    if (!security.tls_certificate || !security.tls_key) {
+        return std::shared_ptr<boost::corosio::tls_context>{};
+    }
+#if defined(BOOST_COROSIO_HAS_OPENSSL)
+    auto tls = std::make_shared<boost::corosio::tls_context>();
+    const auto certificate = security.tls_certificate->string();
+    if (const auto code = tls->use_certificate_chain_file(certificate)) {
+        return std::unexpected(server_error(errc::invalid_argument, code.message(), certificate));
+    }
+    const auto key = security.tls_key->string();
+    if (const auto code = tls->use_private_key_file(key, boost::corosio::tls_file_format::pem)) {
+        return std::unexpected(server_error(errc::invalid_argument, code.message(), key));
+    }
+    if (const auto code = tls->set_alpn({"h2"})) {
+        return std::unexpected(server_error(errc::io, code.message(), "REAPI TLS ALPN"));
+    }
+    if (security.client_certificate_authority) {
+        const auto authority = security.client_certificate_authority->string();
+        if (const auto code = tls->load_verify_file(authority)) {
+            return std::unexpected(server_error(errc::invalid_argument, code.message(), authority));
+        }
+        if (const auto code = tls->set_verify_mode(boost::corosio::tls_verify_mode::require_peer)) {
+            return std::unexpected(server_error(errc::io, code.message(), "REAPI client TLS"));
+        }
+    }
+    return tls;
+#else
+    return std::unexpected(
+        server_error(errc::unsupported, "TLS support is unavailable in this build", "REAPI"));
+#endif
 }
 
 } // namespace
@@ -1349,6 +1436,10 @@ runtime::task<void> serve_reapi_impl(reapi_serve_options options,
         co_return std::unexpected(
             server_error(errc::invalid_argument, "REAPI listen port must be non-zero"));
     }
+    auto tls = make_tls_context(options.security);
+    if (!tls) {
+        co_return std::unexpected(tls.error());
+    }
     auto opened = co_await store::open(options.store_directory);
     if (!opened) {
         co_return std::unexpected(opened.error());
@@ -1363,6 +1454,7 @@ runtime::task<void> serve_reapi_impl(reapi_serve_options options,
                                                 std::move(action_cache),
                                                 std::move(options.instance_name),
                                                 std::move(executions));
+    state->bearer_token = std::move(options.security.bearer_token);
     const auto executor = co_await boost::capy::this_coro::executor;
     auto acceptor = boost::corosio::tcp_acceptor{executor.context(), endpoint};
     for (;;) {
@@ -1372,7 +1464,7 @@ runtime::task<void> serve_reapi_impl(reapi_serve_options options,
             co_return std::unexpected(
                 server_error(errc::io, accept_error.message(), options.listen));
         }
-        runtime::spawn(session(state, std::move(socket)), [](result<void> outcome) {
+        runtime::spawn(session(state, std::move(socket), *tls), [](result<void> outcome) {
             if (!outcome && outcome.error().message != "End of file" &&
                 outcome.error().message != "eof" &&
                 outcome.error().message != "peer has sent GOAWAY") {
@@ -1386,6 +1478,19 @@ runtime::task<void> serve_reapi_impl(reapi_serve_options options,
 }
 
 runtime::task<void> serve_reapi(reapi_serve_options options) {
+    auto endpoint = boost::corosio::endpoint{};
+    if (const auto code = boost::corosio::parse_endpoint(options.listen, endpoint)) {
+        co_return std::unexpected(
+            server_error(errc::invalid_argument, code.message(), options.listen));
+    }
+    const auto loopback = endpoint.is_v4() ? endpoint.v4_address().is_loopback()
+                                           : endpoint.v6_address().is_loopback();
+    auto secured = validate_listener_security(loopback, options.security);
+    if (!secured) {
+        auto refused = secured.error();
+        refused.context = options.listen + ": " + refused.context;
+        co_return std::unexpected(std::move(refused));
+    }
     co_return co_await serve_reapi_impl(std::move(options), {});
 }
 

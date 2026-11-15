@@ -100,6 +100,7 @@ auto status_code(std::span<const http2::header_field> headers) -> result<std::ui
     }
     const auto code = parsed->code == 5    ? errc::not_found
                       : parsed->code == 7  ? errc::unauthorized
+                      : parsed->code == 16 ? errc::unauthorized
                       : parsed->code == 12 ? errc::unsupported
                                            : errc::unavailable;
     return std::unexpected(rpc_error(

@@ -18,6 +18,10 @@ The scheduler client uploads its prepared native graph directly instead of issui
 FindMissingBlobs request; content addressing keeps repeated writes idempotent.
 Normal connection closure, including the transport's lowercase EOF spelling, is not logged as a
 server error.
+`server.cpp` optionally wraps each accepted socket in Corosio's OpenSSL stream (ALPN `h2`, and a
+required client certificate when a client CA is configured), and checks a configured bearer token on
+every stream's headers before reading its body; a refusal answers gRPC status 16 and closes the
+connection (liquid#415). The client maps status 16 to `errc::unauthorized`.
 
 The implementation is private to libliquid. Message mapping, digest rules, and fixture provenance
 are documented in `docs/library/reapi-codec.md`; RPCs, configuration, CLI, and peer proof are in

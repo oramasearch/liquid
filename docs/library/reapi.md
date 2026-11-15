@@ -52,8 +52,11 @@ dispatch.
 Run the server from a liquid repository:
 
 ```sh
-liquid serve reapi --listen 0.0.0.0:50051
 liquid serve reapi --listen 127.0.0.1:50051 --instance builds
+liquid serve reapi --listen 0.0.0.0:50051 --tls-cert server.pem --tls-key server-key.pem \
+  --token-file ~/.liquid/reapi-token
+liquid serve reapi --listen 0.0.0.0:50051 --tls-cert server.pem --tls-key server-key.pem \
+  --client-ca clients-ca.pem
 ```
 
 `serve_reapi(reapi_serve_options)` is the equivalent library entry point. The server offers
@@ -64,9 +67,44 @@ SHA-256 digest and size validation. ActionCache records live beside the reposito
 `liquid scheduler` reuses it with Execution and Operations enabled, as documented in
 [`workers.md`](workers.md).
 
-The server accepts HTTP/2 prior-knowledge h2c. Its initial SETTINGS frame precedes its acknowledgement
-of the client preface, which is required by strict stock clients. TLS termination is expected in
-front of this server command.
+Without TLS the server accepts HTTP/2 prior-knowledge h2c. Its initial SETTINGS frame precedes its
+acknowledgement of the client preface, which is required by strict stock clients.
+
+### Listener security (liquid#415)
+
+Any client that reaches an unauthenticated cache can poison it: a stock Bazel client trusts every
+ActionCache entry it reads. The listener is therefore secured by `reapi_serve_options::security`, a
+`listener_security` from [`liquid/listener.hpp`](../../include/liquid/listener.hpp):
+
+| Field | CLI flag | Effect |
+|---|---|---|
+| `tls_certificate`, `tls_key` | `--tls-cert`, `--tls-key` | Serve TLS with this PEM chain and key. ALPN must select `h2`, or the connection is closed. |
+| `client_certificate_authority` | `--client-ca` | Mutual TLS: the handshake fails unless the client presents a certificate this CA signs. |
+| `bearer_token` | `--token-file` | Every RPC must carry `authorization: Bearer <token>`. |
+
+- **Loopback by default.** The default listener is `127.0.0.1:50051`. A listener on any address other
+  than `127.0.0.0/8` or `::1` is refused at startup, before anything binds, unless it has TLS **and**
+  a bearer token or a client CA. There is no plaintext mode off loopback.
+- **Every RPC is authenticated when a token is configured**, reads included: Capabilities, CAS,
+  ByteStream and ActionCache alike. A missing or wrong token is answered with gRPC status 16
+  (`UNAUTHENTICATED`) before the request body is read, and the connection is closed, so an
+  unauthenticated peer can neither write nor make the server buffer a body.
+- **The comparison is constant-time.** Both tokens are hashed with SHA-256 and the digests compared
+  without an early exit, so timing reveals neither the token nor its length.
+- **The token comes from a file, never argv.** `--token-file` reads a regular file (not a symbolic
+  link) owned by the user running liquid with no group or other permissions (`chmod 600`); trailing
+  line breaks are removed. A token must be at least 32 bytes of printable ASCII without spaces.
+  Token files are refused on Windows, where owner-only access is an ACL this check cannot read; use
+  a client certificate there.
+- Bazel connects with `--remote_cache=grpcs://host:50051 --tls_certificate=ca.pem` and
+  `--remote_header="authorization=Bearer <token>"` (or `--tls_client_certificate` and
+  `--tls_client_key` for mutual TLS). liquid's own client sets the same through `remote_config`'s
+  `tls` and `headers`.
+- The client CA file must hold one PEM certificate: the vendored Corosio TLS context loads only the
+  first certificate of a CA file.
+
+`liquid scheduler` uses the same server with Execution enabled but does not yet take these options;
+its worker authentication is tracked separately.
 
 ## Configuration and CLI
 
@@ -103,7 +141,8 @@ own cache, turn `verify_peer` off, or name the client key and headers sent there
 | Header | Surface |
 |---|---|
 | `liquid/remote.hpp` | `remote_config`, TLS configuration, `remote_blob`, the transport-neutral source and executor contracts, and the move-only `remote` REAPI handle. |
-| `liquid/reapi.hpp` | `reapi_serve_options` and `serve_reapi`. |
+| `liquid/reapi.hpp` | `reapi_serve_options` (including its `listener_security`) and `serve_reapi`. |
+| `liquid/listener.hpp` | `listener_security`, `is_loopback_address`, `validate_listener_security`, `read_token_file`, and the constant-time `bearer_authorized`. |
 | `liquid/workers.hpp` | scheduler and worker options plus their coroutine-native long-running entry points. |
 | `liquid/repository.hpp` | `repository_options::remote` and `repository::remote_configuration`. |
 | `liquid/build.hpp` | `wrap_options::remote`, per-tier `cache_report`, and the existing remote execution entry points. |

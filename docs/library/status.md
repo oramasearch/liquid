@@ -294,7 +294,9 @@ model input ([`distribution.md`](distribution.md)). The dependency-free protobuf
 messages, and native tree/action/result conversions are implemented
 ([`reapi-codec.md`](reapi-codec.md)). The Corosio REAPI client provides CAS, ByteStream,
 ActionCache, and Execution RPCs; `wrap` and `build --profile` use its validated remote cache tier,
-and `liquid serve reapi` exposes liquid's CAS and ActionCache ([`reapi.md`](reapi.md)). Liquid's
+and `liquid serve reapi` exposes liquid's CAS and ActionCache ([`reapi.md`](reapi.md)). That server
+binds loopback by default and refuses any other address unless it has TLS and a bearer token or a
+client CA; a configured token is required, compared in constant time, on every RPC (#415). Liquid's
 action-digest scheduler and TAAP-signed worker fleet are implemented, including one bounded requeue
 after worker loss, size-class placement from #18's recorded decision, REAPI Execution and
 ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces
@@ -528,6 +530,9 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
   agent, dispatcher or repository (#515), trust stored session authority on reopen (#516), and
   accept sub-delegations that broaden scopes (#517); see
   [`../security/delegation-threat-model.md`](../security/delegation-threat-model.md).
+- `liquid scheduler` serves the REAPI listener without the #415 TLS and token options. A REAPI
+  client CA file must hold a single certificate: the vendored Corosio TLS context loads only the
+  first certificate of a CA file.
 - The executable-aware delta algorithm id is reserved and unused.
 - The data-branch reflink fast path requires local cluster control metadata.
 - The projection page has no recorded credentialed Apple notarisation proof; image booting is

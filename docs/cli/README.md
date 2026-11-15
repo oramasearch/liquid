@@ -667,7 +667,11 @@ remote tier counts in text and JSON.
 `liquid wrap` and `liquid build --profile` accept `--remote <endpoint>`, instance, TLS, custom
 header, deadline, and publication flags described in [`../library/reapi.md`](../library/reapi.md).
 Remote publication is off unless `--remote-publish` is supplied. `liquid serve reapi --listen
-<address> [--instance <name>]` exposes the current repository's SHA-256 CAS and ActionCache.
+<address> [--instance <name>]` exposes the current repository's SHA-256 CAS and ActionCache. It
+listens on loopback (`127.0.0.1:50051`) by default and refuses any other address unless
+`--tls-cert` and `--tls-key` are given together with `--token-file <path>` (a bearer token in a
+file only its owner can read, required on every RPC) or `--client-ca <path>` (mutual TLS); there is
+no plaintext mode off loopback ([`../library/reapi.md`](../library/reapi.md#listener-security-liquid415)).
 `--scheduler <endpoint>` selects liquid's scheduler beside the stock `--remote` REAPI backend and
 preserves the scheduler's signed scheduling record. `liquid scheduler` and `liquid worker` accept
 the flags and environment variables listed in [`../library/workers.md`](../library/workers.md).
