@@ -987,11 +987,21 @@
         "path": "src/parser.c",
         "sha256": "a863992eb9c5443e0da8092ea6ac23d2edcd35f512995dd3d23fdf568d25e39d"
       },
+      "patches": [
+        {
+          "find": "calloc(0, sizeof(struct ScannerState))",
+          "path": "src/scanner.c",
+          "reference": "https://github.com/oramasearch/liquid/issues/462, upstream https://github.com/alex-pinkus/tree-sitter-swift/commit/8abb3e8b33256d89127a35e87480736f74755ff9",
+          "replace": "calloc(1, sizeof(struct ScannerState))",
+          "sha256": "e4b1d94b5aa4beeb1000350f5cd816a5ba6a3199e995bf14eb60e730a9ffcba8",
+          "upstream_sha256": "9a09cf1de5ade5b1e3a21eed69b8fa4ddecbfbe52c373c64e28b0dffe1bf803e"
+        }
+      ],
       "repository": "https://github.com/alex-pinkus/tree-sitter-swift",
       "scanners": [
         {
           "path": "src/scanner.c",
-          "sha256": "9a09cf1de5ade5b1e3a21eed69b8fa4ddecbfbe52c373c64e28b0dffe1bf803e"
+          "sha256": "e4b1d94b5aa4beeb1000350f5cd816a5ba6a3199e995bf14eb60e730a9ffcba8"
         }
       ],
       "symbol": "tree_sitter_swift",
