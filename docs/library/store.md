@@ -92,7 +92,9 @@ load index runs into memory as a remote store does.
 The disk backend's `open` creates missing directories and refuses a marker other than format 1 with
 `errc::unsupported`. A pack begins with its id. Every following chunk is one append-only frame:
 an eight-byte frame magic, raw and compressed lengths (`u32` each), an algorithm byte, the 32-byte
-digest, and an individually zstd-compressed payload. A delta frame uses its own magic and prefixes
+digest, and an individually zstd-compressed payload. The raw length sizes the decompression buffer
+only when it is at most 16 MiB and, when the zstd frame records its content size, equal to it;
+anything else is `errc::corrupt` (L-27, liquid#411). A delta frame uses its own magic and prefixes
 the payload with the base algorithm and 32-byte digest; the remaining bytes are zstd-compressed
 with the complete base chunk as a dictionary. A sealed pack ends with a sorted chunk table and a
 footer containing the table location and checksum. The table carries the algorithm tag, so it

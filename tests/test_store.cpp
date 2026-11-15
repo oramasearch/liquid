@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <numeric>
@@ -841,6 +842,37 @@ TEST(Store, RebuildsIndexAndReportsPackCorruption) {
     auto failed = liquid::runtime::block_on(corrupt.get(*id));
     ASSERT_FALSE(failed.has_value());
     EXPECT_EQ(failed.error().code, liquid::errc::corrupt);
+}
+
+// L-27 (liquid#411): a chunk header's raw length sizes the decompression buffer only once it is
+// plausible. A frame claiming almost 4 GiB is corrupt, not an allocation.
+TEST(Store, AChunkClaimingAnImplausibleRawLengthIsCorrupt) {
+    temporary_store temporary;
+    auto store = open_store(temporary.path());
+    const auto source = bytes(4096, 7);
+    auto id = liquid::runtime::block_on(store.put(source));
+    ASSERT_TRUE(id.has_value());
+    store = {};
+    const auto pack = temporary.path() / "packs" / "pack-1.pack";
+    std::string contents;
+    {
+        std::ifstream in(pack, std::ios::binary);
+        contents.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    const std::string frame{"LQFRAM\x01\x00", 8};
+    const auto at = contents.find(frame);
+    ASSERT_NE(at, std::string::npos);
+    for (std::size_t index = 0; index < 4; ++index) {
+        contents[at + 8 + index] = static_cast<char>(index == 0 ? 0xf0 : 0xff);
+    }
+    {
+        std::ofstream out(pack, std::ios::binary | std::ios::trunc);
+        out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+    }
+    auto reopened = open_store(temporary.path());
+    auto got = liquid::runtime::block_on(reopened.get(*id));
+    ASSERT_FALSE(got.has_value());
+    EXPECT_EQ(got.error().code, liquid::errc::corrupt);
 }
 
 TEST(Store, RefusesUnknownFormatAndRebuildsBadRun) {

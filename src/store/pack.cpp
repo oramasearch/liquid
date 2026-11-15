@@ -20,6 +20,24 @@
 namespace liquid::store_detail {
 namespace {
 
+// The most a stored chunk may claim to decompress to (L-27, liquid#411). Chunks are at most
+// chunk_maximum (128 KiB); this leaves room for any object stored whole, and stops a pack or a
+// chunk header from sizing a multi-gigabyte allocation before anything is checked.
+constexpr std::uint32_t maximum_raw_length = 16U * 1024U * 1024U;
+
+// Whether `raw_length` may size the output buffer for these compressed bytes: within the bound,
+// and equal to the zstd frame's own content size when the frame records one.
+bool plausible_raw_length(std::uint32_t raw_length, const std::byte* compressed, std::size_t size) {
+    if (raw_length > maximum_raw_length) {
+        return false;
+    }
+    const auto declared = ZSTD_getFrameContentSize(compressed, size);
+    if (declared == ZSTD_CONTENTSIZE_ERROR) {
+        return false;
+    }
+    return declared == ZSTD_CONTENTSIZE_UNKNOWN || declared == raw_length;
+}
+
 std::atomic<std::uint64_t> file_read_bytes{};
 std::atomic<std::uint64_t> file_written_bytes{};
 
@@ -245,6 +263,10 @@ bool valid_frame(std::span<const std::byte> bytes, std::size_t offset, pack_entr
     // trust-domain key. The pack scan has no object key context.
     if (encrypted) {
         return true;
+    }
+    if (!plausible_raw_length(raw_length, bytes.data() + offset + physical_header_size,
+                              compressed_length)) {
+        return false;
     }
     std::vector<std::byte> raw(raw_length);
     const auto produced = ZSTD_decompress(
@@ -705,6 +727,12 @@ read_pack_entry(std::shared_ptr<::liquid::store_backend> backend,
             co_return std::unexpected(corrupt_error("delta chunk base differs from index", key));
         }
         compressed->erase(compressed->begin(), compressed->begin() + delta_base_size);
+    }
+    // The header's raw size sizes the buffer only once it is plausible (liquid#411). A delta
+    // frame is compressed against a dictionary, so only the bound applies to it.
+    if (raw_size > maximum_raw_length ||
+        (!dictionary && !plausible_raw_length(raw_size, compressed->data(), compressed->size()))) {
+        co_return std::unexpected(corrupt_error("chunk raw length is implausible", key));
     }
     auto raw = co_await runtime::offload(
         [compressed = std::move(*compressed), raw_size, dictionary = std::move(dictionary)] {
