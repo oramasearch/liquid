@@ -6,10 +6,12 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <map>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -430,9 +432,13 @@ void write_build_configuration(const std::filesystem::path& repository,
     ASSERT_FALSE(code) << code.message();
     auto output = std::ofstream{directory / "configuration", std::ios::trunc};
     ASSERT_TRUE(output.is_open());
+    // Shaped like the wrap state: a version line and 64-hex-digit BLAKE3-256 process keys
+    // (liquid#449), which planning must accept.
+    output << "V\t2\n";
     for (auto index = std::size_t{}; index != results.size(); ++index) {
-        output << "A\t" << std::hex << index + 1 << '\t' << liquid::to_string(results[index].value)
-               << '\n';
+        auto key = std::ostringstream{};
+        key << std::hex << std::setfill('0') << std::setw(64) << index + 1;
+        output << "A\t" << key.str() << '\t' << liquid::to_string(results[index].value) << '\n';
     }
     output.close();
     ASSERT_TRUE(output);

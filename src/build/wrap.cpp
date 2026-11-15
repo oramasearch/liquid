@@ -134,10 +134,61 @@ private:
     }
 };
 
+// The key that names one wrapped process: the BLAKE3-256 digest the hook computes over its
+// executable, working directory and arguments (liquid_wrap_process_key_hex). It was a 64-bit
+// FNV-1a value, which an author who controls a command line could collide with a cached
+// command's (liquid#449).
+struct process_key {
+    std::array<std::uint8_t, LIQUID_WRAP_KEY_HEX_SIZE / 2> bytes{};
+
+    friend auto operator<=>(const process_key&, const process_key&) = default;
+};
+
+// Reads a process key written as exactly 64 lowercase hex digits; anything else is not a key.
+auto parse_process_key(std::string_view text) -> std::optional<process_key> {
+    if (text.size() != LIQUID_WRAP_KEY_HEX_SIZE) {
+        return std::nullopt;
+    }
+    const auto digit = [](char value) -> int {
+        if (value >= '0' && value <= '9') {
+            return value - '0';
+        }
+        if (value >= 'a' && value <= 'f') {
+            return value - 'a' + 10;
+        }
+        return -1;
+    };
+    auto output = process_key{};
+    for (auto index = std::size_t{}; index < output.bytes.size(); ++index) {
+        const auto high = digit(text[index * 2]);
+        const auto low = digit(text[index * 2 + 1]);
+        if (high < 0 || low < 0) {
+            return std::nullopt;
+        }
+        output.bytes[index] = static_cast<std::uint8_t>((high << 4) | low);
+    }
+    return output;
+}
+
+auto to_hex(const process_key& key) -> std::string {
+    constexpr auto digits = std::string_view{"0123456789abcdef"};
+    auto output = std::string{};
+    output.reserve(key.bytes.size() * 2);
+    for (const auto value : key.bytes) {
+        output.push_back(digits[value >> 4U]);
+        output.push_back(digits[value & 0x0fU]);
+    }
+    return output;
+}
+
+// The saved wrap state's format version. Version 2 carries BLAKE3-256 process keys (liquid#449);
+// a state without this version is ignored, so the run rebuilds it rather than misreading it.
+constexpr auto wrap_state_version = std::string_view{"2"};
+
 struct traced_process {
     std::int64_t pid{};
     std::int64_t parent{};
-    std::uint64_t key{};
+    process_key key{};
     std::string executable;
     std::string cwd;
     std::vector<std::string> command;
@@ -155,7 +206,7 @@ struct launch_completion {
 };
 
 struct saved_action {
-    std::uint64_t key{};
+    process_key key{};
     digest result{};
 };
 
@@ -177,10 +228,10 @@ struct cache_plan {
     };
 
     std::vector<saved_action> next_actions;
-    std::set<std::uint64_t> missed_actions;
-    std::set<std::uint64_t> reasoned_actions;
-    std::map<std::uint64_t, int> processes;
-    std::map<std::uint64_t, std::vector<condition>> conditions;
+    std::set<process_key> missed_actions;
+    std::set<process_key> reasoned_actions;
+    std::map<process_key, int> processes;
+    std::map<process_key, std::vector<condition>> conditions;
     std::vector<build_detail::lookup_record> lookups;
 };
 
@@ -489,18 +540,22 @@ auto read_state(const std::filesystem::path& path) -> liquid::result<wrap_state>
     if (!input)
         return std::unexpected(wrap_error(errc::io, "cannot read wrap state", path));
     auto line = std::string{};
+    // The first line names the format. A state from before version 2 (64-bit FNV-1a process
+    // keys) or from an unknown version is not read: the run starts from an empty state and
+    // writes a current one (liquid#449).
+    if (!std::getline(input, line) || line != "V\t" + std::string{wrap_state_version}) {
+        return wrap_state{};
+    }
     while (std::getline(input, line)) {
         const auto fields = split_tabs(line);
         if (fields.size() < 2)
             return std::unexpected(wrap_error(errc::corrupt, "invalid wrap state", path));
         if (fields[0] == "A" && fields.size() == 3) {
-            auto key = std::uint64_t{};
-            auto key_stream = std::istringstream{std::string{fields[1]}};
-            key_stream >> std::hex >> key;
+            auto key = parse_process_key(fields[1]);
             auto id = parse_digest(fields[2]);
-            if (!key_stream || !id)
+            if (!key || !id)
                 return std::unexpected(wrap_error(errc::corrupt, "invalid saved action", path));
-            output.actions.push_back({key, *id});
+            output.actions.push_back({*key, *id});
             continue;
         }
         if (fields[0] == "R" && fields.size() == 2) {
@@ -535,6 +590,7 @@ auto write_state(const std::filesystem::path& path, const wrap_state& state)
     auto output = std::ofstream{temporary, std::ios::binary | std::ios::trunc};
     if (!output)
         return std::unexpected(wrap_error(errc::io, "cannot write wrap state", path));
+    output << "V\t" << wrap_state_version << '\n';
     for (const auto& item : state.outputs)
         output << "O\t" << hex(item) << '\n';
     for (const auto& tool : state.tools)
@@ -542,7 +598,7 @@ auto write_state(const std::filesystem::path& path, const wrap_state& state)
     for (const auto& argument : state.action_command)
         output << "C\t" << hex(argument) << '\n';
     for (const auto& action : state.actions)
-        output << "A\t" << std::hex << action.key << '\t' << to_string(action.result) << '\n';
+        output << "A\t" << to_hex(action.key) << '\t' << to_string(action.result) << '\n';
     if (state.outer_result)
         output << "R\t" << to_string(*state.outer_result) << '\n';
     output.close();
@@ -899,13 +955,13 @@ auto parse_trace(const std::filesystem::path& path) -> liquid::result<std::vecto
         auto process = traced_process{};
         auto numbers = std::istringstream{std::string{fields[0]} + " " + std::string{fields[1]}};
         numbers >> process.pid >> process.parent;
-        auto key = std::istringstream{std::string{fields[2]}};
-        key >> std::hex >> process.key;
+        auto key = parse_process_key(fields[2]);
         auto executable = unhex(fields[3]);
         auto cwd = unhex(fields[4]);
         auto arguments = unhex(fields[5]);
         if (!numbers || !key || !executable || !cwd || !arguments)
             continue;
+        process.key = *key;
         if (fields.size() == 7) {
             auto started = std::istringstream{std::string{fields[6]}};
             started >> process.started_ns;
@@ -2382,8 +2438,8 @@ execute_observed_run(repository& source,
                      const std::filesystem::path& working_tree,
                      const std::vector<std::string>& command,
                      const std::set<std::string>& known_outputs,
-                     const std::map<std::uint64_t, int>& plan,
-                     const std::map<std::uint64_t, std::vector<cache_plan::condition>>& conditions,
+                     const std::map<process_key, int>& plan,
+                     const std::map<process_key, std::vector<cache_plan::condition>>& conditions,
                      const std::map<std::string, std::string>& action_environment,
                      digest input_tree,
                      const wrap_options& options) {
@@ -2405,14 +2461,14 @@ execute_observed_run(repository& source,
         auto trace_output = std::ofstream{trace, std::ios::trunc};
         auto plan_output = std::ostringstream{};
         for (const auto& [key, status] : plan) {
-            plan_output << "H\t" << std::hex << key << '\t' << std::dec << status << '\n';
+            plan_output << "H\t" << to_hex(key) << '\t' << status << '\n';
             const auto found = conditions.find(key);
             if (found == conditions.end()) {
                 continue;
             }
             for (const auto& condition : found->second) {
-                plan_output << "C\t" << std::hex << key << '\t' << condition.digest << '\t'
-                            << std::dec << condition.size << '\t' << hex(condition.path) << '\n';
+                plan_output << "C\t" << to_hex(key) << '\t' << condition.digest << '\t'
+                            << condition.size << '\t' << hex(condition.path) << '\n';
             }
         }
         if (!trace_output)
@@ -2792,7 +2848,7 @@ runtime::task<void> publish_observed_run(repository& source,
         }
         add_miss(report, std::move(*cause));
     }
-    auto previous_order = std::map<std::uint64_t, std::size_t>{};
+    auto previous_order = std::map<process_key, std::size_t>{};
     for (std::size_t index = 0; index < previous_actions.size(); ++index) {
         previous_order.emplace(previous_actions[index].key, index);
     }
@@ -3307,3 +3363,20 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
 }
 
 } // namespace liquid::build
+
+namespace liquid::build_detail {
+
+liquid::result<std::vector<std::string>>
+saved_wrap_action_keys(const std::filesystem::path& state) {
+    auto saved = build::read_state(state);
+    if (!saved) {
+        return std::unexpected(saved.error());
+    }
+    auto output = std::vector<std::string>{};
+    for (const auto& action : saved->actions) {
+        output.push_back(build::to_hex(action.key));
+    }
+    return output;
+}
+
+} // namespace liquid::build_detail

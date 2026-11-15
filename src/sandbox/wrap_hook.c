@@ -49,15 +49,6 @@ __attribute__((destructor)) static void liquid_wrap_leave(void) {
     append_finished();
 }
 
-static uint64_t fnv_update(uint64_t value, const void* data, size_t size) {
-    const unsigned char* bytes = data;
-    for (size_t index = 0; index < size; ++index) {
-        value ^= bytes[index];
-        value *= UINT64_C(1099511628211);
-    }
-    return value;
-}
-
 static ssize_t read_all(const char* path, char* output, size_t capacity) {
     const int descriptor = open(path, O_RDONLY | O_CLOEXEC);
     if (descriptor < 0) {
@@ -104,7 +95,7 @@ static int is_configure_probe(const char* directory, const char* arguments, size
 /* Only the plan liquid bind-mounts read-only at /liquid/plan is read, and only when its bytes
  * hash to the digest liquid passed beside it (liquid#401); LIQUID_WRAP_PLAN is not consulted.
  * Conditional inputs are read from the fixed mount, /liquid/work. */
-static int planned_hit(uint64_t key) {
+static int planned_hit(const char* key) {
     size_t size = 0;
     char* plan =
         liquid_wrap_plan_load("/liquid/plan", getenv(LIQUID_WRAP_PLAN_DIGEST_VARIABLE), 0, &size);
@@ -158,20 +149,22 @@ __attribute__((constructor)) static void liquid_wrap_enter(void) {
         return;
     }
     const size_t directory_size = strlen(directory);
-    uint64_t key = UINT64_C(1469598103934665603);
-    key = fnv_update(key, executable, (size_t)executable_size);
-    key = fnv_update(key, "\0", 1);
-    key = fnv_update(key, directory, directory_size);
-    key = fnv_update(key, "\0", 1);
-    key = fnv_update(key, arguments, (size_t)argument_size);
+    /* BLAKE3-256: a 64-bit key could be collided with a cached command's (liquid#449). */
+    char key[LIQUID_WRAP_KEY_HEX_SIZE + 1];
+    liquid_wrap_process_key_hex(executable,
+                                (size_t)executable_size,
+                                directory,
+                                directory_size,
+                                arguments,
+                                (size_t)argument_size,
+                                key);
 
     char line[81920];
     const long pid = observed_pid("/proc/self/status", (long)getpid());
     char parent_path[128];
     (void)snprintf(parent_path, sizeof(parent_path), "/proc/%ld/status", (long)getppid());
     const long parent = observed_pid(parent_path, (long)getppid());
-    const int prefix =
-        snprintf(line, sizeof(line), "%ld\t%ld\t%016llx\t", pid, parent, (unsigned long long)key);
+    const int prefix = snprintf(line, sizeof(line), "%ld\t%ld\t%s\t", pid, parent, key);
     if (prefix > 0 && (size_t)prefix < sizeof(line)) {
         size_t offset = (size_t)prefix;
         append_hex(line, &offset, executable, (size_t)executable_size);
@@ -257,15 +250,6 @@ __attribute__((destructor)) static void liquid_wrap_leave(void) {
     append_finished();
 }
 
-static uint64_t fnv_update(uint64_t value, const void* data, size_t size) {
-    const unsigned char* bytes = data;
-    for (size_t index = 0; index < size; ++index) {
-        value ^= bytes[index];
-        value *= UINT64_C(1099511628211);
-    }
-    return value;
-}
-
 static void append_hex(char* output, size_t* offset, const char* input, size_t size) {
     static const char digits[] = "0123456789abcdef";
     for (size_t index = 0; index < size; ++index) {
@@ -302,7 +286,7 @@ static int is_configure_probe(const char* directory, const char* arguments, size
 /* macOS has no mount namespace, so the plan is trusted only at liquid's own location, beside the
  * input mount (<run>/plan next to <run>/mount), as a private file of this user, and only when its
  * bytes hash to the digest liquid passed beside it (liquid#401). */
-static int planned_hit(uint64_t key) {
+static int planned_hit(const char* key) {
     const char* path = getenv("LIQUID_WRAP_PLAN");
     const char* root = getenv("LIQUID_WRAP_ROOT");
     if (path == NULL || root == NULL || root[0] != '/') {
@@ -358,20 +342,14 @@ __attribute__((constructor)) static void liquid_wrap_enter(void) {
     }
     const size_t executable_size = strlen(executable);
     const size_t directory_size = strlen(directory);
-    uint64_t key = UINT64_C(1469598103934665603);
-    key = fnv_update(key, executable, executable_size);
-    key = fnv_update(key, "\0", 1);
-    key = fnv_update(key, directory, directory_size);
-    key = fnv_update(key, "\0", 1);
-    key = fnv_update(key, arguments, argument_size);
+    /* BLAKE3-256: a 64-bit key could be collided with a cached command's (liquid#449). */
+    char key[LIQUID_WRAP_KEY_HEX_SIZE + 1];
+    liquid_wrap_process_key_hex(
+        executable, executable_size, directory, directory_size, arguments, argument_size, key);
 
     char line[81920];
-    const int prefix = snprintf(line,
-                                sizeof(line),
-                                "%ld\t%ld\t%016llx\t",
-                                (long)getpid(),
-                                (long)getppid(),
-                                (unsigned long long)key);
+    const int prefix =
+        snprintf(line, sizeof(line), "%ld\t%ld\t%s\t", (long)getpid(), (long)getppid(), key);
     if (prefix > 0 && (size_t)prefix < sizeof(line)) {
         size_t offset = (size_t)prefix;
         append_hex(line, &offset, executable, executable_size);
