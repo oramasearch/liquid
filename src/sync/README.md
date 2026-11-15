@@ -22,6 +22,11 @@ graph, associates new reachability with change callbacks, accumulates named verd
 accepted ref set, applies the optional atomic rule, exports pull pages, answers missing-object
 queries and logical range reads, verifies pack uploads, applies per-author flow limits before
 metadata import, and encodes canonical error bodies including retry scope and delay.
+Its `upload_staging` class is the upload quarantine (liquid#403): verified uploads are staged in a
+private directory under a byte quota and a time limit, an authorized push moves what its roots reach
+into the store before importing, and a refused push discards it. Before flow admission it verifies
+each authored item against its author's stored or carried identity chain, so a budget is spent only
+for items that author signed.
 
 `endpoint.cpp` adapts sync bodies to the shared private Corosio HTTP/1.1 client in `src/net/`. It
 validates or synthesizes legacy push outcomes and composes metadata with the object session for

@@ -165,6 +165,11 @@ the hot-update restart hook, policy, deployment, TUF state) travels with clone, 
 and makes checkout-local paths (`LIQUID_REPO`, `.liquid/`, `.liquid-store/` and liquid's other
 state directories) impossible to import into a tree or to write from a peer's tree
 ([`sync.md`](sync.md#trust-configuration-stays-with-the-checkout-that-set-it)).
+Uploads wait in a quota-bounded
+quarantine and enter the store only when a push that reaches them is authorized; a refused push
+leaves nothing behind, and flow admission spends an author's budget only for items signed by that
+author. `serve sync` binds loopback by default and refuses any other address without TLS and a
+bearer token or client CA (#403).
 
 **Drive.** Issue #195 adds the persisted three-tree drive client, named concurrent conflict values,
 interrupted-transfer resume, per-reference refusal reporting, stable-node path history and restore,
@@ -530,6 +535,10 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
   agent, dispatcher or repository (#515), trust stored session authority on reopen (#516), and
   accept sub-delegations that broaden scopes (#517); see
   [`../security/delegation-threat-model.md`](../security/delegation-threat-model.md).
+- `liquid push` and `liquid pull` cannot present a TLS client certificate, so they reach a
+  `serve sync --client-ca` listener only through another client; `--token-file` works with them.
+  Sync flow budgets are per author, so replaying an author's genuinely signed records still spends
+  that author's budget (#403).
 - `liquid scheduler` serves the REAPI listener without the #415 TLS and token options. A REAPI
   client CA file must hold a single certificate: the vendored Corosio TLS context loads only the
   first certificate of a CA file.

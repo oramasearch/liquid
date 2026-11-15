@@ -1,20 +1,32 @@
 #include "liquid/sync.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
+#include <chrono>
 #include <deque>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <iterator>
 #include <map>
+#include <mutex>
 #include <optional>
+#include <random>
 #include <set>
+#include <system_error>
 #include <utility>
 
 #include "encoding/cbor.hpp"
 #include "flow_control.hpp"
+#include "identity/taap.hpp"
+#include "liquid/identity.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
 #include "repository/store_access.hpp"
 #include "repository/sync_access.hpp"
+#include "store/references.hpp"
 #include "sync/codec.hpp"
 
 namespace liquid {
@@ -39,9 +51,427 @@ auto context_value(std::string_view context, std::string_view name) -> std::stri
     return std::string{context.substr(value_start, end - value_start)};
 }
 
+// The quarantine for uploaded objects (liquid#403). `POST /sync/chunks` stages verified objects
+// here instead of in the store; a push whose authorization accepts something moves the objects its
+// roots reach into the store, and a refused push discards them. Staged bytes are bounded by a
+// quota, and an object no push claims expires. Files live in a private directory removed with the
+// server.
+class upload_staging {
+public:
+    upload_staging(std::filesystem::path base, std::uint64_t quota, std::chrono::seconds ttl)
+        : base_(std::move(base)), quota_(quota), ttl_(ttl) {}
+
+    ~upload_staging() {
+        if (!root_.empty()) {
+            auto code = std::error_code{};
+            std::filesystem::remove_all(root_, code);
+        }
+    }
+
+    upload_staging(const upload_staging&) = delete;
+    auto operator=(const upload_staging&) -> upload_staging& = delete;
+
+    // Stages every frame, or none: the request is refused whole when it would exceed the quota.
+    auto stage(std::vector<std::pair<digest, std::vector<std::byte>>> frames) -> result<void> {
+        const auto lock = std::scoped_lock{mutex_};
+        const auto now = std::chrono::steady_clock::now();
+        expire(now);
+        auto needed = std::uint64_t{};
+        auto keys = std::set<std::string>{};
+        for (const auto& [id, contents] : frames) {
+            const auto name = key(id);
+            if (entries_.contains(name) || !keys.insert(name).second) {
+                continue;
+            }
+            needed += contents.size();
+        }
+        if (needed > quota_ || used_ > quota_ - needed) {
+            return std::unexpected(server_error(
+                errc::busy,
+                "sync upload quota exceeded",
+                std::format(
+                    "scope=upload limit={} staged={} requested={}", quota_, used_, needed)));
+        }
+        auto prepared = ensure_root();
+        if (!prepared) {
+            return std::unexpected(prepared.error());
+        }
+        for (auto& [id, contents] : frames) {
+            const auto name = key(id);
+            if (const auto found = entries_.find(name); found != entries_.end()) {
+                found->second.staged_at = now;
+                continue;
+            }
+            const auto path = root_ / name;
+            const auto partial = root_ / (name + ".partial");
+            {
+                auto output = std::ofstream{partial, std::ios::binary | std::ios::trunc};
+                output.write(reinterpret_cast<const char*>(contents.data()),
+                             static_cast<std::streamsize>(contents.size()));
+                if (!output) {
+                    return std::unexpected(
+                        server_error(errc::io, "cannot stage an uploaded object", to_string(id)));
+                }
+            }
+            auto code = std::error_code{};
+            std::filesystem::rename(partial, path, code);
+            if (code) {
+                return std::unexpected(server_error(errc::io, code.message(), to_string(id)));
+            }
+            entries_.emplace(name, entry{.size = contents.size(), .staged_at = now});
+            used_ += contents.size();
+        }
+        return {};
+    }
+
+    auto contains(const digest& id) -> bool {
+        const auto lock = std::scoped_lock{mutex_};
+        return entries_.contains(key(id));
+    }
+
+    auto read(const digest& id) -> result<std::vector<std::byte>> {
+        const auto lock = std::scoped_lock{mutex_};
+        const auto name = key(id);
+        if (!entries_.contains(name)) {
+            return std::unexpected(
+                server_error(errc::not_found, "object is not staged", to_string(id)));
+        }
+        auto input = std::ifstream{root_ / name, std::ios::binary};
+        if (!input) {
+            return std::unexpected(
+                server_error(errc::io, "cannot read a staged object", to_string(id)));
+        }
+        auto bytes = std::vector<char>{std::istreambuf_iterator<char>{input}, {}};
+        auto output = std::vector<std::byte>(bytes.size());
+        std::ranges::transform(
+            bytes, output.begin(), [](char value) { return static_cast<std::byte>(value); });
+        auto actual = hash(id.alg, output);
+        if (!actual || actual->alg != id.alg || actual->bytes != id.bytes) {
+            return std::unexpected(
+                server_error(errc::corrupt, "staged object digest changed", to_string(id)));
+        }
+        return output;
+    }
+
+    void discard(const digest& id) {
+        const auto lock = std::scoped_lock{mutex_};
+        remove(key(id));
+    }
+
+    auto staged_bytes() -> std::uint64_t {
+        const auto lock = std::scoped_lock{mutex_};
+        return used_;
+    }
+
+private:
+    struct entry {
+        std::uint64_t size{};
+        std::chrono::steady_clock::time_point staged_at;
+    };
+
+    static auto key(const digest& id) -> std::string {
+        auto output = std::format("{:02x}-", static_cast<unsigned>(id.alg));
+        for (const auto value : id.bytes) {
+            output += std::format("{:02x}", std::to_integer<unsigned>(value));
+        }
+        return output;
+    }
+
+    // Called with the lock held.
+    void remove(const std::string& name) {
+        const auto found = entries_.find(name);
+        if (found == entries_.end()) {
+            return;
+        }
+        used_ -= found->second.size;
+        entries_.erase(found);
+        auto code = std::error_code{};
+        std::filesystem::remove(root_ / name, code);
+    }
+
+    // Called with the lock held.
+    void expire(std::chrono::steady_clock::time_point now) {
+        auto expired = std::vector<std::string>{};
+        for (const auto& [name, value] : entries_) {
+            if (now - value.staged_at >= ttl_) {
+                expired.push_back(name);
+            }
+        }
+        for (const auto& name : expired) {
+            remove(name);
+        }
+    }
+
+    // Called with the lock held. Creates the private quarantine directory on first use.
+    auto ensure_root() -> result<void> {
+        if (!root_.empty()) {
+            return {};
+        }
+        auto code = std::error_code{};
+        auto base = base_.empty() ? std::filesystem::temp_directory_path(code) : base_;
+        if (code) {
+            return std::unexpected(server_error(errc::io, code.message(), "sync upload staging"));
+        }
+        std::filesystem::create_directories(base, code);
+        auto random = std::random_device{};
+        for (auto attempt = 0; attempt < 64; ++attempt) {
+            const auto candidate =
+                base / std::format("liquid-sync-staging-{:08x}{:08x}", random(), random());
+            code.clear();
+            if (std::filesystem::create_directory(candidate, code)) {
+                std::filesystem::permissions(candidate,
+                                             std::filesystem::perms::owner_all,
+                                             std::filesystem::perm_options::replace,
+                                             code);
+                root_ = candidate;
+                return {};
+            }
+        }
+        return std::unexpected(server_error(
+            errc::io, "cannot create the sync upload staging directory", base.string()));
+    }
+
+    std::filesystem::path base_;
+    std::filesystem::path root_;
+    std::uint64_t quota_{};
+    std::chrono::seconds ttl_{};
+    std::uint64_t used_{};
+    std::mutex mutex_;
+    std::map<std::string, entry> entries_;
+};
+
+// Reads an object from the store, or from the quarantine when the store does not have it.
+auto read_object(store& destination, upload_staging& staged, const digest& id)
+    -> runtime::task<std::vector<std::byte>> {
+    auto present = co_await destination.contains(id);
+    if (!present) {
+        co_return std::unexpected(present.error());
+    }
+    if (*present) {
+        co_return co_await destination.get(id);
+    }
+    co_return staged.read(id);
+}
+
+// The staged objects reachable from `roots`, children before parents. The walk follows the same
+// edges as `sync_session::send`, so it reaches every object a push uploaded for those roots;
+// payload chunks are named without being read, and objects in neither place are skipped.
+auto staged_closure(store& destination, upload_staging& staged, std::span<const digest> roots)
+    -> runtime::task<std::vector<digest>> {
+    if (staged.staged_bytes() == 0) {
+        co_return std::vector<digest>{};
+    }
+    struct pending_object {
+        digest id;
+        bool payload{};
+    };
+    auto pending = std::deque<pending_object>{};
+    for (const auto& root : roots) {
+        pending.push_back({root, false});
+    }
+    auto visited = std::set<std::string>{};
+    auto output = std::vector<digest>{};
+    auto registry = store_detail::reference_registry{};
+    while (!pending.empty()) {
+        const auto item = pending.front();
+        pending.pop_front();
+        if (!visited.insert(to_string(item.id)).second) {
+            continue;
+        }
+        const auto is_staged = staged.contains(item.id);
+        if (is_staged) {
+            output.push_back(item.id);
+        }
+        if (item.payload) {
+            continue;
+        }
+        auto bytes = result<std::vector<std::byte>>{};
+        if (is_staged) {
+            bytes = staged.read(item.id);
+        } else {
+            auto present = co_await destination.contains(item.id);
+            if (!present) {
+                co_return std::unexpected(present.error());
+            }
+            if (!*present) {
+                continue;
+            }
+            bytes = co_await destination.get(item.id);
+        }
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        const auto kind = store_detail::detect_object_kind(*bytes);
+        if (kind == "blob") {
+            auto value = objects::decode_blob(*bytes);
+            if (!value) {
+                co_return std::unexpected(value.error());
+            }
+            for (const auto& chunk : value->chunks) {
+                pending.push_back({chunk, true});
+            }
+            for (const auto& entry : value->format_entries) {
+                pending.push_back({entry, false});
+            }
+            continue;
+        }
+        const auto references = registry.extract(kind, *bytes);
+        const auto payload = kind == "chunk-list";
+        for (const auto& reference : references.digests) {
+            pending.push_back({reference, payload});
+        }
+    }
+    std::ranges::reverse(output);
+    co_return output;
+}
+
+// Moves the staged objects a push's roots reach into the store, children first.
+auto admit_staged(store& destination, upload_staging& staged, std::span<const digest> roots)
+    -> runtime::task<void> {
+    auto closure = co_await staged_closure(destination, staged, roots);
+    if (!closure) {
+        co_return std::unexpected(closure.error());
+    }
+    for (const auto& id : *closure) {
+        auto bytes = staged.read(id);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto stored = co_await repository_detail::store_access::put_verified(
+            destination, id, std::move(*bytes));
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
+        if (!same_digest(*stored, id)) {
+            co_return std::unexpected(
+                server_error(errc::corrupt, "stored object identity changed", to_string(id)));
+        }
+        staged.discard(id);
+    }
+    co_return result<void>{};
+}
+
+// Discards the staged objects a refused push's roots reach. A walk failure leaves them to expire.
+auto discard_staged(store& destination, upload_staging& staged, std::span<const digest> roots)
+    -> runtime::task<void> {
+    auto closure = co_await staged_closure(destination, staged, roots);
+    if (closure) {
+        for (const auto& id : *closure) {
+            staged.discard(id);
+        }
+    }
+    co_return result<void>{};
+}
+
+// Returns `value` after discarding what the refused push uploaded: a refused push leaves nothing
+// behind (liquid#403).
+auto refuse_push(store& destination,
+                 upload_staging& staged,
+                 std::span<const digest> roots,
+                 error value) -> runtime::task<std::vector<std::byte>> {
+    static_cast<void>(co_await discard_staged(destination, staged, roots));
+    co_return std::unexpected(std::move(value));
+}
+
+auto item_failure(std::size_t index, error value) -> error {
+    value.context = "item=" + std::to_string(index) + ": " + value.context;
+    return value;
+}
+
+// The identity chain a push carries for `taap_id`, when it carries one.
+auto carried_chain(std::span<const sync_item> items, std::string_view taap_id)
+    -> std::optional<std::vector<identity_document>> {
+    for (const auto& item : items) {
+        if (item.kind != sync_item_kind::identity || item.author.taap_id != taap_id) {
+            continue;
+        }
+        auto chain = decode_identity_chain(item.body);
+        if (chain && !chain->empty() && chain->front().subject.taap_id == taap_id) {
+            return std::move(*chain);
+        }
+    }
+    return std::nullopt;
+}
+
+// True only when `by`'s key, bound to its name by the stored chain or the one the push carries,
+// made `signed_value` over `body`. Import repeats the full checks; this only decides whose flow
+// budget an item may spend.
+auto signed_by(const actor& by,
+               std::span<const sync_item> items,
+               std::string_view artifact_type,
+               std::span<const std::byte> body,
+               const signature& signed_value) -> result<void> {
+    auto stored = verify(by, artifact_type, body, signed_value);
+    if (stored && *stored) {
+        return {};
+    }
+    if (auto chain = carried_chain(items, by.taap_id)) {
+        auto carried = verify(by, *chain, artifact_type, body, signed_value);
+        if (carried && *carried) {
+            return {};
+        }
+        if (!carried) {
+            return std::unexpected(carried.error());
+        }
+    }
+    if (!stored) {
+        return std::unexpected(stored.error());
+    }
+    return std::unexpected(
+        server_error(errc::unauthorized, "signature does not verify", by.taap_id));
+}
+
+// Verifies the author an item names before that author's flow budget is spent (liquid#403):
+// a claimed author is trusted only when the item is signed by that author's key.
+auto verify_claimed_author(const sync_item& item, std::span<const sync_item> items)
+    -> result<void> {
+    switch (item.kind) {
+    case sync_item_kind::identity: {
+        auto chain = decode_identity_chain(item.body);
+        if (!chain) {
+            return std::unexpected(chain.error());
+        }
+        if (chain->empty() || chain->front().subject.taap_id != item.author.taap_id) {
+            return std::unexpected(
+                server_error(errc::corrupt, "identity chain does not match its frame author"));
+        }
+        auto verified = verify_chain(*chain);
+        if (!verified) {
+            return std::unexpected(verified.error());
+        }
+        return {};
+    }
+    case sync_item_kind::drip: {
+        auto signed_value = identity_detail::parse_signature(item.signature);
+        if (!signed_value) {
+            return std::unexpected(signed_value.error());
+        }
+        return signed_by(item.author, items, "drip", item.body, *signed_value);
+    }
+    case sync_item_kind::change: {
+        auto value = objects::decode_change(item.body, item.reference.value.alg);
+        if (!value) {
+            return std::unexpected(value.error());
+        }
+        auto body = objects::encode_change_body(*value);
+        if (!body) {
+            return std::unexpected(body.error());
+        }
+        auto signed_value = identity_detail::parse_signature(value->sig);
+        if (!signed_value) {
+            return std::unexpected(signed_value.error());
+        }
+        return signed_by(item.author, items, "change", *body, *signed_value);
+    }
+    default:
+        return std::unexpected(
+            server_error(errc::unauthorized, "this metadata frame kind cannot name an author"));
+    }
+}
+
 class change_graph {
 public:
-    explicit change_graph(store& objects) : objects_(&objects) {}
+    change_graph(store& objects, upload_staging& staged) : objects_(&objects), staged_(&staged) {}
 
     auto reachable(change_id head) -> runtime::task<std::set<std::string>> {
         auto output = std::set<std::string>{};
@@ -68,7 +498,7 @@ private:
         if (const auto found = parents_.find(key); found != parents_.end()) {
             co_return found->second;
         }
-        auto bytes = co_await objects_->get(id.value);
+        auto bytes = co_await read_object(*objects_, *staged_, id.value);
         if (!bytes) {
             co_return std::unexpected(bytes.error());
         }
@@ -86,6 +516,7 @@ private:
     }
 
     store* objects_{};
+    upload_staging* staged_{};
     std::map<std::string, std::vector<change_id>> parents_;
 };
 
@@ -95,7 +526,10 @@ struct reference_authorization {
     std::set<std::string> introduced_changes;
 };
 
-auto reference_authorizations(repository& subject, store& objects, std::span<const sync_item> items)
+auto reference_authorizations(repository& subject,
+                              store& objects,
+                              upload_staging& staged,
+                              std::span<const sync_item> items)
     -> runtime::task<std::vector<reference_authorization>> {
     auto current_refs = co_await subject.refs();
     if (!current_refs) {
@@ -106,7 +540,7 @@ auto reference_authorizations(repository& subject, store& objects, std::span<con
         current_heads.emplace(current.name, current.id);
     }
 
-    auto graph = change_graph{objects};
+    auto graph = change_graph{objects, staged};
     auto output = std::vector<reference_authorization>{};
     auto proposed_names = std::set<std::string>{};
     for (auto index = std::size_t{}; index < items.size(); ++index) {
@@ -211,9 +645,10 @@ auto apply_verdicts(std::span<const sync_ref_update> updates,
 auto authorize_push(sync_authorizer& authorize,
                     repository& subject,
                     store& objects,
+                    upload_staging& staged,
                     std::span<const sync_item> items)
     -> runtime::task<std::vector<sync_ref_outcome>> {
-    auto references = co_await reference_authorizations(subject, objects, items);
+    auto references = co_await reference_authorizations(subject, objects, staged, items);
     if (!references) {
         co_return std::unexpected(references.error());
     }
@@ -330,6 +765,7 @@ struct sync_server::impl {
     sync_server_options options;
     bool matching_store{};
     std::unique_ptr<flow_detail::controller> flow_limits;
+    std::unique_ptr<upload_staging> staged;
 };
 
 sync_server::sync_server(repository& subject, sync_server_options options)
@@ -339,9 +775,11 @@ sync_server::sync_server(repository& subject, store& objects, sync_server_option
     : impl_(std::make_unique<impl>(
           impl{&subject,
                &objects,
-               std::move(options),
+               options,
                &repository_detail::sync_access::objects(subject) == &objects,
-               std::make_unique<flow_detail::controller>(subject.flow_configuration())})) {}
+               std::make_unique<flow_detail::controller>(subject.flow_configuration()),
+               std::make_unique<upload_staging>(
+                   options.staging_directory, options.upload_quota_bytes, options.upload_ttl)})) {}
 
 sync_server::~sync_server() = default;
 sync_server::sync_server(sync_server&&) noexcept = default;
@@ -360,9 +798,19 @@ runtime::task<std::vector<std::byte>> sync_server::handle_push(std::span<const s
         co_return std::unexpected(
             server_error(errc::invalid_argument, "push request contains reference outcomes"));
     }
-    for (const auto& item : incoming->items) {
+    auto& objects = *impl_->objects;
+    auto& staged = *impl_->staged;
+    const auto roots = std::span<const digest>{incoming->objects};
+    for (auto index = std::size_t{}; index < incoming->items.size(); ++index) {
+        const auto& item = incoming->items[index];
         if (item.author.taap_id.empty()) {
             continue;
+        }
+        // The author's budget is spent only once the item is proven to be that author's.
+        auto verified = verify_claimed_author(item, incoming->items);
+        if (!verified) {
+            co_return co_await refuse_push(
+                objects, staged, roots, item_failure(index, std::move(verified.error())));
         }
         auto document = item.directory;
         if (std::ranges::all_of(document, [](std::byte value) { return value == std::byte{}; })) {
@@ -371,25 +819,32 @@ runtime::task<std::vector<std::byte>> sync_server::handle_push(std::span<const s
         auto admitted = impl_->flow_limits->admit(
             item.author.taap_id, flow_detail::node_key(document), item.body.size());
         if (!admitted) {
-            co_return std::unexpected(admitted.error());
+            co_return co_await refuse_push(objects, staged, roots, std::move(admitted.error()));
         }
     }
     auto outcomes = default_outcomes(incoming->items);
     if (!outcomes) {
-        co_return std::unexpected(outcomes.error());
+        co_return co_await refuse_push(objects, staged, roots, std::move(outcomes.error()));
     }
     if (impl_->options.authorize) {
         outcomes = co_await authorize_push(
-            impl_->options.authorize, *impl_->subject, *impl_->objects, incoming->items);
+            impl_->options.authorize, *impl_->subject, objects, staged, incoming->items);
         if (!outcomes) {
-            co_return std::unexpected(outcomes.error());
+            co_return co_await refuse_push(objects, staged, roots, std::move(outcomes.error()));
         }
     }
     if (incoming->atomic) {
         apply_atomic_rule(*outcomes);
     }
     auto items = accepted_items(incoming->items, *outcomes);
-    if (!items.empty()) {
+    if (items.empty()) {
+        static_cast<void>(co_await discard_staged(objects, staged, roots));
+    } else {
+        // Authorized: the uploaded objects the push reaches enter the store before its metadata.
+        auto admitted = co_await admit_staged(objects, staged, roots);
+        if (!admitted) {
+            co_return std::unexpected(admitted.error());
+        }
         auto imported = co_await impl_->subject->import_drips(items);
         if (!imported) {
             co_return std::unexpected(imported.error());
@@ -469,22 +924,24 @@ runtime::task<void> sync_server::handle_chunks(std::span<const std::byte> reques
         co_return std::unexpected(
             server_error(errc::invalid_argument, "sync server repository and store do not match"));
     }
+    // The codec bounds each frame and verifies its digest. Nothing enters the store here: the
+    // objects are staged until a push that reaches them is authorized (liquid#403).
     auto frames = sync_detail::decode_pack_frames(request);
     if (!frames) {
         co_return std::unexpected(frames.error());
     }
-    for (auto& [id, contents] : *frames) {
-        auto stored = co_await repository_detail::store_access::put_verified(
-            *impl_->objects, id, std::move(contents));
-        if (!stored) {
-            co_return std::unexpected(stored.error());
+    auto absent = std::vector<std::pair<digest, std::vector<std::byte>>>{};
+    absent.reserve(frames->size());
+    for (auto& frame : *frames) {
+        auto present = co_await impl_->objects->contains(frame.first);
+        if (!present) {
+            co_return std::unexpected(present.error());
         }
-        if (!same_digest(*stored, id)) {
-            co_return std::unexpected(
-                server_error(errc::corrupt, "stored object identity changed", to_string(id)));
+        if (!*present) {
+            absent.push_back(std::move(frame));
         }
     }
-    co_return result<void>{};
+    co_return impl_->staged->stage(std::move(absent));
 }
 
 runtime::task<std::uint64_t>

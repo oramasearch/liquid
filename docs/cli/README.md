@@ -356,9 +356,12 @@ writes an explicit online-only rule. See [`drive.md`](drive.md).
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
 listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
 pattern; `*` matches any sequence and `?` one character. Supplying the flag refuses each ref outside
-all allowed patterns while applying allowed refs unless the client requested `--atomic`. Without it
-there is no built-in authentication policy, so the default is appropriate for local use; network
-services embed the public server with their own authorization callback.
+all allowed patterns while applying allowed refs unless the client requested `--atomic`. A
+non-loopback `--listen` is refused unless `--tls-cert` and `--tls-key` are given with
+`--token-file <path>` (a bearer token in an owner-only file, required on every route; clients send it
+from `LIQUID_TOKEN`) or `--client-ca <path>`. Uploads are quarantined until a push authorizes them;
+`--upload-quota <bytes>` bounds the quarantine (default 1 GiB). See
+[`../library/sync.md`](../library/sync.md#local-server-command).
 `serve admission` loads either one JSON policy as `default` with `--policy`, or every
 `<name>.json` in `--policies <dir>`, as documented in
 [`../library/admission.md`](../library/admission.md). Named sets are served at `/admit/<name>` and
