@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/listener.hpp"
 
 #include <algorithm>

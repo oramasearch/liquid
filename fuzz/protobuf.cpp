@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Protocol Buffers as liquid's own codec reads them: the wire reader, and the REAPI v2 messages a
 // remote execution peer sends. One selector byte picks the message.
 

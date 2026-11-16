@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The manifest: a `.liquid` configuration file is parsed, checked, lowered to package, target and
 // source records (with its `locks` rules) and formatted back. The lowered records are also stored
 // and read back as CBOR, so their decoders are fuzzed here too.

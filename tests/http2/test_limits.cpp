@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Denial-of-service limits of the HTTP/2 connection (liquid#412, security review finding L-30).
 //
 // Each test plays a hostile peer: it writes raw frames into one end of an in-memory stream pair,

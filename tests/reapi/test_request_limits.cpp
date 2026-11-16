@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // liquid#451: the REAPI server never reads a request stream whole. A unary request is one message
 // within a limit, and a ByteStream Write is applied one bounded message at a time.
 

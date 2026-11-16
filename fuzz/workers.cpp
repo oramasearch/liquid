@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The workers protocol (liquid #463): the scheduler's gRPC messages a worker or a client sends and
 // the scheduler answers with (src/workers/protocol.cpp). One selector byte picks the message;
 // each decoded message is encoded again.

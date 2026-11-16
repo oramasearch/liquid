@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The container readers under src/formats/ (liquid #463): ZIP and the ZIP-based documents and
 // packages (OOXML, ODF, wheel, JAR), tar, the Debian, RPM and Alpine package readers, and the ar
 // members Debian decoding reads. Each codec goes through codec.hpp's driver.

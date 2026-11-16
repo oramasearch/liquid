@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Read by ctest before it runs any test (TEST_INCLUDE_FILES in tests/CMakeLists.txt), so every test
 # process inherits these settings.
 #

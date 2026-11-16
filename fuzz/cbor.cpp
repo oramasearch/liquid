@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Canonical CBOR, the encoding of every liquid record in the store and on the sync wire.
 // Property: whatever decodes re-encodes, and the re-encoding decodes to the same value.
 

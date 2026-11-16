@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // liquid #527: a repository handle's own leases (its checkpoint, its directories) carry the
 // process that holds them, are released when the handle ends, and are collected by the next open
 // when their process has ended. A checkout opened and closed a thousand times keeps no more leases

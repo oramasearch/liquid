@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Drip decoding: the journal record of one captured write (crdt::decode_drip_record), and the
 // signed drip body that history verification reads back from the store and from peers.
 

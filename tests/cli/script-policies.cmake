@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Every CMake script under tests/ that uses IN_LIST sets its policies itself (liquid#364).
 #
 # Scripts run with `cmake -P` get no policies from the project. Under CMake 3.x, IN_LIST is

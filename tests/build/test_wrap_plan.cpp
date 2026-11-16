@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // liquid#401: the wrap hook revalidates conditional inputs with BLAKE3 (never FNV-1a) and reads a
 // plan only from liquid's own location, bound to the digest liquid wrote it with.
 // liquid#449: the process key that names each wrapped process is BLAKE3-256 too, and a saved wrap

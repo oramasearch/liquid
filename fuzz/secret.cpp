@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Sealed secrets (liquid #463): the sealed-secret v1 record Lake and the operator hand back, its
 // unsealing, and Lake's answer to GET /v1/sealing_public_key (src/secret/sealed_secret.cpp).
 //

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # libFuzzer harnesses for the parsers of untrusted bytes (liquid #407). Configured only with
 # -DLIQUID_FUZZ=ON, which also builds every target with AddressSanitizer, UndefinedBehaviorSanitizer
 # and coverage instrumentation (cmake/Hardening.cmake). How to run them: docs/build/hardening.md.

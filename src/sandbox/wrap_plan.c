@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #if defined(__linux__)
 /* open(O_NOFOLLOW | O_CLOEXEC), fstat and geteuid under -std=c99. */
 #define _POSIX_C_SOURCE 200809L

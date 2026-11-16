@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 // Shared helpers for the libFuzzer harnesses in this directory (liquid #407).

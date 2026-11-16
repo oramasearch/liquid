@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # liquid#508: every command that prints an author shows one no identity chain verified as
 # "signed by an unverified key", never as the name the record claims. The repository is written
 # under one LIQUID_HOME and read under another that holds no chain for its author.

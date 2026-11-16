@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 // An in-memory store backend for the store harness and the seed generator (liquid #463). The

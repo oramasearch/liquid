@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // liquid's own binary delta (liquid #463): the delta record a peer or a store hands back, and the
 // zstd patch that `liquid delta apply` and a delta fetch apply to a source.
 //

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 // One HTTP/2 fuzz input: arbitrary bytes from a peer, after the client preface, served by a

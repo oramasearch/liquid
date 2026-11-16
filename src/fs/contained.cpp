@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "fs/contained.hpp"
 
 #include <cerrno>

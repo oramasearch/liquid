@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Custody of the local identity's signing key at rest (liquid #402): key files are created
 // owner-only and atomically, and a new identity's wrapping key is sealed rather than stored in
 // clear unless file-permission-only custody is chosen explicitly.

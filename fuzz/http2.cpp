@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // HTTP/2 framing, HPACK header blocks, Huffman strings and gRPC message framing, the transport
 // that REAPI and liquid's workers speak. Read-only use of src/http2: this harness does not change
 // the protocol code (liquid #412 is changing it).

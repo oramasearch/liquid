@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # liquid#515: `liquid session start <delegation> --as <agent>` acts as the delegated agent, and
 # history names that agent, not the principal. A delegation is refused for any other agent.
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_SESSION_FIXTURE OR

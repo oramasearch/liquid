@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # liquid #416: the scheduler and the worker refuse to start without the identity they must
 # authenticate, and load the documents `liquid identity show --document` prints.
 foreach(required IN ITEMS LIQUID_CLI LIQUID_WORKERS_TRUST_WORK)

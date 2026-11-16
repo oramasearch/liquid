@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // DER, X.509 and CMS as liquid reads them from a timestamp authority or a signed release
 // (liquid #463): src/asn1.cpp, src/x509.cpp and src/cms.cpp.
 //

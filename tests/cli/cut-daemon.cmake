@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # liquid#528: `cut -m` records only the message, a message starting with `-` is refused, and
 # `daemon stop` / `daemon --shutdown` with no daemon running says so instead of a socket error.
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_CLI_ROOT)

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Every dependency the build fetches is pinned to its content (liquid#408): a URL carries URL_HASH,
 # a git source a 40-hex commit. A tag or branch alone can move upstream.
 file(READ "${LIQUID_SOURCE_DIR}/CMakeLists.txt" contents)

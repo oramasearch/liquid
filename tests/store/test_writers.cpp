@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // liquid #526: several processes write one store without an owner (a checkout's daemon, the CLI
 // and a library client such as an IDE). Every mutation takes the store's cross-process write
 // lock, a handle reloads what another process published before it writes, temporary names are

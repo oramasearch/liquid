@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The sync protocol's wire framing: the metadata document, the object list and pack frames that a
 // peer sends during `liquid sync`, `clone` and `fetch`.
 

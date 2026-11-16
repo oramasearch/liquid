@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The strict structured-text codecs in src/formats/ (liquid #463): JSON (the reader the TUF client,
 // admission, Jupyter notebooks and repository metadata use) and .env files. Each is parsed, written
 // and parsed again: a JSON value must come back equal, a .env file with the same lines and keys.

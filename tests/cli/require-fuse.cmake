@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Runs a CLI test that mounts FUSE, or reports it skipped when this host cannot (liquid#362).
 #
 #   cmake -DLIQUID_TEST_NAME=<name> [-DLIQUID_FUSE_PROBE=<liquid-fuse-probe>]

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # `liquid serve reapi`, `liquid serve sync` and `liquid scheduler` refuse a non-loopback listener unless it has TLS and
 # client authentication (liquid#415, liquid#403). Every refusal happens before anything binds, so
 # each command must exit at once; the timeout turns a regression that starts serving into a failure.
