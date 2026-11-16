@@ -29,9 +29,16 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         }
         break;
     }
-    default:
-        (void)codec::decode_pack_frames(input->payload);
+    default: {
+        // Frame headers are parsed and budgeted first, then each frame is decompressed and checked.
+        const auto frames = codec::parse_pack_frames(input->payload);
+        if (frames) {
+            for (const auto& frame : *frames) {
+                (void)codec::decode_pack_frame(frame);
+            }
+        }
         break;
+    }
     }
     return 0;
 }
