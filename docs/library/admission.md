@@ -59,7 +59,8 @@ over the documented environment variables.
 
 Within `log`, `mode` is `deny` or `verify`. `deny` is the explicit fail-closed selection: every
 otherwise-valid attestation is refused with `transparency.policy_denied`. `verify` requires a
-valid HTTP or HTTPS Lake URL, one Ed25519 log identity key, and a
+valid HTTPS Lake URL (plain HTTP only to a loopback host, liquid #389), one Ed25519 log identity
+key, and a
 witness threshold no larger than the configured witness list. Identity and witness keys are
 32-byte lowercase hexadecimal values. The checkpoint signer must equal the configured TAAP id;
 Lake's `/v1/identity` and `/v1/transparency_log_configuration` responses are not trust anchors for
@@ -86,7 +87,11 @@ Audit-only sets need no source probe. `/healthz` reports process health separate
 An image is attested when an attestation subject equals the `sha256:...` digest in its digest-pinned
 reference, its profile occurs in `profiles`, its TAAP issuer occurs in `issuers`, and
 `verify_attestation` accepts every signature, profile, subject-kind, schema, freshness, status, and
-disclosure rule. `image_provenance/1` gives the image projection work one exact statement:
+disclosure rule. `issuers` names identities; the server binds each name to a key only through that
+issuer's identity chain in the server's own `LIQUID_HOME` (liquid#383). Provision it before serving:
+`liquid identity show --chain` where the issuer signs, then `liquid identity trust <chain>` in the
+server's home. Without it the issuer is unknown, the attestation is refused with
+`attestation.unknown_signer`, and the image is denied ([identity.md](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)). `image_provenance/1` gives the image projection work one exact statement:
 
 - subject: the image's SHA-256 digest; subject kind: `artifact`
 - `image:text`: the complete digest-pinned image reference
@@ -120,8 +125,7 @@ and authenticates the complete path on every decision.
 
 ### Authenticated checkpoint age
 
-[Bridge decision 37](https://github.com/oramasearch/liquid-bridge/blob/main/docs/decisions.md)
-adds `issued_at` to the `lake_checkpoint/1` body: a nonnegative integer number of seconds since
+The checkpoint format adds `issued_at` to the `lake_checkpoint/1` body: a nonnegative integer number of seconds since
 the Unix epoch, UTC. The field sits inside `checkpoint` in the HTTP response, alongside
 `tree_size` and `root_hash`. It is covered by the existing Ed25519 signature over
 `TAAP/1 lake_checkpoint/1`, one NUL byte, and the CBOR encoding of the complete body. The existing
@@ -144,7 +148,7 @@ age. A stale checkpoint does not replace the inspection cache. Old checkpoints l
 The log attests its own time. This protects against stale or replayed checkpoints, not against a
 log that lies about when it signed. Binding RFC 3161 time from an independent authority is the
 stronger option described in [transparency verification](transparency.md), and is outside this
-admission change under decision 37.
+admission change.
 
 ## Decision record and stream
 
@@ -192,11 +196,12 @@ least one denied it.
 The stable rule ids are `policy.audit_only`, `policy.image_exempt`,
 `policy.namespace_exempt`, `image.digest_required`, `attestation.source_unavailable`,
 `attestation.missing`, `attestation.subject_mismatch`, `attestation.issuer_rejected`,
-`attestation.profile_rejected`, `attestation.signature_invalid`, `attestation.verified`,
+`attestation.profile_rejected`, `attestation.signature_invalid`, `attestation.unknown_signer`,
+`attestation.verified`,
 `transparency.policy_denied`, `transparency.verifier_unavailable`, and
 `transparency.not_included`. The stable human reason
 vocabulary remains `no attestation`, `issuer not accepted`, `profile not accepted`,
-`signature invalid`, `image not pinned by digest`, `not in log`, `checkpoint stale`,
+`signature invalid`, `issuer identity unknown`, `image not pinned by digest`, `not in log`, `checkpoint stale`,
 `log verifier unavailable`, `log verification denied by policy`, `attestation source unavailable`,
 and `exempt`; detailed verifier failures retain their original messages.
 

@@ -1,7 +1,12 @@
+// SPDX-License-Identifier: MIT
+
+#include <algorithm>
 #include <charconv>
 #include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -9,7 +14,10 @@
 #include <string>
 #include <string_view>
 
+#include "cli/reapi_options.hpp"
 #include "liquid/error.hpp"
+#include "liquid/identity.hpp"
+#include "liquid/listener.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/workers.hpp"
 
@@ -62,6 +70,99 @@ auto size_class(std::string_view value) -> liquid::result<liquid::action_size_cl
         liquid::errc::invalid_argument, "worker size class is invalid", std::string{value}});
 }
 
+auto base64url_decode(std::string_view value) -> std::optional<std::vector<std::byte>> {
+    if (value.empty() || value.size() % 4 == 1) {
+        return std::nullopt;
+    }
+    constexpr std::string_view alphabet =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    auto output = std::vector<std::byte>{};
+    auto accumulator = std::uint32_t{};
+    auto bits = 0U;
+    for (const auto character : value) {
+        const auto position = alphabet.find(character);
+        if (position == std::string_view::npos) {
+            return std::nullopt;
+        }
+        accumulator = (accumulator << 6U) | static_cast<std::uint32_t>(position);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            output.push_back(std::byte{static_cast<unsigned char>((accumulator >> bits) & 0xffU)});
+        }
+    }
+    return output;
+}
+
+// Reads one identity document as printed by `liquid identity show --document`.
+auto identity_document_file(const std::filesystem::path& path)
+    -> liquid::result<liquid::identity_document> {
+    auto input = std::ifstream{path, std::ios::binary};
+    if (!input) {
+        return std::unexpected(liquid::error{
+            liquid::errc::not_found, "identity document cannot be read", path.string()});
+    }
+    auto text = std::string{std::istreambuf_iterator<char>{input}, {}};
+    std::erase_if(text, [](char character) {
+        return character == ' ' || character == '\n' || character == '\r' || character == '\t';
+    });
+    auto bytes = base64url_decode(text);
+    if (!bytes) {
+        return std::unexpected(liquid::error{
+            liquid::errc::invalid_argument, "identity document is not base64url", path.string()});
+    }
+    auto document = liquid::decode_identity_document(*bytes);
+    if (!document) {
+        return std::unexpected(
+            liquid::error{document.error().code, document.error().message, path.string()});
+    }
+    return document;
+}
+
+// A file is one identity document; a directory contributes every regular file in it whose name
+// does not start with a dot (so a mounted Kubernetes ConfigMap works as-is).
+auto identity_documents(const std::filesystem::path& path)
+    -> liquid::result<std::vector<liquid::identity_document>> {
+    auto code = std::error_code{};
+    if (!std::filesystem::is_directory(path, code)) {
+        auto document = identity_document_file(path);
+        if (!document) {
+            return std::unexpected(document.error());
+        }
+        return std::vector{std::move(*document)};
+    }
+    auto files = std::vector<std::filesystem::path>{};
+    for (const auto& entry : std::filesystem::directory_iterator{path, code}) {
+        if (entry.is_regular_file(code) && !entry.path().filename().string().starts_with(".")) {
+            files.push_back(entry.path());
+        }
+    }
+    if (code) {
+        return std::unexpected(liquid::error{liquid::errc::io, code.message(), path.string()});
+    }
+    std::ranges::sort(files);
+    auto output = std::vector<liquid::identity_document>{};
+    for (const auto& file : files) {
+        auto document = identity_document_file(file);
+        if (!document) {
+            return std::unexpected(document.error());
+        }
+        output.push_back(std::move(*document));
+    }
+    return output;
+}
+
+// The host of a `host:port` listen address: `[v6]:port`, `v4:port`, or the whole value, read the
+// way `serve reapi` reads it.
+auto listen_host(std::string_view listen) -> std::string_view {
+    if (listen.starts_with('[')) {
+        const auto close = listen.find(']');
+        return close == std::string_view::npos ? listen : listen.substr(0, close + 1);
+    }
+    const auto colon = listen.rfind(':');
+    return colon == std::string_view::npos ? listen : listen.substr(0, colon);
+}
+
 auto run_service(liquid::runtime::task<void> service) -> liquid::result<void> {
     auto mutex = std::mutex{};
     auto condition = std::condition_variable{};
@@ -83,6 +184,11 @@ auto run_service(liquid::runtime::task<void> service) -> liquid::result<void> {
 auto scheduler(int argc, char** argv) -> int {
     auto options = liquid::scheduler_options{.store_directory =
                                                  std::filesystem::current_path() / ".liquid-store"};
+    auto uploads = reapi_upload_options();
+    if (!uploads) {
+        return fail(uploads.error());
+    }
+    options.uploads = *uploads;
     if (const auto value = environment("LIQUID_SCHEDULER_LISTEN"); !value.empty()) {
         options.listen = value;
     }
@@ -102,6 +208,10 @@ auto scheduler(int argc, char** argv) -> int {
         }
         options.lease_duration = *parsed;
     }
+    auto trusted_workers = std::vector<std::filesystem::path>{};
+    if (const auto value = environment("LIQUID_TRUSTED_WORKERS"); !value.empty()) {
+        trusted_workers.emplace_back(value);
+    }
     for (auto index = 0; index < argc; ++index) {
         const auto argument = std::string_view{argv[index]};
         if (argument == "--listen" && ++index < argc) {
@@ -118,13 +228,47 @@ auto scheduler(int argc, char** argv) -> int {
                 return usage(value.error().message);
             }
             options.lease_duration = *value;
+        } else if (argument == "--trust-worker" && ++index < argc) {
+            trusted_workers.emplace_back(argv[index]);
+        } else if (argument == "--tls-cert" && ++index < argc) {
+            options.security.tls_certificate = std::filesystem::path{argv[index]};
+        } else if (argument == "--tls-key" && ++index < argc) {
+            options.security.tls_key = std::filesystem::path{argv[index]};
+        } else if (argument == "--client-ca" && ++index < argc) {
+            options.security.client_certificate_authority = std::filesystem::path{argv[index]};
+        } else if (argument == "--token-file" && ++index < argc) {
+            // The token is read from an owner-only file, never from argv or the environment.
+            auto token = liquid::read_token_file(std::filesystem::path{argv[index]});
+            if (!token) {
+                return fail(token.error());
+            }
+            options.security.bearer_token = std::move(*token);
         } else {
-            return usage("scheduler --listen <address> [--control-listen <address>] "
-                         "[--store <path>] [--instance <name>] [--lease-ms <count>]");
+            return usage("scheduler --listen <address> --trust-worker <path> "
+                         "[--control-listen <address>] [--store <path>] [--instance <name>] "
+                         "[--lease-ms <count>] [--tls-cert <path> --tls-key <path>] "
+                         "[--token-file <path>] [--client-ca <path>]");
         }
     }
     if (options.listen.empty()) {
         return usage("scheduler --listen requires an address");
+    }
+    // Refused before anything starts; `serve_scheduler` checks the parsed address again
+    // (liquid#520).
+    const auto secured = liquid::validate_listener_security(
+        liquid::is_loopback_address(listen_host(options.listen)), options.security);
+    if (!secured) {
+        return fail(secured.error());
+    }
+    if (trusted_workers.empty()) {
+        return usage("scheduler --trust-worker requires at least one worker identity document");
+    }
+    for (const auto& path : trusted_workers) {
+        auto documents = identity_documents(path);
+        if (!documents) {
+            return fail(documents.error());
+        }
+        std::ranges::move(*documents, std::back_inserter(options.trusted_workers));
     }
     std::println("scheduler listening on {}", options.listen);
     auto served = run_service(liquid::serve_scheduler(std::move(options)));
@@ -150,6 +294,7 @@ auto worker(int argc, char** argv) -> int {
         }
         options.size_class = *parsed;
     }
+    auto trusted_scheduler = environment("LIQUID_TRUSTED_SCHEDULER");
     if (const auto value = environment("LIQUID_WORKER_POLL_MS"); !value.empty()) {
         auto parsed = milliseconds(value, "LIQUID_WORKER_POLL_MS");
         if (!parsed) {
@@ -179,14 +324,44 @@ auto worker(int argc, char** argv) -> int {
                 return usage(parsed.error().message);
             }
             options.poll_interval = *parsed;
+        } else if (argument == "--trust-scheduler" && ++index < argc) {
+            trusted_scheduler = argv[index];
+        } else if (argument == "--scheduler-tls") {
+            options.scheduler.tls.enabled = true;
+        } else if (argument == "--scheduler-ca" && ++index < argc) {
+            options.scheduler.tls.enabled = true;
+            options.scheduler.tls.certificate_authority = std::filesystem::path{argv[index]};
+        } else if (argument == "--client-cert" && ++index < argc) {
+            options.scheduler.tls.enabled = true;
+            options.scheduler.tls.client_certificate = std::filesystem::path{argv[index]};
+        } else if (argument == "--client-key" && ++index < argc) {
+            options.scheduler.tls.enabled = true;
+            options.scheduler.tls.client_key = std::filesystem::path{argv[index]};
+        } else if (argument == "--token-file" && ++index < argc) {
+            // A secured scheduler requires this token on every RPC (liquid#520).
+            auto token = liquid::read_token_file(std::filesystem::path{argv[index]});
+            if (!token) {
+                return fail(token.error());
+            }
+            options.scheduler.headers.insert_or_assign("authorization", "Bearer " + *token);
         } else {
-            return usage("worker --scheduler <address> [--root <path>] "
-                         "[--size-class <tiny|short|medium|long>] [--poll-ms <count>]");
+            return usage("worker --scheduler <address> --trust-scheduler <path> [--root <path>] "
+                         "[--size-class <tiny|short|medium|long>] [--poll-ms <count>] "
+                         "[--scheduler-tls] [--scheduler-ca <path>] [--client-cert <path> "
+                         "--client-key <path>] [--token-file <path>]");
         }
     }
     if (options.scheduler.endpoint.empty()) {
         return usage("worker --scheduler requires an address");
     }
+    if (trusted_scheduler.empty()) {
+        return usage("worker --trust-scheduler requires the scheduler identity document");
+    }
+    auto scheduler_document = identity_document_file(trusted_scheduler);
+    if (!scheduler_document) {
+        return fail(scheduler_document.error());
+    }
+    options.trusted_scheduler = std::move(*scheduler_document);
     std::println("worker connecting to {}", options.scheduler.endpoint);
     auto served = run_service(liquid::run_worker(std::move(options)));
     return served ? 0 : fail(served.error());

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "harness.hpp"
 
 #include <algorithm>
@@ -5,6 +7,7 @@
 #include <chrono>
 #include <cstddef>
 #include <exception>
+#include <functional>
 #include <map>
 #include <random>
 #include <span>
@@ -80,7 +83,8 @@ public:
 
 class crashing_injector final : public fault_injector {
 public:
-    explicit crashing_injector(std::uint64_t target) : target_(target) {}
+    explicit crashing_injector(std::uint64_t target, std::function<void()> on_crash = {})
+        : target_(target), on_crash_(std::move(on_crash)) {}
 
     void visit(fault_event event) override {
         const auto step = step_.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -90,6 +94,9 @@ public:
         operation_ = event.operation;
         phase_ = event.phase;
         path_ = event.path.string();
+        if (on_crash_) {
+            on_crash_();
+        }
         throw simulated_crash{};
     }
 
@@ -106,6 +113,7 @@ public:
 
 private:
     std::uint64_t target_{};
+    std::function<void()> on_crash_;
     std::atomic<std::uint64_t> step_{};
     std::atomic<bool> fired_{};
     fault_operation operation_{};
@@ -133,19 +141,28 @@ std::size_t input_size(std::mt19937_64& random) {
     return 40U + static_cast<std::size_t>(random() % (4U * 1024U - 40U + 1));
 }
 
-std::shared_ptr<store_backend> make_backend(simulation_backend kind,
-                                            const std::filesystem::path& path) {
+// The backend a simulation runs on, and the memory backend underneath it when there is one.
+struct simulation_host {
+    std::shared_ptr<store_backend> backend;
+    std::shared_ptr<memory_store_backend> memory;
+};
+
+simulation_host make_backend(simulation_backend kind, const std::filesystem::path& path) {
     switch (kind) {
-    case simulation_backend::memory:
-        return std::make_shared<memory_store_backend>();
+    case simulation_backend::memory: {
+        auto memory = std::make_shared<memory_store_backend>();
+        return {memory, memory};
+    }
     case simulation_backend::write_once_disk:
-        return std::make_shared<write_once_store_backend>(make_disk_store_backend(path));
-    case simulation_backend::write_once_memory:
-        return std::make_shared<write_once_store_backend>(std::make_shared<memory_store_backend>());
+        return {std::make_shared<write_once_store_backend>(make_disk_store_backend(path)), nullptr};
+    case simulation_backend::write_once_memory: {
+        auto memory = std::make_shared<memory_store_backend>();
+        return {std::make_shared<write_once_store_backend>(memory), memory};
+    }
     case simulation_backend::disk:
         break;
     }
-    return make_disk_store_backend(path);
+    return {make_disk_store_backend(path), nullptr};
 }
 
 result<store> open_store(const std::filesystem::path& path,
@@ -354,13 +371,14 @@ std::vector<operation> make_schedule(std::mt19937_64& random,
 
 simulation_result run_store_simulation(std::uint64_t seed,
                                        const std::filesystem::path& workspace,
-                                       simulation_backend backend_kind) {
+                                       simulation_backend backend_kind,
+                                       crash_durability durability) {
     std::mt19937_64 random(seed);
     const auto initial = make_bytes(40U + random() % 4057U, random());
     const auto schedule = make_schedule(random, initial);
 
     temporary_directory probe(workspace / ("probe-" + std::to_string(seed)));
-    auto probe_backend = make_backend(backend_kind, probe.path());
+    auto probe_backend = make_backend(backend_kind, probe.path()).backend;
     auto probe_opened = open_store(probe.path(), probe_backend);
     if (!probe_opened)
         return {0,
@@ -402,7 +420,12 @@ simulation_result run_store_simulation(std::uint64_t seed,
 
     const auto fault_step = 1U + random() % counter.count();
     temporary_directory actual(workspace / ("actual-" + std::to_string(seed)));
-    auto actual_backend = make_backend(backend_kind, actual.path());
+    const auto actual_host = make_backend(backend_kind, actual.path());
+    const auto& actual_backend = actual_host.backend;
+    const auto& memory = actual_host.memory;
+    if (durability != crash_durability::everything && !memory) {
+        return {0, 0, failure(seed, 0, "a crash durability mode needs a memory backend")};
+    }
     auto opened = open_store(actual.path(), actual_backend);
     if (!opened)
         return {fault_step,
@@ -428,7 +451,13 @@ simulation_result run_store_simulation(std::uint64_t seed,
     lease_map roots;
     roots.emplace(to_string(*initial_id), std::move(*actual_root));
     std::vector<expected_object> attempted;
-    crashing_injector crash(fault_step);
+    // The crashed process writes nothing after its crash point; the backend then keeps what the
+    // durability mode allows of the writes since the last barrier.
+    crashing_injector crash(fault_step, [&] {
+        if (durability != crash_durability::everything) {
+            memory->set_frozen(true);
+        }
+    });
     {
         injector_guard guard(&crash);
         if (auto failed = run_schedule(*opened,
@@ -447,6 +476,10 @@ simulation_result run_store_simulation(std::uint64_t seed,
     if (!crash.fired())
         return {fault_step, 0, failure(seed, fault_step, "selected fault point was not reached")};
     *opened = {};
+    if (durability != crash_durability::everything) {
+        memory->set_frozen(false);
+        static_cast<void>(memory->crash(durability, seed ^ 0x3443344334433443ULL));
+    }
 
     auto reopened = open_store(actual.path(), actual_backend);
     if (!reopened) {

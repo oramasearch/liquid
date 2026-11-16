@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "identity/keys/backend.hpp"
 
 #include <algorithm>

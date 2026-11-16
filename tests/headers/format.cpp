@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/format.hpp"
 
 auto format_header_isolated() -> int {

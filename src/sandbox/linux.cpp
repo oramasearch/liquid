@@ -1,7 +1,11 @@
+// SPDX-License-Identifier: MIT
+
+#include "sandbox/override.hpp"
 #include "sandbox/sandbox.hpp"
 
 #if defined(__linux__)
 
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
@@ -25,6 +29,8 @@ extern char** environ;
 namespace liquid::sandbox_detail {
 namespace {
 
+// A single-quoted sh word: everything inside is literal except `'`, closed and escaped. A NUL
+// cannot be carried at all, so a script that would hold one is refused (L-17, liquid#399).
 auto quote(std::string_view value) -> std::string {
     auto output = std::string{"'"};
     for (const auto character : value) {
@@ -57,7 +63,8 @@ auto create_file(const std::filesystem::path& path) -> result<void> {
 
 auto read_guard_path() -> result<std::filesystem::path> {
     auto candidates = std::vector<std::filesystem::path>{};
-    if (const auto* configured = std::getenv("LIQUID_READ_GUARD"))
+    if (const auto* configured = std::getenv("LIQUID_READ_GUARD");
+        configured && trusted_override(configured))
         candidates.emplace_back(configured);
     candidates.emplace_back(LIQUID_READ_GUARD_PATH);
     auto code = std::error_code{};
@@ -87,6 +94,17 @@ auto read_violation(const launch_request& request) -> std::optional<std::string>
 auto write_bootstrap(const launch_request& request,
                      const std::filesystem::path& script,
                      const std::optional<std::filesystem::path>& read_guard) -> result<void> {
+    // A NUL cannot be quoted for sh, so a command, variable or path holding one is refused before
+    // the script exists (liquid#399).
+    const auto holds_nul = [](std::string_view value) {
+        return value.find('\0') != std::string_view::npos;
+    };
+    if (std::ranges::any_of(request.command, holds_nul) || holds_nul(request.cwd) ||
+        holds_nul(request.work_root) || holds_nul(request.toolchain_root) ||
+        holds_nul(request.sandbox_root.string())) {
+        return std::unexpected(
+            error{errc::invalid_argument, "a sandbox argument or path holds a NUL", script.string()});
+    }
     auto stream = std::ofstream{script, std::ios::binary | std::ios::trunc};
     if (!stream)
         return std::unexpected(error{errc::io, "cannot create sandbox bootstrap", script.string()});
@@ -133,6 +151,17 @@ auto write_bootstrap(const launch_request& request,
     }
     stream << "/usr/bin/mount -t proc proc " << quote((request.sandbox_root / "proc").string())
            << "\n";
+    // The host's boot id identifies the machine and changes every boot, so an action that reads it
+    // is not reproducible across machines (L-36, liquid#414): it reads a fixed value instead.
+    const auto boot_id = script.parent_path() / "liquid-boot-id";
+    {
+        auto fixed = std::ofstream{boot_id, std::ios::binary | std::ios::trunc};
+        fixed << "00000000-0000-0000-0000-000000000000\n";
+        if (!fixed)
+            return std::unexpected(error{errc::io, "cannot write the sandbox boot id", boot_id.string()});
+    }
+    stream << "/usr/bin/mount --bind " << quote(boot_id.string()) << ' '
+           << quote((request.sandbox_root / "proc/sys/kernel/random/boot_id").string()) << "\n";
     if (request.remote_eligible) {
         stream << "/usr/bin/mount --bind " << quote(read_guard->string()) << ' '
                << quote(rooted("/liquid/read-guard").string()) << "\n";
@@ -187,6 +216,9 @@ auto write_wrap_bootstrap(const wrap_launch_request& request, const std::filesys
            << quote(rooted("/liquid/trace").string()) << "\n";
     stream << "/usr/bin/mount --bind " << quote(request.plan.string()) << ' '
            << quote(rooted("/liquid/plan").string()) << "\n";
+    // The action may read the plan, never rewrite it (liquid#401).
+    stream << "/usr/bin/mount -o remount,bind,ro " << quote(rooted("/liquid/plan").string())
+           << "\n";
     stream << "/usr/bin/mount -t tmpfs tmpfs " << quote(rooted("/tmp").string()) << "\n";
     stream << "/usr/bin/mkdir -p " << quote(rooted("/tmp/home").string()) << "\n";
     stream << "/usr/bin/mount --rbind /proc " << quote(rooted("/proc").string()) << "\n";

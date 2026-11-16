@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "workers/control.hpp"
 
 #include <format>

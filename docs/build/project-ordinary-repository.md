@@ -39,7 +39,7 @@ initialised .
 ++ liquid cut release
 + change=change=blake3:071ecd57601857262fdf5c2091e662bd5a423b01386061db15cc152623cb9145
 + liquid project deb blake3:071ecd57601857262fdf5c2091e662bd5a423b01386061db15cc152623cb9145 --name example --version 1.0.0 --arch arm64 --out ../out
-error: not_configured: repository has no recorded build configuration; run liquid wrap <command> first (/Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/.cache/issue-286/before/package)
+error: not_configured: repository has no recorded build configuration; run liquid wrap <command> first ($REPO/.cache/issue-286/before/package)
 exit=1
 ```
 
@@ -56,7 +56,7 @@ initialised .
 ++ liquid cut release
 + change=change=blake3:a3ac4dc54ae4c00f8d2147e25544e7ce1f30517d4397fd3573a80e01cf56b3da
 + liquid project oci blake3:a3ac4dc54ae4c00f8d2147e25544e7ce1f30517d4397fd3573a80e01cf56b3da --name example --version 1.0.0 --arch arm64 --out ../out
-error: not_configured: repository has no recorded build configuration; run liquid wrap <command> first (/Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/.cache/issue-286/before-oci/package)
+error: not_configured: repository has no recorded build configuration; run liquid wrap <command> first ($REPO/.cache/issue-286/before-oci/package)
 exit=1
 ```
 
@@ -67,14 +67,14 @@ public `root_digest()` API on the baseline repository; projection still runs in 
 baseline executable. Both formats reject that valid tree before inspecting it.
 
 ```text
-++ /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/build/liquid tree
+++ $REPO/build/liquid tree
 + tree=blake3:394a59172c9ef3f911013e8d8d1ac19de8e6d6622f663a705de559f19e4d90ad
 + liquid project deb blake3:394a59172c9ef3f911013e8d8d1ac19de8e6d6622f663a705de559f19e4d90ad --name example --version 1.0.0 --arch arm64 --out ../tree-out
-error: not_configured: repository has no recorded build configuration; run liquid wrap <command> first (/Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/.cache/issue-286/before/package)
+error: not_configured: repository has no recorded build configuration; run liquid wrap <command> first ($REPO/.cache/issue-286/before/package)
 + printf 'deb exit=%s\n' 1
 deb exit=1
 + liquid project oci blake3:394a59172c9ef3f911013e8d8d1ac19de8e6d6622f663a705de559f19e4d90ad --name example --version 1.0.0 --arch arm64 --out ../tree-image
-error: not_configured: repository has no recorded build configuration; run liquid wrap <command> first (/Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/.cache/issue-286/before/package)
+error: not_configured: repository has no recorded build configuration; run liquid wrap <command> first ($REPO/.cache/issue-286/before/package)
 + printf 'oci exit=%s\n' 1
 oci exit=1
 ```
@@ -141,13 +141,13 @@ This fixture is only for the existing build-result compatibility check. The cust
 needs no fixture or knowledge of build-cache storage.
 
 ```text
-$ /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/.cache/issue-286/liquid-before project deb blake3:c06eab04431c5cda77766db69d0ced4ea4fccf90f8e453ef76ff3249d4f84f30 --name example --version 1.0.0 --arch arm64 --out /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/.cache/issue-286/before-result
-artifact: /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/.cache/issue-286/before-result/example-1.0.0-1.arm64.deb sha256:dfd7126f56c09ac7fb1a4c6e82dbd02690bc8e67b506be68f41a73511c71a0a8 application/vnd.debian.binary-package
+$ $REPO/.cache/issue-286/liquid-before project deb blake3:c06eab04431c5cda77766db69d0ced4ea4fccf90f8e453ef76ff3249d4f84f30 --name example --version 1.0.0 --arch arm64 --out $REPO/.cache/issue-286/before-result
+artifact: $REPO/.cache/issue-286/before-result/example-1.0.0-1.arm64.deb sha256:dfd7126f56c09ac7fb1a4c6e82dbd02690bc8e67b506be68f41a73511c71a0a8 application/vnd.debian.binary-package
 attestation: blake3:34172404752190af91ff28dff78f9aa9f96df17677c27a8600dba72ad9ea3408
 attestation: blake3:d4fac4ca421139452e1ad2a31fb9f5da0180e6af27c27ae365b821c797a9745c
 exit=0
-$ /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/build/liquid project deb blake3:c06eab04431c5cda77766db69d0ced4ea4fccf90f8e453ef76ff3249d4f84f30 --name example --version 1.0.0 --arch arm64 --out /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/.cache/issue-286/after-result
-artifact: /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/.cache/issue-286/after-result/example-1.0.0-1.arm64.deb sha256:dfd7126f56c09ac7fb1a4c6e82dbd02690bc8e67b506be68f41a73511c71a0a8 application/vnd.debian.binary-package
+$ $REPO/build/liquid project deb blake3:c06eab04431c5cda77766db69d0ced4ea4fccf90f8e453ef76ff3249d4f84f30 --name example --version 1.0.0 --arch arm64 --out $REPO/.cache/issue-286/after-result
+artifact: $REPO/.cache/issue-286/after-result/example-1.0.0-1.arm64.deb sha256:dfd7126f56c09ac7fb1a4c6e82dbd02690bc8e67b506be68f41a73511c71a0a8 application/vnd.debian.binary-package
 attestation: blake3:34172404752190af91ff28dff78f9aa9f96df17677c27a8600dba72ad9ea3408
 attestation: blake3:d4fac4ca421139452e1ad2a31fb9f5da0180e6af27c27ae365b821c797a9745c
 exit=0
@@ -166,7 +166,7 @@ ctest --test-dir build --output-on-failure -R '^(cli-project|guides-projection)$
 ```
 
 ```text
-Test project /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/build
+Test project $REPO/build
     Start 651: cli-project
 1/2 Test #651: cli-project ......................   Passed    2.43 sec
     Start 655: guides-projection
@@ -255,7 +255,7 @@ with one-minute load below 40:
 
 ```text
 { 18.00 31.43 34.53 }
-Test project /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/build
+Test project $REPO/build
     Start 9: Drip.restart_replays_the_persisted_journal
 1/1 Test #9: Drip.restart_replays_the_persisted_journal ...   Passed    3.06 sec
 
@@ -272,16 +272,16 @@ alias. The load was below 40:
 
 ```text
 { 18.50 31.08 34.37 }
-Test project /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/build
+Test project $REPO/build
     Start 25: Daemon.single_instance_attach_and_shutdown
 1/1 Test #25: Daemon.single_instance_attach_and_shutdown ...***Failed    0.06 sec
-Running main() from /Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/build/_deps/googletest-src/googletest/src/gtest_main.cc
+Running main() from $REPO/build/_deps/googletest-src/googletest/src/gtest_main.cc
 Note: Google Test filter = Daemon.single_instance_attach_and_shutdown
 [==========] Running 1 test from 1 test suite.
 [----------] Global test environment set-up.
 [----------] 1 test from Daemon
 [ RUN      ] Daemon.single_instance_attach_and_shutdown
-/Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-286/tests/test_daemon.cpp:238: Failure
+$REPO/tests/test_daemon.cpp:238: Failure
 Value of: started
   Actual: false
 Expected: true

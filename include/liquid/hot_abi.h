@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #ifndef LIQUID_HOT_ABI_H
 #define LIQUID_HOT_ABI_H
 

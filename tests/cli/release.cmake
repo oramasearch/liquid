@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_RELEASE_ROOT)
   message(FATAL_ERROR "release CLI test requires the CLI and root")
 endif()
@@ -31,6 +33,7 @@ endfunction()
 
 identity(first first_id)
 identity(second second_id)
+identity(policy policy_id)
 
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/policy"
@@ -56,6 +59,82 @@ foreach(name IN ITEMS first second)
   endif()
 endforeach()
 
+# liquid#384: `first` verifies, and the release policy's issuer must be pinned outside the
+# repository. With no `trust/release-policy-issuers` file, every policy is refused and the error
+# names the file to create.
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
+          "${LIQUID_CLI}" release verify "${artifact}"
+  WORKING_DIRECTORY "${LIQUID_RELEASE_ROOT}/repo"
+  RESULT_VARIABLE unpinned_result
+  OUTPUT_VARIABLE unpinned_output
+  ERROR_VARIABLE unpinned_error)
+if(unpinned_result EQUAL 0 OR NOT unpinned_error MATCHES "trust/release-policy-issuers")
+  message(FATAL_ERROR
+    "release verify accepted a policy with no pinned issuer: ${unpinned_error}")
+endif()
+file(WRITE "${LIQUID_RELEASE_ROOT}/first/trust/release-policy-issuers"
+  "# identities allowed to issue this machine's release policies\n${policy_id}\n")
+
+# liquid#383: `first` binds a signer's name to a key only through an identity chain it holds.
+# Until it trusts the policy issuer, the policy names an unknown signer.
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
+          "${LIQUID_CLI}" release verify "${artifact}"
+  WORKING_DIRECTORY "${LIQUID_RELEASE_ROOT}/repo"
+  RESULT_VARIABLE unknown_policy_result
+  OUTPUT_VARIABLE unknown_policy_output
+  ERROR_VARIABLE unknown_policy_error)
+if(unknown_policy_result EQUAL 0 OR NOT unknown_policy_error MATCHES "unknown signer")
+  message(FATAL_ERROR
+    "release verify accepted a policy from an unknown signer: ${unknown_policy_error}")
+endif()
+
+function(trust from_name into_name)
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/${from_name}"
+            "${LIQUID_CLI}" identity show --chain
+    RESULT_VARIABLE chain_result
+    OUTPUT_VARIABLE chain_output
+    ERROR_VARIABLE chain_error)
+  if(NOT chain_result EQUAL 0 OR NOT chain_output MATCHES "^[A-Za-z0-9_-]+$")
+    message(FATAL_ERROR "identity show --chain failed: ${chain_error} ${chain_output}")
+  endif()
+  execute_process(
+    COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/${into_name}"
+            "${LIQUID_CLI}" identity trust "${chain_output}" --json
+    RESULT_VARIABLE trust_result
+    OUTPUT_VARIABLE trust_output
+    ERROR_VARIABLE trust_error)
+  if(NOT trust_result EQUAL 0)
+    message(FATAL_ERROR "identity trust failed: ${trust_error}")
+  endif()
+  string(JSON trusted_id GET "${trust_output}" id)
+  set(trusted_id "${trusted_id}" PARENT_SCOPE)
+endfunction()
+
+trust(policy first)
+
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
+          "${LIQUID_CLI}" release verify "${artifact}"
+  WORKING_DIRECTORY "${LIQUID_RELEASE_ROOT}/repo"
+  RESULT_VARIABLE unknown_approver_result
+  OUTPUT_VARIABLE unknown_approver_output
+  ERROR_VARIABLE unknown_approver_error)
+if(unknown_approver_result EQUAL 0 OR
+   NOT unknown_approver_output MATCHES "satisfied=false" OR
+   NOT unknown_approver_output MATCHES "distinct_valid_signers=1" OR
+   NOT unknown_approver_output MATCHES "unknown_signer=${second_id}")
+  message(FATAL_ERROR
+    "release verify counted an approval from an unknown signer: ${unknown_approver_output}")
+endif()
+
+trust(second first)
+if(NOT trusted_id STREQUAL second_id)
+  message(FATAL_ERROR "identity trust reported ${trusted_id}, expected ${second_id}")
+endif()
+
 execute_process(
   COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
           "${LIQUID_CLI}" release verify "${artifact}"
@@ -67,6 +146,32 @@ if(NOT verify_result EQUAL 0 OR
    NOT verify_output MATCHES "satisfied=true" OR
    NOT verify_output MATCHES "distinct_valid_signers=2")
   message(FATAL_ERROR "release verify command failed: ${verify_error} ${verify_output}")
+endif()
+
+# liquid#384: `second` writes the repository and replaces the policy with one it signed itself.
+# `first` holds second's chain, but second is not a pinned issuer, so the policy is refused.
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/second"
+          "${LIQUID_CLI}" release policy set --threshold 1 --signer "${second_id}"
+          --not-after 2099-01-01T00:00:00Z
+  WORKING_DIRECTORY "${LIQUID_RELEASE_ROOT}/repo"
+  RESULT_VARIABLE replaced_result
+  ERROR_VARIABLE replaced_error)
+if(NOT replaced_result EQUAL 0)
+  message(FATAL_ERROR "replacing the release policy failed: ${replaced_error}")
+endif()
+execute_process(
+  COMMAND ${CMAKE_COMMAND} -E env "LIQUID_HOME=${LIQUID_RELEASE_ROOT}/first"
+          "${LIQUID_CLI}" release verify "${artifact}"
+  WORKING_DIRECTORY "${LIQUID_RELEASE_ROOT}/repo"
+  RESULT_VARIABLE replaced_verify_result
+  OUTPUT_VARIABLE replaced_verify_output
+  ERROR_VARIABLE replaced_verify_error)
+if(replaced_verify_result EQUAL 0 OR
+   NOT replaced_verify_error MATCHES "not a configured release-policy issuer")
+  message(FATAL_ERROR
+    "release verify accepted a policy from an unpinned issuer: "
+    "${replaced_verify_error} ${replaced_verify_output}")
 endif()
 
 execute_process(

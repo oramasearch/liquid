@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "projection/projection.hpp"
 
 #include "formats/ostree/ostree.hpp"

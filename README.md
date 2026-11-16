@@ -19,11 +19,11 @@ liquid wrap cmake --build build    # build with a cache that explains its misses
 liquid project oci "$change" ...   # ship what you built, with signed provenance
 ```
 
-**Status:** the current release is **v0.2.0** (2026-10-17). Its
-[release notes](docs/releases/v0.2.0.md) say what changed since the first release, `v0.1.0`, whose
-[notes](docs/releases/v0.1.0.md) list everything liquid implements. liquid is a C++26 library,
-**libliquid**, and a `liquid` command-line binary, on macOS and Linux. The repository is
-private and no licence has been chosen yet.
+**Status:** the current release is **v0.3.0** (2026-11-15), the first published as open source.
+Its [release notes](docs/releases/v0.3.0.md) list the security fixes and the breaking changes since
+`v0.2.0`; the [`v0.1.0` notes](docs/releases/v0.1.0.md) list everything liquid implements. liquid is a C++26 library,
+**libliquid**, and a `liquid` command-line binary, on macOS and Linux, released under the MIT
+licence.
 
 ## Contents
 
@@ -126,8 +126,9 @@ liquid import git /path/to/repo   # reachable history and identities come with i
 liquid export git /path/to/out    # write a standalone Git repository back out
 ```
 
-Import preserves reachable local history and maps identities. Export reports exactly what
-could not be carried over. See [Git interop](docs/library/git-interop.md).
+Import preserves reachable local history and maps identities, with bounded Git object decoding.
+Export reports exactly what could not be carried over. See
+[Git interop](docs/library/git-interop.md).
 
 **Where Git has a command for the same thing, liquid uses Git's name.** Where it differs there
 is a reason, and typing the Git name tells you what to use: `liquid commit` answers with
@@ -149,7 +150,8 @@ is a reason, and typing the Git name tells you what to use: `liquid commit` answ
 
 ## Build it and get a first result
 
-Use a recursive checkout with access to the private submodules. Install Clang 17 or newer
+Use a recursive checkout (`git clone --recursive`); `modules/oramacore-cpp` is not needed to
+build liquid. Install Clang 17 or newer
 (Homebrew LLVM on macOS), CMake 3.28 or newer, Ninja, OpenSSL and zlib. Linux also needs
 libfuse3. Configuration downloads pinned source dependencies. The details are in
 [local prerequisites](docs/build/local.md#prerequisites).
@@ -243,7 +245,8 @@ record, with the limits of each area, is the
   and **private sessions** in which an agent can work speculatively.
   [Multiplayer](docs/library/multiplayer.md), [locks](docs/library/locks.md)
 - **Push, pull, clone and a sync server**, and a **drive** that keeps a folder in sync for
-  people who do not think in changes. [Sync](docs/library/sync.md), [drive](docs/library/drive.md)
+  people who do not think in changes. Uploads stay within the offered object graph.
+  [Sync](docs/library/sync.md), [drive](docs/library/drive.md)
 - **Git import and export.** [Git interop](docs/library/git-interop.md)
 
 **One store for everything**
@@ -252,9 +255,13 @@ record, with the limits of each area, is the
   near-duplicate compression, garbage collection that explains what it keeps, and a
   deterministic crash simulator. [Store](docs/library/store.md), [collection](docs/library/gc.md)
 - **Working trees two ways**: a plain directory, or a lazy mount that fetches a file's bytes
-  when it is read. [VFS](docs/library/vfs.md)
+  when it is read, with read-only protection for Drive policy changes. [VFS](docs/library/vfs.md)
 - **Diff and search inside files**: ZIP, tar, HDF5, Parquet, SQLite, PDF, office documents,
-  notebooks, wheels, JARs and more. [Formats](docs/library/formats.md)
+  notebooks, wheels, JARs and linked binaries, with bounded Mach-O and PE symbol inspection.
+  notebooks, wheels, JARs and linked binaries, with bounded Mach-O symbol inspection.
+  notebooks, wheels, JARs and linked binaries, with bounded ELF, Mach-O and PE name inspection.
+  [Formats](docs/library/formats.md)
+  notebooks, wheels, JARs and safetensors with bounded tensor copies. [Formats](docs/library/formats.md)
 - **Search** by ranking, substring or regular expression, with a planner that reports what it
   chose and why. [Search](docs/library/search.md)
 
@@ -266,7 +273,8 @@ record, with the limits of each area, is the
   values of a JSON or `.env` file, with key custody by passphrase, recipient key, cloud KMS,
   Shamir shares or a TPM. [Encryption](docs/library/encryption.md),
   [leaf encryption](docs/library/leaf-encryption.md)
-- **Secret scanning** that blocks by default, and verified redaction from history.
+- **Secret scanning** that blocks by default, with linear JWT detection, and verified redaction
+  from history.
   [Secret scanning](docs/library/secret-scanning.md)
 - **A transparency-log and TUF client**, trusted timestamps, threshold release approval, and
   a **Kubernetes admission** webhook that refuses an image without the evidence a policy asks
@@ -322,8 +330,9 @@ built:
 
 - **The build wrapper, verification, replay and lazy mounts need FUSE**: libfuse3 on Linux,
   macFUSE on macOS. Without it those commands report a documented unsupported result.
-- **Windows** builds, but returns that unsupported result for the daemon and the build
-  wrapper.
+- **Windows** builds, but has **no sandbox, no daemon and no key-file protection**: the daemon and
+  the build wrapper return the unsupported result, and a key file's permissions are not checked
+  there (liquid#419).
 - **Two exit demonstrations have not been run**: caching across two machines with attestation
   (Phase 2), and a recompile in the time a save takes (Phase 4).
 - **Git is not beaten on merit alone.** It has the network. Import and export are the on-ramp,
@@ -382,20 +391,15 @@ Consuming the library is covered in [libliquid](docs/library/libliquid.md), its 
 
 ## Where liquid sits
 
-liquid is an Orama project. It is one module of
-[liquid-bridge](https://github.com/oramasearch/liquid-bridge), which holds the action plan and
-the decisions, and tracks work from its
-[master epic](https://github.com/oramasearch/liquid-bridge/issues/7).
+liquid is an Orama project and part of Orama Lake, whose entry point is
+[lake-platform](https://github.com/oramasearch/lake-platform).
 
 | Project | What it is |
 |---|---|
 | **liquid** (this repository) | The tool and the library. |
 | [**lake**](docs/features/18-lake-service.md) | The hosted service: where liquid collects. Repositories, drives, deployment, identity and secrets over one store. It compiles libliquid in. |
 | [**liquify**](docs/features/21-liquify-ide.md) | The IDE, built on the same incremental graph as the build. |
-| [k0s](https://github.com/oramasearch/k0s) | A private copy of a minimal Kubernetes distribution that liquid deploys to. |
-
-How liquid relates to Orama's wider platform is mapped in
-[feature 23](docs/features/23-metis-and-zetta.md).
+| [k0s](https://github.com/oramasearch/k0s) | Orama's fork of a minimal Kubernetes distribution that liquid deploys to. |
 
 ## Documentation
 
@@ -411,21 +415,23 @@ detail, and the [documentation index](docs/README.md) lists them all.
 | Follow a workflow end to end | [Guides](docs/guides/README.md) |
 | Look up a command or flag | [Generated CLI reference](docs/reference/cli/README.md) |
 | Configure, test or install liquid | [Local build](docs/build/local.md) |
+| Run the fuzzers and sanitizers, or check the hardening | [Hardening](docs/build/hardening.md) and [`fuzz/`](fuzz/README.md) |
 | Use the library | [libliquid](docs/library/libliquid.md) and the [public API map](docs/library/api-map.md) |
 | Understand a subsystem's design | [Library notes](docs/library/README.md) |
 
 ## Contributing
 
-Read [`CLAUDE.md`](CLAUDE.md) and [`AGENTS.md`](AGENTS.md) first. They hold the repository's
-rules: the vocabulary, the document structure, the checks to run before finishing, how a
-release is cut, the recorded decisions, and the conventions inherited from
-[`oramasearch/orama-bridge`](https://github.com/oramasearch/orama-bridge).
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first: how to build, test and send a change. How a
+release is cut is in [docs/releases/README.md](docs/releases/README.md).
+
+Report a vulnerability privately, as [`SECURITY.md`](SECURITY.md) describes.
 
 When liquid gains or loses a capability, update the
 [implementation status](docs/library/status.md) first, then the matching line on this page.
 
 ## Licence
 
-The open-source licence has not yet been chosen
-([release decision](https://github.com/oramasearch/liquid-bridge/issues/2)).
-Third-party notices are in [NOTICE](NOTICE).
+liquid is released under the MIT licence ([LICENSE](LICENSE)). Third-party components and their
+licences are in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES), with notices in [NOTICE](NOTICE).
+Contributions are welcome under the [Contributor License Agreement](CLA.md); see
+[CONTRIBUTING.md](CONTRIBUTING.md).

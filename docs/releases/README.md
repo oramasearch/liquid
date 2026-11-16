@@ -3,6 +3,9 @@
 One page per tagged release, newest first. A page states what the release includes, what it
 does not, what is knowingly still broken, and how it was verified.
 
+- [v0.3.0](v0.3.0.md) — 2026-11-15. The first release published as open source (MIT, the CLA,
+  `SECURITY.md`), and a month of security fixes from the pre-launch review, several of them
+  breaking: read its *Breaking changes* before upgrading.
 - [v0.2.0](v0.2.0.md) — 2026-10-17. The library is the `v0.1.0` source: the release adds a test
   that holds the version in its three places, and moves the release procedure to `dev` → `main`.
   Lake `v0.2.0` is built from liquid `v0.1.0`.
@@ -16,8 +19,7 @@ does not, what is knowingly still broken, and how it was verified.
   `include/liquid/version.hpp`, `version_string()` in `src/version.cpp` and
   `project(liquid VERSION ...)` in `CMakeLists.txt`; move all three in the pull request into `dev`
   that adds the release page. `Version.StringMatchesStruct`, `Version.MatchesProjectVersion` and the
-  ctest `release-notes-page` fail when they disagree or the page is missing. The steps are in the
-  root `CLAUDE.md`, under *Cutting a release*.
+  ctest `release-notes-page` fail when they disagree or the page is missing.
 - **Tag the merge commit** of the release pull request (`dev` into `main`) `vX.Y.Z` and publish the
   GitHub release from the page.
 - **A first release, or one after a long gap, lists everything in it**, not a summary. Check the

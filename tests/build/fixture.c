@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -172,6 +174,9 @@ int main(int argc, char** argv) {
     }
     if (strcmp(argv[1], "fail") == 0 && argc == 3) {
         return fail_recorded(argv[2]);
+    }
+    if (strcmp(argv[1], "symlink") == 0 && argc == 4) {
+        return symlink(argv[2], argv[3]) == 0 ? 0 : 2;
     }
     if (strcmp(argv[1], "outside-read") == 0) {
         return open("/etc/hostname", O_RDONLY) < 0 ? 0 : 1;

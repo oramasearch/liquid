@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/build.hpp"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +23,7 @@
 #include <thread>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <sys/resource.h>
 #include <unistd.h>
 #endif
@@ -49,7 +53,9 @@
 #include "liquid/graph.hpp"
 #include "objects/records.hpp"
 #include "sandbox/environment.hpp"
+#include "sandbox/override.hpp"
 #include "sandbox/sandbox.hpp"
+#include "sandbox/wrap_plan.h"
 #include "vfs/backend.hpp"
 #include "vfs/repository_access.hpp"
 
@@ -128,10 +134,61 @@ private:
     }
 };
 
+// The key that names one wrapped process: the BLAKE3-256 digest the hook computes over its
+// executable, working directory and arguments (liquid_wrap_process_key_hex). It was a 64-bit
+// FNV-1a value, which an author who controls a command line could collide with a cached
+// command's (liquid#449).
+struct process_key {
+    std::array<std::uint8_t, LIQUID_WRAP_KEY_HEX_SIZE / 2> bytes{};
+
+    friend auto operator<=>(const process_key&, const process_key&) = default;
+};
+
+// Reads a process key written as exactly 64 lowercase hex digits; anything else is not a key.
+auto parse_process_key(std::string_view text) -> std::optional<process_key> {
+    if (text.size() != LIQUID_WRAP_KEY_HEX_SIZE) {
+        return std::nullopt;
+    }
+    const auto digit = [](char value) -> int {
+        if (value >= '0' && value <= '9') {
+            return value - '0';
+        }
+        if (value >= 'a' && value <= 'f') {
+            return value - 'a' + 10;
+        }
+        return -1;
+    };
+    auto output = process_key{};
+    for (auto index = std::size_t{}; index < output.bytes.size(); ++index) {
+        const auto high = digit(text[index * 2]);
+        const auto low = digit(text[index * 2 + 1]);
+        if (high < 0 || low < 0) {
+            return std::nullopt;
+        }
+        output.bytes[index] = static_cast<std::uint8_t>((high << 4) | low);
+    }
+    return output;
+}
+
+auto to_hex(const process_key& key) -> std::string {
+    constexpr auto digits = std::string_view{"0123456789abcdef"};
+    auto output = std::string{};
+    output.reserve(key.bytes.size() * 2);
+    for (const auto value : key.bytes) {
+        output.push_back(digits[value >> 4U]);
+        output.push_back(digits[value & 0x0fU]);
+    }
+    return output;
+}
+
+// The saved wrap state's format version. Version 2 carries BLAKE3-256 process keys (liquid#449);
+// a state without this version is ignored, so the run rebuilds it rather than misreading it.
+constexpr auto wrap_state_version = std::string_view{"2"};
+
 struct traced_process {
     std::int64_t pid{};
     std::int64_t parent{};
-    std::uint64_t key{};
+    process_key key{};
     std::string executable;
     std::string cwd;
     std::vector<std::string> command;
@@ -149,7 +206,7 @@ struct launch_completion {
 };
 
 struct saved_action {
-    std::uint64_t key{};
+    process_key key{};
     digest result{};
 };
 
@@ -165,14 +222,16 @@ struct cache_plan {
     struct condition {
         std::string path;
         std::uint64_t size{};
-        std::uint64_t fingerprint{};
+        // BLAKE3-256 of the input, lowercase hex: the hash liquid content-addresses with, so a
+        // changed input cannot be made to match a stale row (liquid#401).
+        std::string digest;
     };
 
     std::vector<saved_action> next_actions;
-    std::set<std::uint64_t> missed_actions;
-    std::set<std::uint64_t> reasoned_actions;
-    std::map<std::uint64_t, int> processes;
-    std::map<std::uint64_t, std::vector<condition>> conditions;
+    std::set<process_key> missed_actions;
+    std::set<process_key> reasoned_actions;
+    std::map<process_key, int> processes;
+    std::map<process_key, std::vector<condition>> conditions;
     std::vector<build_detail::lookup_record> lookups;
 };
 
@@ -229,28 +288,57 @@ auto hex(std::string_view input) -> std::string {
 
 auto file_condition(const std::filesystem::path& root, std::string path)
     -> liquid::result<cache_plan::condition> {
-    auto input = std::ifstream{root / path, std::ios::binary};
-    if (!input) {
-        return std::unexpected(
-            wrap_error(errc::not_found, "conditional action input is missing", root / path));
-    }
-    auto fingerprint = std::uint64_t{1469598103934665603ULL};
+    const auto file = root / path;
+    auto digest = std::array<char, LIQUID_WRAP_DIGEST_HEX_SIZE + 1>{};
     auto size = std::uint64_t{};
-    auto buffer = std::array<char, 64 * 1024>{};
-    while (input) {
-        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const auto count = input.gcount();
-        for (auto index = std::streamsize{}; index < count; ++index) {
-            fingerprint ^= static_cast<unsigned char>(buffer[static_cast<std::size_t>(index)]);
-            fingerprint *= 1099511628211ULL;
+    if (liquid_wrap_file_digest_hex(file.c_str(), digest.data(), &size) != 0) {
+        auto code = std::error_code{};
+        if (!std::filesystem::exists(file, code)) {
+            return std::unexpected(
+                wrap_error(errc::not_found, "conditional action input is missing", file));
         }
-        size += static_cast<std::uint64_t>(count);
-    }
-    if (!input.eof()) {
         return std::unexpected(
-            wrap_error(errc::io, "conditional action input cannot be read", root / path));
+            wrap_error(errc::io, "conditional action input cannot be read", file));
     }
-    return cache_plan::condition{std::move(path), size, fingerprint};
+    return cache_plan::condition{std::move(path), size, std::string{digest.data()}};
+}
+
+// Writes the plan the exec-time hook reads, as a file only this user can read or write, and
+// returns the BLAKE3-256 digest of its bytes. The hook ignores a plan whose bytes do not hash
+// to the digest liquid passes beside it in LIQUID_WRAP_PLAN_DIGEST (liquid#401).
+auto write_wrap_plan(const std::filesystem::path& path, std::string_view text)
+    -> liquid::result<std::string> {
+#if defined(_WIN32)
+    static_cast<void>(text);
+    return std::unexpected(wrap_error(errc::unsupported, "liquid wrap needs a POSIX host", path));
+#else
+    auto ignored = std::error_code{};
+    std::filesystem::remove(path, ignored);
+    const auto descriptor =
+        ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (descriptor < 0) {
+        return std::unexpected(wrap_error(errc::io, std::strerror(errno), path));
+    }
+    auto offset = std::size_t{};
+    while (offset != text.size()) {
+        const auto written = ::write(descriptor, text.data() + offset, text.size() - offset);
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        if (written <= 0) {
+            const auto message = std::string{std::strerror(errno)};
+            ::close(descriptor);
+            return std::unexpected(wrap_error(errc::io, message, path));
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+    if (::close(descriptor) != 0) {
+        return std::unexpected(wrap_error(errc::io, std::strerror(errno), path));
+    }
+    auto digest = std::array<char, LIQUID_WRAP_DIGEST_HEX_SIZE + 1>{};
+    liquid_wrap_digest_hex(text.data(), text.size(), digest.data());
+    return std::string{digest.data()};
+#endif
 }
 
 auto graph_bytes(std::string_view value) -> std::vector<std::byte> {
@@ -452,18 +540,22 @@ auto read_state(const std::filesystem::path& path) -> liquid::result<wrap_state>
     if (!input)
         return std::unexpected(wrap_error(errc::io, "cannot read wrap state", path));
     auto line = std::string{};
+    // The first line names the format. A state from before version 2 (64-bit FNV-1a process
+    // keys) or from an unknown version is not read: the run starts from an empty state and
+    // writes a current one (liquid#449).
+    if (!std::getline(input, line) || line != "V\t" + std::string{wrap_state_version}) {
+        return wrap_state{};
+    }
     while (std::getline(input, line)) {
         const auto fields = split_tabs(line);
         if (fields.size() < 2)
             return std::unexpected(wrap_error(errc::corrupt, "invalid wrap state", path));
         if (fields[0] == "A" && fields.size() == 3) {
-            auto key = std::uint64_t{};
-            auto key_stream = std::istringstream{std::string{fields[1]}};
-            key_stream >> std::hex >> key;
+            auto key = parse_process_key(fields[1]);
             auto id = parse_digest(fields[2]);
-            if (!key_stream || !id)
+            if (!key || !id)
                 return std::unexpected(wrap_error(errc::corrupt, "invalid saved action", path));
-            output.actions.push_back({key, *id});
+            output.actions.push_back({*key, *id});
             continue;
         }
         if (fields[0] == "R" && fields.size() == 2) {
@@ -498,6 +590,7 @@ auto write_state(const std::filesystem::path& path, const wrap_state& state)
     auto output = std::ofstream{temporary, std::ios::binary | std::ios::trunc};
     if (!output)
         return std::unexpected(wrap_error(errc::io, "cannot write wrap state", path));
+    output << "V\t" << wrap_state_version << '\n';
     for (const auto& item : state.outputs)
         output << "O\t" << hex(item) << '\n';
     for (const auto& tool : state.tools)
@@ -505,7 +598,7 @@ auto write_state(const std::filesystem::path& path, const wrap_state& state)
     for (const auto& argument : state.action_command)
         output << "C\t" << hex(argument) << '\n';
     for (const auto& action : state.actions)
-        output << "A\t" << std::hex << action.key << '\t' << to_string(action.result) << '\n';
+        output << "A\t" << to_hex(action.key) << '\t' << to_string(action.result) << '\n';
     if (state.outer_result)
         output << "R\t" << to_string(*state.outer_result) << '\n';
     output.close();
@@ -530,7 +623,8 @@ auto default_cache_directory(const std::filesystem::path& root)
 
 auto wrap_hook_path() -> liquid::result<std::filesystem::path> {
     auto candidates = std::vector<std::filesystem::path>{};
-    if (const auto* configured = std::getenv("LIQUID_WRAP_HOOK"))
+    if (const auto* configured = std::getenv("LIQUID_WRAP_HOOK");
+        configured && sandbox_detail::trusted_override(configured))
         candidates.emplace_back(configured);
 #if defined(__linux__)
     auto code = std::error_code{};
@@ -861,13 +955,13 @@ auto parse_trace(const std::filesystem::path& path) -> liquid::result<std::vecto
         auto process = traced_process{};
         auto numbers = std::istringstream{std::string{fields[0]} + " " + std::string{fields[1]}};
         numbers >> process.pid >> process.parent;
-        auto key = std::istringstream{std::string{fields[2]}};
-        key >> std::hex >> process.key;
+        auto key = parse_process_key(fields[2]);
         auto executable = unhex(fields[3]);
         auto cwd = unhex(fields[4]);
         auto arguments = unhex(fields[5]);
         if (!numbers || !key || !executable || !cwd || !arguments)
             continue;
+        process.key = *key;
         if (fields.size() == 7) {
             auto started = std::istringstream{std::string{fields[6]}};
             started >> process.started_ns;
@@ -2344,8 +2438,8 @@ execute_observed_run(repository& source,
                      const std::filesystem::path& working_tree,
                      const std::vector<std::string>& command,
                      const std::set<std::string>& known_outputs,
-                     const std::map<std::uint64_t, int>& plan,
-                     const std::map<std::uint64_t, std::vector<cache_plan::condition>>& conditions,
+                     const std::map<process_key, int>& plan,
+                     const std::map<process_key, std::vector<cache_plan::condition>>& conditions,
                      const std::map<std::string, std::string>& action_environment,
                      digest input_tree,
                      const wrap_options& options) {
@@ -2362,22 +2456,27 @@ execute_observed_run(repository& source,
     std::filesystem::create_directories(root, code);
     if (code)
         co_return std::unexpected(wrap_error(errc::io, code.message(), run));
+    auto plan_digest = std::string{};
     {
         auto trace_output = std::ofstream{trace, std::ios::trunc};
-        auto plan_output = std::ofstream{plan_path, std::ios::trunc};
+        auto plan_output = std::ostringstream{};
         for (const auto& [key, status] : plan) {
-            plan_output << "H\t" << std::hex << key << '\t' << std::dec << status << '\n';
+            plan_output << "H\t" << to_hex(key) << '\t' << status << '\n';
             const auto found = conditions.find(key);
             if (found == conditions.end()) {
                 continue;
             }
             for (const auto& condition : found->second) {
-                plan_output << "C\t" << std::hex << key << '\t' << condition.fingerprint << '\t'
-                            << std::dec << condition.size << '\t' << hex(condition.path) << '\n';
+                plan_output << "C\t" << to_hex(key) << '\t' << condition.digest << '\t'
+                            << condition.size << '\t' << hex(condition.path) << '\n';
             }
         }
-        if (!trace_output || !plan_output)
+        if (!trace_output)
             co_return std::unexpected(wrap_error(errc::io, "cannot prepare wrap hook files", run));
+        auto written = write_wrap_plan(plan_path, plan_output.str());
+        if (!written)
+            co_return std::unexpected(written.error());
+        plan_digest = std::move(*written);
     }
     auto observations = std::make_shared<observation_log>();
     auto mounted = co_await vfs_detail::start_observed_fuse(
@@ -2395,6 +2494,7 @@ execute_observed_run(repository& source,
     }
     auto environment = action_environment;
     environment["LIQUID_WRAP_ACTIVE"] = "1";
+    environment[LIQUID_WRAP_PLAN_DIGEST_VARIABLE] = plan_digest;
     auto hook = wrap_hook_path();
     if (!hook) {
         static_cast<void>(co_await (*mounted)->unmount());
@@ -2748,7 +2848,7 @@ runtime::task<void> publish_observed_run(repository& source,
         }
         add_miss(report, std::move(*cause));
     }
-    auto previous_order = std::map<std::uint64_t, std::size_t>{};
+    auto previous_order = std::map<process_key, std::size_t>{};
     for (std::size_t index = 0; index < previous_actions.size(); ++index) {
         previous_order.emplace(previous_actions[index].key, index);
     }
@@ -2857,14 +2957,18 @@ runtime::task<action_result> run_wrapped_action(repository& source,
             co_return std::unexpected(wrap_error(errc::io, code.message(), mount / output.path));
         }
     }
+    auto plan_digest = std::string{};
     {
         auto trace_output = std::ofstream{trace, std::ios::trunc};
-        auto plan_output = std::ofstream{plan, std::ios::trunc};
-        if (!trace_output || !plan_output) {
+        auto written = trace_output
+                           ? write_wrap_plan(plan, {})
+                           : liquid::result<std::string>{std::unexpected(wrap_error(
+                                 errc::io, "cannot prepare verification hook files", run))};
+        if (!written) {
             static_cast<void>(remove_run(run));
-            co_return std::unexpected(
-                wrap_error(errc::io, "cannot prepare verification hook files", run));
+            co_return std::unexpected(written.error());
         }
+        plan_digest = std::move(*written);
     }
     auto hook = wrap_hook_path();
     if (!hook) {
@@ -2883,6 +2987,7 @@ runtime::task<action_result> run_wrapped_action(repository& source,
     environment["LIQUID_WRAP_PLAN"] = plan.string();
 #endif
     environment["LIQUID_WRAP_ACTIVE"] = "1";
+    environment[LIQUID_WRAP_PLAN_DIGEST_VARIABLE] = plan_digest;
     const auto cwd =
         action.input.cwd.empty() ? std::string{"/liquid/work"} : "/liquid/work/" + action.input.cwd;
     auto request = sandbox_detail::wrap_launch_request{.sandbox_root = sandbox_root,
@@ -2906,48 +3011,29 @@ runtime::task<action_result> run_wrapped_action(repository& source,
         }
         co_return std::unexpected(launched->error());
     }
+    const auto staging = run / "staging";
+    std::filesystem::create_directories(staging, code);
+    if (code) {
+        static_cast<void>(remove_run(run));
+        co_return std::unexpected(wrap_error(errc::io, code.message(), staging));
+    }
     auto output_values = std::vector<action_output>{};
     for (const auto& declared : expected.outputs) {
-        const auto relative = declared.path;
-        const auto path = mount / relative;
-        if (!std::filesystem::exists(path, code)) {
-            continue;
-        }
-        const auto directory = std::filesystem::is_directory(path, code);
-        if (code) {
+        auto staged = build_detail::stage_output(
+            mount, declared.path, build_detail::output_shape::either, staging, false);
+        if (!staged) {
             static_cast<void>(remove_run(run));
-            co_return std::unexpected(wrap_error(errc::io, code.message(), path));
+            co_return std::unexpected(staged.error());
         }
-        auto files = std::vector<std::filesystem::path>{};
-        if (directory) {
-            for (auto iterator = std::filesystem::recursive_directory_iterator{path, code};
-                 !code && iterator != std::filesystem::recursive_directory_iterator{};
-                 ++iterator) {
-                if (iterator->is_regular_file()) {
-                    files.push_back(iterator->path());
-                }
-            }
-        } else {
-            files.push_back(path);
-        }
-        if (code) {
-            static_cast<void>(remove_run(run));
-            co_return std::unexpected(wrap_error(errc::io, code.message(), path));
-        }
-        for (const auto& file : files) {
-            auto stored = co_await repository_detail::build_access::put_file(source, file);
+        for (auto& file : *staged) {
+            auto stored = co_await repository_detail::build_access::put_file(source, file.staged);
+            auto removed = std::error_code{};
+            std::filesystem::remove(file.staged, removed);
             if (!stored) {
                 static_cast<void>(remove_run(run));
                 co_return std::unexpected(stored.error());
             }
-            const auto status = std::filesystem::status(file, code);
-            if (code) {
-                static_cast<void>(remove_run(run));
-                co_return std::unexpected(wrap_error(errc::io, code.message(), file));
-            }
-            output_values.push_back({std::filesystem::relative(file, mount).generic_string(),
-                                     static_cast<std::uint32_t>(status.permissions()) & 0777U,
-                                     *stored});
+            output_values.push_back({std::move(file.path), file.mode, *stored});
         }
     }
     std::ranges::sort(output_values, {}, &action_output::path);
@@ -3277,3 +3363,20 @@ wrap(std::filesystem::path working_tree, std::vector<std::string> command, wrap_
 }
 
 } // namespace liquid::build
+
+namespace liquid::build_detail {
+
+liquid::result<std::vector<std::string>>
+saved_wrap_action_keys(const std::filesystem::path& state) {
+    auto saved = build::read_state(state);
+    if (!saved) {
+        return std::unexpected(saved.error());
+    }
+    auto output = std::vector<std::string>{};
+    for (const auto& action : saved->actions) {
+        output.push_back(build::to_hex(action.key));
+    }
+    return output;
+}
+
+} // namespace liquid::build_detail

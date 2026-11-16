@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -42,6 +44,7 @@ auto path_history(int argc, char** argv) -> int;
 auto locks_lock(int argc, char** argv) -> int;
 auto locks_unlock(int argc, char** argv) -> int;
 auto identity(int argc, char** argv) -> int;
+auto install_identity_custody() -> void;
 auto keys(int argc, char** argv) -> int;
 auto release(int argc, char** argv) -> int;
 auto sign(int argc, char** argv) -> int;
@@ -131,8 +134,11 @@ constexpr auto flags_write = std::to_array<flag>({
     {"--depends-on", "<path>", "Add a path read while planning; repeatable.", "none"},
     {"--on-stale", "<policy>", "Choose refuse, disjoint, or force stale-write handling.", "refuse"},
 });
+constexpr auto flags_cut = std::to_array<flag>({
+    {"--message", "<message>", "The change message; `-m <message>` is the short form.", "none"},
+});
 constexpr auto flags_daemon = std::to_array<flag>({
-    {"--shutdown", {}, "Stop the checkout daemon.", "false"},
+    {"--shutdown", {}, "Stop the checkout daemon; the same as `daemon stop`.", "false"},
     {"--serve", "<checkout>", "Run the internal daemon service for a checkout.", "none"},
     {"--idle-ms", "<count>", "Exit the service after this idle interval.", "configured value"},
     {"--memory", "<bytes>", "Set the resident graph-value byte ceiling.", "configured value"},
@@ -162,6 +168,10 @@ constexpr auto flags_log = std::to_array<flag>({
     {"--ops", {}, "Show signed drips and operation metadata.", "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
     {"--timestamps", {}, "Verify timestamp evidence after the verify subcommand.", "false"},
+    {"--confirm",
+     "<fingerprint>",
+     "Pin the log only if its key and witness policy match this fingerprint.",
+     "none"},
 });
 constexpr auto flags_atomic = std::to_array<flag>({
     {"--atomic", {}, "Refuse every reference update when any update is refused.", "false"},
@@ -239,7 +249,11 @@ constexpr auto flags_deploy = std::to_array<flag>({
     {"--json", {}, "Write stable JSON instead of text.", "false"},
 });
 constexpr auto flags_serve = std::to_array<flag>({
-    {"--listen", "<address>", "Select the listener address.", "127.0.0.1"},
+    {"--listen",
+     "<address>",
+     "Select the listener address. A sync or REAPI listener off loopback requires TLS and "
+     "--token-file or --client-ca.",
+     "127.0.0.1"},
     {"--port", "<port>", "Select the sync listener port.", "8080"},
     {"--allow-ref", "<glob>", "Permit a reference-name glob; repeatable.", "all references"},
     {"--instance", "<name>", "Select the REAPI instance name.", "empty"},
@@ -247,8 +261,20 @@ constexpr auto flags_serve = std::to_array<flag>({
     {"--policy", "<file>", "Read the admission policy from this file.", "none"},
     {"--policies", "<dir>", "Read admission policies from this directory.", "none"},
     {"--control-listen", "<address>", "Select the admission control listener.", "none"},
-    {"--tls-cert", "<path>", "Read the admission TLS certificate from this file.", "none"},
-    {"--tls-key", "<path>", "Read the admission TLS private key from this file.", "none"},
+    {"--tls-cert", "<path>", "Read the listener TLS certificate chain from this file.", "none"},
+    {"--tls-key", "<path>", "Read the listener TLS private key from this file.", "none"},
+    {"--client-ca",
+     "<path>",
+     "Require a sync or REAPI client certificate signed by this CA (mutual TLS).",
+     "none"},
+    {"--token-file",
+     "<path>",
+     "Require on every sync or REAPI request the bearer token in this owner-only file.",
+     "none"},
+    {"--upload-quota",
+     "<bytes>",
+     "Hold at most this many uploaded sync bytes before a push authorizes them.",
+     "1073741824"},
     {"--attestation-source", "<url>", "Read admission attestations from this source.", "none"},
     {"--store", "<path>", "Read admission attestations from this store.", "none"},
     {"--log-cache", "<path>", "Store admission log cache data at this path.", "none"},
@@ -263,11 +289,27 @@ constexpr auto flags_keys = std::to_array<flag>({
     {"--shares", "<count>", "Set the number of custody shares to create.", "none"},
 });
 constexpr auto flags_identity = std::to_array<flag>({
-    {"--to", "<software|fido2|piv:9c>", "Select the new identity-key custody.", "software"},
+    {"--to",
+     "<custody>",
+     "For rotate: the new signing-key custody (software, fido2, or piv:9c). For custody: the new "
+     "wrapping-key custody of a software key (passphrase, keychain on macOS, a key custody URI "
+     "such as tpm:pcrs=0,7, or file, which leaves the key protected only by file permissions).",
+     "software"},
     {"--document",
      {},
      "Show only the public TAAP/1 document as unpadded base64url canonical CBOR, "
      "without a newline. Only for show; incompatible with --json (exit 2).",
+     "false"},
+    {"--chain",
+     {},
+     "Show the identity's whole public document chain, oldest first, as unpadded base64url "
+     "canonical CBOR, without a newline: the input to identity trust on another machine. Only "
+     "for show; incompatible with --document and --json (exit 2).",
+     "false"},
+    {"--accept-compromise-rotation",
+     {},
+     "Only for trust: also accept rotations that carry a compromise declaration but no signature "
+     "from the key they replace. Decide this out of band; a sync never does.",
      "false"},
     {"--json", {}, "Write stable JSON instead of text.", "false"},
 });
@@ -435,18 +477,44 @@ constexpr auto flags_build = std::to_array<flag>({
 });
 constexpr auto flags_scheduler = std::to_array<flag>({
     {"--listen", "<address>", "Select the REAPI and worker listener.", "none"},
+    {"--trust-worker",
+     "<path>",
+     "Trust a worker identity document, or a directory of them; repeatable.",
+     "none"},
     {"--control-listen", "<address>", "Select the control listener.", "127.0.0.1:8080"},
     {"--store", "<path>", "Select the scheduler store directory.", "platform cache"},
     {"--instance", "<name>", "Select the scheduler instance.", "empty"},
     {"--lease-ms", "<count>", "Set the worker lease duration.", "configured value"},
+    {"--tls-cert", "<path>", "Read the listener TLS certificate chain from this file.", "none"},
+    {"--tls-key", "<path>", "Read the listener TLS private key from this file.", "none"},
+    {"--client-ca",
+     "<path>",
+     "Require a client certificate signed by this CA (mutual TLS).",
+     "none"},
+    {"--token-file",
+     "<path>",
+     "Require on every request the bearer token in this owner-only file.",
+     "none"},
 });
 constexpr auto flags_worker = std::to_array<flag>({
     {"--scheduler", "<address>", "Select the scheduler endpoint.", "none"},
+    {"--trust-scheduler", "<path>", "Trust this scheduler identity document.", "none"},
     {"--control-listen", "<address>", "Select the control listener.", "127.0.0.1:8081"},
     {"--root", "<path>", "Select the worker state directory.", "platform cache"},
     {"--instance", "<name>", "Select the scheduler instance.", "empty"},
     {"--size-class", "<class>", "Choose tiny, short, medium, or long.", "medium"},
     {"--poll-ms", "<count>", "Set the scheduler polling interval.", "configured value"},
+    {"--scheduler-tls", {}, "Connect to the scheduler over TLS.", "false"},
+    {"--scheduler-ca",
+     "<path>",
+     "Verify the scheduler certificate against this CA.",
+     "system roots"},
+    {"--client-cert", "<path>", "Present this TLS client certificate to the scheduler.", "none"},
+    {"--client-key", "<path>", "Read the TLS client private key from this file.", "none"},
+    {"--token-file",
+     "<path>",
+     "Send the bearer token in this owner-only file to the scheduler.",
+     "none"},
 });
 constexpr auto flags_docs = std::to_array<flag>({
     {"--format", "<markdown|json|man>", "Select the output format.", "markdown"},
@@ -466,6 +534,10 @@ constexpr auto flags_config = std::to_array<flag>({
      "the only package"},
 });
 constexpr auto flags_session = std::to_array<flag>({
+    {"--as",
+     "<agent>",
+     "Start the session as this agent TAAP id, the delegation subject.",
+     "required for start"},
     {"--from", "<file>", "Read session-write content from this file.", "required for write"},
     {"--message", "<text>", "Record this message when publishing a session.", "empty"},
 });
@@ -585,12 +657,14 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::repo_write},
     {"daemon",
-     "daemon [--shutdown] | daemon --serve <checkout> [service options]",
+     "daemon [start | stop | --shutdown] | daemon --serve <checkout> [service options]",
      "start or stop the checkout daemon",
      "available on macOS and Linux",
      flags_daemon,
-     "Start, stop, or run the per-checkout process that owns capture and graph work.",
-     "liquid daemon --shutdown",
+     "Start, stop, or run the per-checkout process that owns capture and graph work. `daemon` "
+     "and `daemon start` start it when it is not running and print its status; `daemon stop` "
+     "and `daemon --shutdown` stop it, and say `no daemon is running` when there is none.",
+     "liquid daemon start\nliquid daemon stop",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::daemon_command},
@@ -687,23 +761,25 @@ constexpr auto commands = std::to_array<command>({
     {"log",
      "log [--ops] [--json] | log timestamps <log-url> | log verify --timestamps | log verify "
      "<log-url> <attestation-base64url> | log consistency <log-url> | log scan <log-url> "
-     "<identity>",
+     "<identity> | log trust <log-url> [--confirm <fingerprint>]",
      "show changes and drips, or verify timestamps and the transparency log",
      "available",
      flags_log,
-     "Show repository history, verify timestamp or transparency-log evidence, and scan log "
-     "identities.",
+     "Show repository history, verify timestamp or transparency-log evidence against the log's "
+     "pin in $LIQUID_HOME/trust/transparency/, scan log identities, and pin a log.",
      "liquid log verify https://log.example.invalid <attestation-base64url>",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::transparency_log},
     {"cut",
-     "cut <message>",
+     "cut -m <message> | cut <message>",
      "cut the working change",
      "available",
-     {},
-     "Name the current aggregation of captured drips as a reviewable change.",
-     "liquid cut \"import existing files\"",
+     flags_cut,
+     "Name the current aggregation of captured drips as a reviewable change. The message is "
+     "given with `-m`/`--message`, as in Git, or as the remaining words. A message that starts "
+     "with `-` is refused, so a mistyped option never becomes part of history.",
+     "liquid cut -m \"import existing files\"\nliquid cut import existing files",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::repo_cut},
@@ -928,8 +1004,8 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::locks_unlock},
     {"session",
-     "session <start <delegation>|write <id> <path> --from <file>|publish <id> [--message "
-     "<text>]|discard <id>>",
+     "session <start <delegation> --as <agent>|write <id> <path> --from <file>|publish <id> "
+     "[--message <text>]|discard <id>>",
      "manage a private speculative replica",
      "available",
      flags_session,
@@ -1010,13 +1086,25 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::retain},
     {"identity",
-     "identity [show [--document]|rotate [--to software|fido2|piv:9c]] [--json]",
-     "show or rotate the device identity",
+     "identity [show [--document|--chain]|rotate [--to software|fido2|piv:9c]|custody [--to "
+     "passphrase|keychain|file|<custody-uri>]|trust <chain|-> [--accept-compromise-rotation]] "
+     "[--json]",
+     "show, rotate, or trust identities",
      "available",
      flags_identity,
-     "Show the device TAAP identity, export its public document for sign-up, or rotate its signing "
-     "key with a linked successor document. The private signing key stays local for every custody.",
-     "liquid identity show --document\nliquid identity rotate --json",
+     "Show the device TAAP identity, export its public document for sign-up or its whole chain "
+     "for other machines, rotate its signing key with a linked successor document, or trust "
+     "another identity's chain. A signer name verifies only against a chain this machine holds: "
+     "its own, one trusted here, or one received and verified during sync. The private signing "
+     "key stays local for every custody. A software key is sealed under a wrapping key held by a "
+     "passphrase (LIQUID_IDENTITY_PASSPHRASE_FILE or a terminal prompt), the macOS Keychain, or a "
+     "key custody URI; LIQUID_IDENTITY_KEY_CUSTODY chooses it for a new identity (default: "
+     "keychain on macOS, passphrase elsewhere). Only an explicit file custody leaves the key "
+     "protected by file permissions alone, and identity show warns when it is. identity custody "
+     "shows the custody and --to moves the key to another.",
+     "liquid identity show --document\nliquid identity show --chain > me.chain\nliquid identity "
+     "trust - < colleague.chain\nliquid identity rotate --json\nliquid identity custody --to "
+     "passphrase",
      normal_exit,
      argument_policy::ordinary,
      liquid_cli::identity},
@@ -1264,24 +1352,27 @@ constexpr auto commands = std::to_array<command>({
      argument_policy::ordinary,
      liquid_cli::facts},
     {"scheduler",
-     "scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance "
-     "<name>] [--lease-ms <count>]",
+     "scheduler --listen <address> --trust-worker <path> [--control-listen <address>] [--store "
+     "<path>] [--instance <name>] [--lease-ms <count>] [--tls-cert <path> --tls-key <path>] "
+     "[--token-file <path>] [--client-ca <path>]",
      "run the remote-execution scheduler and CAS",
      "available",
      flags_scheduler,
-     "Serve CAS, ActionCache, Execution, and the liquid worker lease queue.",
-     "liquid scheduler --listen 0.0.0.0:50051",
+     "Serve CAS, ActionCache, Execution, and a signed worker lease queue for trusted workers. A "
+     "listener off loopback requires TLS and --token-file or --client-ca.",
+     "liquid scheduler --listen 127.0.0.1:50051 --trust-worker /etc/liquid/workers",
      network_exit,
      argument_policy::ordinary,
      liquid_cli::scheduler},
     {"worker",
-     "worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance "
-     "<name>] [--size-class <class>] [--poll-ms <count>]",
+     "worker --scheduler <address> --trust-scheduler <path> [--control-listen <address>] [--root "
+     "<path>] [--instance <name>] [--size-class <class>] [--poll-ms <count>] [--scheduler-tls] "
+     "[--scheduler-ca <path>] [--client-cert <path> --client-key <path>] [--token-file <path>]",
      "run a remote-execution worker",
      "available on Linux with FUSE",
      flags_worker,
-     "Poll a liquid scheduler and execute leased build actions in the Phase 2 sandbox.",
-     "liquid worker --scheduler 127.0.0.1:50051",
+     "Poll a trusted liquid scheduler and execute its signed leases in the Phase 2 sandbox.",
+     "liquid worker --scheduler 127.0.0.1:50051 --trust-scheduler /etc/liquid/scheduler",
      network_exit,
      argument_policy::ordinary,
      liquid_cli::worker},
@@ -1523,9 +1614,9 @@ struct git_hint {
 constexpr auto git_hints = std::to_array<git_hint>({
     {"add",
      "liquid has no staging area: every write is captured as a drip. Name the work with "
-     "`liquid cut <message>`"},
+     "`liquid cut -m <message>`"},
     {"commit",
-     "use `liquid cut <message>`: a change is a named group of captured drips, and there is "
+     "use `liquid cut -m <message>`: a change is a named group of captured drips, and there is "
      "nothing to stage"},
     {"grep", "use `liquid search`, which ranks results and also takes a substring or a regex"},
     {"reflog", "use `liquid ops` to list recorded operations and `liquid undo` to reverse one"},
@@ -1631,6 +1722,7 @@ auto print_command_help(const command& definition) -> void {
 
 int main(int argc, char** argv) {
     liquid_cli::set_executable(argv[0]);
+    liquid_cli::install_identity_custody();
     if (argc < 2) {
         print_usage();
         return 2;

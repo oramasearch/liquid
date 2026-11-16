@@ -93,6 +93,12 @@ size, and layout; comparisons use the logical decoded value bytes rather than fi
 64-bit floating-point datasets; the default zero values preserve exact comparison. An
 unknown datatype, link, layout, chunk index, or filter leaves an entry with `opaque_reason` instead
 of inventing a value.
+A link name's length can be 8 bytes wide, so it is compared with the bytes left in the message
+rather than added to the position: a length near 2^64 is refused as a truncated link name before
+any copy (liquid #477).
+Filter pipelines with more than 32 filters are corrupt and refused before any dataset data is
+decoded, for both v1 and v2 pipeline messages. This keeps every filter index within the chunk's
+32-bit skip mask; pipelines of up to 32 filters retain their existing behavior (liquid #486).
 
 ### Parquet
 
@@ -100,7 +106,22 @@ The Tier 2 reader implements the Thrift compact protocol for the footer and page
 one entry per row-group column chunk with schema, statistics, and decoded values. Data page v1,
 PLAIN, RLE/bit-packed levels, and dictionary indices are supported with uncompressed, gzip, and
 zstd pages. Snappy and unknown physical types, encodings, page types, or compressors are preserved
-as opaque column entries with the reason recorded.
+as opaque column entries with the reason recorded. The RLE/bit-packed decoder rejects bit widths
+above 64, run-header varints wider than 64 bits, and any run longer than the bytes left in its
+stream; run lengths are checked by division before they are multiplied, so a crafted run length
+cannot wrap the bounds check (liquid #432).
+
+One allowance, the caller's byte budget, covers the whole Parquet unpack, and every allocation
+sized by the file is charged to it before it is made (liquid #433). That includes Thrift lists,
+maps, binaries, and struct fields in the footer and page headers, schema leaf paths, each page
+buffer at its declared decompressed size, level and index vectors at the page's declared value
+count, PLAIN values, dictionary copies, and the column bytes the tree keeps. A Thrift list or map
+that declares more elements than its remaining bytes could hold is corrupt, and schema nesting stops
+at 64 levels. Decompressed pages, dictionaries, the footer, and column bytes stay charged for the
+whole unpack, so column chunks that name the same page cannot each decode it on a fresh allowance.
+A page's levels and values are returned to the budget when the page is done, because each value they
+produce is charged again as output. A column that exhausts the budget ends the unpack with
+`format_tree::truncated` set; a footer that exhausts it fails with `unsupported`.
 
 ### SQLite
 
@@ -120,11 +141,58 @@ exactly the control and data gzip members, exposes `.PKGINFO`, and lists data pa
 package bytes remain authoritative; complete read-side codecs remain issue #70. Writer and
 dependency rules are in [projection.md](projection.md).
 
+RPM cpio name and file padding must fit in the decoded payload before the reader copies a
+member or accepts the trailer (liquid #439). Alignment adds only padding that fits the remaining
+span, including the signature header's eight-byte alignment; a truncated boundary returns
+`corrupt`. The same reader serves format unpacking and package installation.
+
+The RPM reader has one byte budget per read, the caller's `format_limits::byte_budget` (liquid
+#473). It copies only the main-header strings it uses (name, version, and the four maintainer
+scripts), charges each copy to the budget before making it, and decodes the payload only into what
+is left. Index entries that repeat a tag or point many tags at one long value therefore cannot copy
+the header store more times than the budget pays for; a read that runs out fails with
+`unsupported`.
+
 ### Linked binaries
 
 ELF, Mach-O, and PE entries expose bounded section byte ranges, exported symbols, and imported
 libraries using the validated #27 readers. Load addresses are volatile. Disassembly and
 decompilation are explicitly out of scope.
+
+Mach-O symbol names are truncated to 64 KiB before copying. A cumulative budget charges each
+retained name copy and symbol record, even when many nlist entries share one string-table offset.
+Both 32-bit and 64-bit readers, in either byte order, apply the limit to exports and compatibility
+name samples. The registry supplies its `format_limits::byte_budget`, subtracts the inspector's
+charge before retaining sections and export entries, and marks the tree truncated when a limit
+is reached. Other callers use a 16 MiB symbol budget. Inspection preserves facts collected before
+exhaustion. ABI descriptors persist truncation and cannot produce a compatible comparison; SBOMs
+record it as evidence, and relocation checks report a blocking finding. Names exactly
+64 KiB long remain intact; longer UTF-8 names end at a complete character. These limits apply in
+the shared inspector used by registry
+recognition/unpack, ABI extraction, SBOM inference, and relocation checking (liquid #475).
+
+PE inspection caps each install, export, and import name at 64 KiB, excluding its NUL
+terminator (liquid #474). Longer names retain a capped prefix ending at a complete UTF-8 character
+and mark inspection truncated.
+One allowance covers retained names and their records for the whole inspection and is charged
+before allocation. The default is 16 MiB; registry callers supply their remaining byte budget.
+Exhausting the allowance stops name collection and marks the partial result truncated.
+Repeated file offsets within exports or imports are skipped before scanning or copying, so one
+long name cannot be copied once per table entry. Distinct and overlapping offsets still spend the
+same allowance. COFF evidence names retain their existing 160-byte and 256-record limits and
+share this allowance. These limits apply to registry recognition and unpacking, ABI extraction, and
+SBOM inspection through their shared PE reader.
+
+ELF section and symbol names, version definitions and requirements, dynamic library/search paths,
+and DWARF names and generated signatures share one cumulative inspection allowance (liquid #479).
+Each name is limited to 64 KiB. Collection stops before an oversized name or an unaffordable copy,
+retains earlier facts, and marks the result truncated. Copies and records are charged before
+allocation, including repeated string-table offsets, temporary metadata, and the second section
+name copy in the output. Generated DWARF signatures use the same length and byte limits.
+The default allowance is 16 MiB; registry unpacking supplies its byte budget and charges subsequent
+section data and entry paths against what remains. All ELF consumers use this inspector, including
+recognition, ABI extraction, SBOM inference, and relocation checks. Truncation reaches their existing
+partial-result handling and blocks ABI compatibility and relocation approval.
 
 ### PDF
 
@@ -134,10 +202,21 @@ and keyword metadata. `/ID`, `/CreationDate`, `/ModDate`, and `/Producer` are vo
 encrypted files, JBIG2, JPX, JavaScript, malformed xref repair, and full font encoding support are
 outside the reader's subset.
 
+Object bytes, inflated stream bytes, and extracted text are all charged to one byte budget for the
+whole file (liquid #433). Each stream inflates only into what is left, and the text taken from it
+must fit what is left after that, so many individually small streams cannot add up past the
+budget. A stream or its text that does not fit fails the unpack with `unsupported`.
+
 ### Jupyter and model files
 
 Jupyter exposes one entry per cell source while `outputs` and `execution_count` are volatile.
 Safetensors exposes JSON-header tensor entries with dtype, shape, content bytes, and source ranges.
+Every tensor's range consumes the remaining `format_limits::byte_budget` before its bytes are
+copied, including overlapping or identical ranges (liquid #476). The first tensor that would exceed
+the remaining bytes or `maximum_entries` ends decoding with `format_tree::truncated` and a reason
+in `limits`; no partial tensor is copied. Empty tensors consume an entry. The header is checked
+separately against the byte budget. Header parse allocations and the verbatim input copy remain
+proportional to their input sizes and do not consume the tensor-copy allowance.
 Pickle never executes content: the scanner recognises text `GLOBAL` and `INST`, binary unicode and
 `STACK_GLOBAL`, and records `REDUCE`, `OBJ`, `NEWOBJ`, and `BUILD` as code-deserialisation-risk
 opcodes. It deliberately does not reconstruct objects or execute reducers.
@@ -159,6 +238,20 @@ lower each value. Every decoder bounds offsets, lengths, allocations, and counts
 nested member reaches the depth or byte budget, unpack succeeds with `format_tree::truncated` set
 and a human-readable item in `format_tree::limits`; it never silently continues. This protects
 diff, search, and capture from hostile recursive archives.
+
+One unpack has one set of budgets. The outermost `format_registry::unpack` or `format_codec::unpack`
+on a thread opens them, and every codec it reaches receives only what is left: the remaining depth,
+decoded bytes, and entries. A codec that decodes its own members through the registry (a deb's or
+apk's `control.tar` and `data.tar`, a document's ZIP container) runs inside that unpack. Its call is
+decoded at the codec's own depth, checked against the remaining byte and entry budgets, and not
+expanded; the outermost walk expands the codec's entries once. A member decode may not decode
+members itself, so a package whose `control.tar` is another package fails with "format members nest
+inside format members" instead of recursing (liquid#438). When a nested codec reports
+`errc::unsupported`, the code the gzip, tar, ZIP, PDF, HDF5 and SQLite limits use, that member is
+left opaque with the codec's message as its reason and the unpack continues. Other nested errors
+still fail the unpack, including a deb or rpm whose zstd member would decode past what is left of
+the budget, which those readers report as `errc::corrupt`. The budgets are per thread, so a codec
+that hands work to another thread starts a separate unpack there.
 
 Nested paths use exactly one `!/` separator: `archive.zip!/inner/file.txt`. Further containers
 append another component, for example `outer.tar!/inner.zip!/file.txt`. Search hits use the same

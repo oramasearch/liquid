@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 // A remote-shaped store backend for tests (liquid #327, #328): an object service with one owner

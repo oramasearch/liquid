@@ -1,4 +1,7 @@
+// SPDX-License-Identifier: MIT
+
 #include <charconv>
+#include "credential_token.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <format>
@@ -428,7 +431,7 @@ auto review(int argc, char** argv) -> int {
         return usage();
     }
     auto client_options = liquid::forge_client_options{};
-    if (const auto* token = std::getenv("LIQUID_TOKEN")) {
+    if (const auto token = liquid::token_detail::lake_token(); !token.empty()) {
         client_options.bearer_token = token;
     }
     try {

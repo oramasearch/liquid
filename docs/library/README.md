@@ -1,10 +1,21 @@
 # Library implementation notes
 
+[Git interoperability](git-interop.md) documents local object inflation and shared delta
+budgets, strictly earlier offset bases, and compatibility limits for import (#443).
+Drive's [filesystem source rules](drive.md#filesystem-sources-liquid-423) cover ignored symlinks,
+descriptor lifetime, and supported platforms.
+
 The [documentation index](../README.md#library) lists one entry for each library topic.
 [Implementation status](status.md) is the authoritative inventory of implemented behavior and
 known limits. [libliquid](libliquid.md) covers CMake targets, the installed dependency closure,
 consumer setup, and the repository/coroutine install gate; the [API map](api-map.md) defines
 the public headers and ABI rules.
+The [format guide](formats.md#linked-binaries) records Mach-O symbol truncation and retained-copy
+budgets shared by the registry, ABI, SBOM, and relocation readers.
+The [format guide](formats.md#jupyter-and-model-files) describes safetensors' cumulative tensor-copy
+budget and truncation behavior.
+[Sync](sync.md) documents missing-object validation: a sender refuses requests outside the
+current offered root closure before uploading anything (liquid #446).
 The [documentation index](../README.md#library) lists the library's implementation pages.
 [Status](status.md) records what is implemented and the [API map](api-map.md) defines the public
 surface. The [identity guide](identity.md) covers public document export for sign-up, the shared
@@ -27,11 +38,16 @@ public headers and ABI rules.
 
 The complete topic index is in [`../README.md`](../README.md#library).
 
+[Formats](formats.md) records bounded RPM cpio and signature-header alignment, including rejection
+of truncated member and trailer padding (liquid #439).
+
 [VFS conformance](vfs.md#backend-conformance-301) documents named backend execution, common
 filesystem and observation assertions, direct core calibration, adding a driver, and the Linux
 libfuse baseline still owed against #299. The [proof record](vfs-conformance-proof.md) preserves
 the passing cases, deliberate regression and native suite results.
-The [identity guide](identity.md) covers public document export, custody, and verification.
+The [identity guide](identity.md) covers public document export, custody (including the owner-only
+passphrase file a headless host such as a Lake pod names), verification, and how a verifier obtains
+and trusts another person's identity chain.
 [Standalone splits](split.md) covers data ownership, retained history, identities, and cleanup.
 The [historical README record](readme-history.md) preserves earlier context and documents how
 competing front-door and index passages were reconciled.
@@ -47,3 +63,15 @@ legacy-constructor behavior, CLI exit statuses, and regression coverage with net
 crash between them reopens cleanly (liquid #337).
 The [store's index](store.md#index) writes every run once, in order, so no backend write rewrites
 bytes already written, as Zetta's object storage requires (liquid #332).
+
+[Format codecs](formats.md#hdf5) reject HDF5 pipelines longer than the 32-bit chunk mask
+before decoding datasets (liquid #486).
+[Secret scanning](secret-scanning.md) documents the linear JWT walk and long-input regression
+coverage (liquid #440).
+[Linked-binary formats](formats.md#linked-binaries) records PE name length, cumulative allocation,
+and offset deduplication limits (liquid #474).
+
+[Linked-binary formats](formats.md#linked-binaries) also records the ELF limits on section, symbol,
+version, dynamic-path, and DWARF copies and generated signatures (liquid #479).
+[VFS attribute mutation refusal](vfs.md#attribute-mutation-refusal-445) covers read-only and
+immutable mount paths, denied write observations, and request-level tests without a kernel mount.

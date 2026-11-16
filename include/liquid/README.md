@@ -44,6 +44,13 @@ whole-repository copy or verify between two open shared stores (liquid #328).
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
 claims, exclusive checkout rules and records, transient presence, and epoch compaction reports.
+`session_options::status` and `session_open_options::status` carry the required
+`delegation_status_resolver` (`attestation.hpp`), asked at fork and before every lease and publish
+(liquid #514); `attestation.hpp` also defines `check_delegation_window`,
+`local_delegation_status`, and `delegation_subject`, the subject that binds a delegation to its
+agent (liquid #515). `session_options::chain` carries the delegations above a session's own, root
+first, each validated against the one before it (liquid #517). `repository::open_session(id,
+options)` verifies the stored authority again as at fork (liquid #516).
 `repository.hpp` exposes lock acquisition, holder-only release, configuration, enumeration, and
 the optional connected authorization callback. `daemon.hpp` exposes lock requests and complete
 lock-set delivery to local targets.
@@ -53,9 +60,19 @@ attribution records used by the repository and daemon APIs.
 `tuf.hpp` defines the repository-backed trusted-root bootstrap, ordered metadata update verifier,
 and complete target-byte verification gate used by registry and drive clients.
 
+`listener.hpp` defines `listener_security`, the TLS, mutual-TLS and bearer-token configuration of
+the REAPI and sync listeners, and the checks they share: only a loopback listener may run without
+TLS and client authentication, tokens come from owner-only files, and bearer comparison is
+constant-time. `reapi.hpp` carries it in `reapi_serve_options::security`, and `workers.hpp` in
+`scheduler_options::security` with the same rules (liquid #520); the `liquid serve sync`
+adapter applies the same rules. `sync_server_options` bounds the upload quarantine with
+`upload_quota_bytes` and `upload_ttl` and places it under `staging_directory`.
+
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.
+ABI descriptors expose `truncated`; comparisons fail closed with an `inspection_truncated`
+change when either descriptor contains partial inspection results.
 `build.hpp` also exposes relocation findings, reports, the asynchronous output-tree check, and
 install-prefix wrapper options. Binary-reader and repository-scanning details remain private.
 `projection.hpp` exposes deterministic binary package, Debian source package, OCI, Helm, OSTree,
@@ -73,7 +90,8 @@ The optional checkpoint age bound distinguishes an omitted limit from an invalid
 positive limits use the authenticated log issuance time described in
 [`admission.md`](../../docs/library/admission.md).
 `identity.hpp` exposes algorithm- and custody-tagged actors, software and hardware key rotation,
-and TPM-capable key custody without exposing transport types. `release.hpp` exposes signed release
+and TPM-capable key custody without exposing transport types; `identity_custody_options` names the
+owner-only passphrase file a headless host uses. `release.hpp` exposes signed release
 policy and approval values plus distinct-identity threshold verification.
 `resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical
 codecs, coroutine-native universe loading and solving, and stable explanation values. The CDCL
@@ -93,4 +111,8 @@ pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay 
 
 `transparency.hpp` provides `http_log_source::create()` for local URL validation through
 `result<http_log_source>`. Existing string construction retains errors for request operations;
-see [the contract](../../docs/library/transparency.md#http-url-validation-289).
+see [the contract](../../docs/library/transparency.md#http-url-validation-289). Every verifying
+`log_client` operation takes the caller's `log_trust` pin, and `load_log_trust`,
+`save_log_trust`, `parse_log_trust` and `format_log_trust` handle the
+`$LIQUID_HOME/trust/transparency/` pin file
+([pinned trust](../../docs/library/transparency.md#pinned-log-key-and-witness-policy-389)).

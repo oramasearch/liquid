@@ -1,4 +1,7 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/repository.hpp"
+#include "repository/ref_name.hpp"
 #include "liquid/store.hpp"
 
 #include <algorithm>
@@ -33,6 +36,7 @@
 #include "build/repository_access.hpp"
 #include "crdt/document.hpp"
 #include "data/repository_access.hpp"
+#include "drive/source.hpp"
 #include "edit_codec.hpp"
 #include "encoding/cbor.hpp"
 #include "encryption/leaf.hpp"
@@ -40,10 +44,12 @@
 #include "formats/dotenv.hpp"
 #include "formats/json.hpp"
 #include "identity/taap.hpp"
+#include "objects/entry_name.hpp"
 #include "objects/records.hpp"
 #include "repository/diff.hpp"
 #include "repository/drive_access.hpp"
 #include "repository/git_access.hpp"
+#include "repository/local_state.hpp"
 #include "repository/merge.hpp"
 #include "repository/store_access.hpp"
 #include "repository/sync_access.hpp"
@@ -51,6 +57,7 @@
 #include "repository/transfer.hpp"
 #include "search/repository_access.hpp"
 #include "store/backend.hpp"
+#include "store/holder.hpp"
 #include "store/leases.hpp"
 #include "store/pack.hpp"
 #include "store/references.hpp"
@@ -2093,6 +2100,10 @@ auto split_path(std::string_view path) -> result<std::vector<std::string>> {
         if (part.empty() || part == "." || part == "..")
             return std::unexpected(
                 failure(errc::invalid_argument, "invalid path component", std::string{path}));
+        if (const auto problem = objects::entry_name_problem(part))
+            return std::unexpected(failure(errc::invalid_argument,
+                                           std::string{*problem},
+                                           objects::printable_entry_name(path)));
         result.emplace_back(part);
         if (end == std::string_view::npos)
             break;
@@ -3143,6 +3154,102 @@ auto export_directory_messages(const crdt::directory_document& document,
         failure(errc::corrupt, "directory export did not quiesce", "repository sync"));
 }
 
+// True only when an identity chain binds `author` to the key that signed the record. History
+// signed by an identity whose chain this machine never received (for example before liquid#448)
+// is reported as signed by an unverified key, never as `author` (liquid#429).
+auto signed_by_verified_identity(const actor& author,
+                                 std::string_view artifact_type,
+                                 std::span<const std::byte> body,
+                                 std::span<const std::byte> encoded_signature) -> bool {
+    auto signature = identity_detail::parse_signature(encoded_signature);
+    if (!signature) {
+        return false;
+    }
+    auto checked = check_signature(author, artifact_type, body, *signature);
+    return checked && checked->identity_verified;
+}
+
+auto change_signed_by_verified_identity(const change& value) -> bool {
+    auto body = objects::encode_change_body(value);
+    return body && signed_by_verified_identity(value.author, "change", *body, value.sig);
+}
+
+// True only when an identity chain binds the drip's signer to its signature, as
+// `repository::drips` reports it (liquid#429).
+auto drip_signed_by_verified_identity(const persisted_drip& saved, const actor& local) -> bool {
+    const auto& signing_author = saved.author.taap_id.empty() ? local : saved.author;
+    return signed_by_verified_identity(signing_author, "drip", saved.body, saved.signature);
+}
+
+// Says whether an operation record's `by` is verified (liquid#508). An operation record carries
+// no signature of its own. It is verified when it was recorded by the local identity, which holds
+// the key that signs this journal's drips. An operation attributed to anyone else is verified only
+// when a drip that records it (same author, operation and time) checks against that signer's
+// identity chain. Otherwise it is shown as `unverified_signer_label`, never as `by`. Each drip is
+// decoded and checked at most once per verifier.
+class operation_verifier {
+public:
+    operation_verifier(const repository_document& document, actor local)
+        : document_(&document), local_(std::move(local)) {}
+
+    auto verified(const stored_operation& operation) -> bool {
+        if (operation.by.taap_id.empty()) {
+            return false;
+        }
+        if (operation.by.taap_id == local_.taap_id) {
+            return true;
+        }
+        index();
+        for (auto& candidate : *drips_) {
+            if (candidate.by != operation.by.taap_id || candidate.operation != operation.kind ||
+                candidate.at != operation.at.time_since_epoch().count()) {
+                continue;
+            }
+            if (!candidate.verified) {
+                candidate.verified = drip_signed_by_verified_identity(*candidate.source, local_);
+            }
+            if (*candidate.verified) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    struct recorded_drip {
+        std::string by;
+        std::string operation;
+        std::int64_t at{};
+        const persisted_drip* source{};
+        std::optional<bool> verified;
+    };
+
+    auto index() -> void {
+        if (drips_) {
+            return;
+        }
+        drips_.emplace();
+        drips_->reserve(document_->drips.size());
+        for (const auto& saved : document_->drips) {
+            auto decoded = decode_repository_drip(saved.body);
+            if (!decoded) {
+                continue;
+            }
+            const auto& signer = saved.author.taap_id.empty() ? local_ : saved.author;
+            drips_->push_back({.by = decoded->agent ? decoded->agent->taap_id : signer.taap_id,
+                               .operation = decoded->operation,
+                               .at = decoded->at,
+                               .source = &saved});
+        }
+    }
+
+    const repository_document* document_;
+    actor local_;
+    std::optional<std::vector<recorded_drip>> drips_;
+};
+
+// The author of an imported drip or change is accepted only through `verify`, which requires the
+// author's identity chain (liquid#429): a record signed only by the key it carries is refused.
 auto import_synced_drip(repository_document& candidate,
                         std::vector<persisted_drip>& imported_drips,
                         const sync_item& item) -> result<void> {
@@ -3167,6 +3274,55 @@ auto import_synced_drip(repository_document& candidate,
     if (!duplicate) {
         imported_drips.push_back({item.author, item.body, item.signature});
     }
+    return {};
+}
+
+// The repository keeps every author's identity chain in its own metadata, so it can send the
+// chain with that author's records after the process's identity store is gone (a new container
+// has a new home). A chain is self-verifying from its identifier, so the receiver re-verifies it.
+constexpr std::string_view identity_chain_metadata_prefix = "liquid.identity-chain.";
+
+auto identity_chain_metadata_key(std::string_view taap_id) -> std::string {
+    return std::string{identity_chain_metadata_prefix} + std::string{taap_id};
+}
+
+// Keeps the longer of the stored and offered encoded chains for `taap_id` in `metadata`.
+auto remember_identity_chain(std::map<std::string, std::vector<std::byte>>& metadata,
+                             std::string_view taap_id,
+                             std::span<const identity_document> chain) -> void {
+    auto encoded = encode_identity_chain(chain);
+    if (!encoded) {
+        return;
+    }
+    auto& slot = metadata[identity_chain_metadata_key(taap_id)];
+    if (!slot.empty()) {
+        auto stored = decode_identity_chain(slot);
+        if (stored && stored->size() >= chain.size()) {
+            return;
+        }
+    }
+    slot = std::move(*encoded);
+}
+
+// An author's identity chain arrives ahead of the drips and changes it attributes. It is
+// verified and stored, so the signature checks that follow can bind the author's name to a key
+// (liquid#383). A rotation not signed by the key it replaces is refused here; only an out-of-band
+// `liquid identity trust --accept-compromise-rotation` accepts one.
+auto import_synced_identity(repository_document& candidate, const sync_item& item) -> result<void> {
+    auto chain = decode_identity_chain(item.body);
+    if (!chain) {
+        return std::unexpected(chain.error());
+    }
+    if (chain->front().subject.taap_id != item.author.taap_id) {
+        return std::unexpected(
+            failure(errc::corrupt, "identity chain does not match its frame author"));
+    }
+    auto trusted = trust_identity_chain(*chain);
+    if (!trusted) {
+        return std::unexpected(trusted.error());
+    }
+    auto stored = load_identity_chain(item.author.taap_id);
+    remember_identity_chain(candidate.metadata, item.author.taap_id, stored ? *stored : *chain);
     return {};
 }
 
@@ -3748,14 +3904,17 @@ runtime::task<void> import_sync_item(sync_import_state& state, const sync_item& 
                                           state.device_id,
                                           item);
     case sync_item_kind::reference:
-        if (item.name.empty()) {
-            co_return std::unexpected(failure(errc::invalid_argument, "reference name is empty"));
+        if (!repository_detail::valid_ref_name(item.name)) {
+            co_return std::unexpected(failure(
+                errc::invalid_argument, "invalid reference name (git check-ref-format)", item.name));
         }
         state.imported_refs.emplace_back(item.name, item.reference);
         co_return result<void>{};
     case sync_item_kind::presence:
         co_return std::unexpected(
             failure(errc::corrupt, "presence reached the persistent sync importer"));
+    case sync_item_kind::identity:
+        co_return import_synced_identity(state.candidate, item);
     }
     co_return std::unexpected(failure(errc::corrupt, "unknown sync item kind"));
 }
@@ -4260,17 +4419,34 @@ auto publish_state(const repository_state_location& state,
     co_return co_await state.backend->barrier();
 }
 
+// Makes everything an operation wrote durable before it returns (liquid #343): a barrier on the
+// store's backend when it is a different one (retention records written after the marker), then on
+// the state backend, so a removal that ends an operation is not lost in a crash. Without it a
+// backend that keeps only what a barrier covered could resurrect LIQUID_JOURNAL, which open prefers
+// to LIQUID_REPO, and revert an acknowledged cut; or bring back a published or discarded session.
+auto settle_state(const repository_state_location& state) -> runtime::task<void> {
+    if (state.data && state.data != state.backend) {
+        auto data_settled = co_await state.data->barrier();
+        if (!data_settled) {
+            co_return std::unexpected(data_settled.error());
+        }
+    }
+    co_return co_await state.backend->barrier();
+}
+
+// Removes one state object, then barriers, so the removal is durable when it returns.
 auto remove_state(const repository_state_location& state, std::string_view name)
     -> runtime::task<void> {
     auto removed = co_await state.backend->remove(state.key(name));
     if (!removed && removed.error().code != errc::not_found) {
         co_return std::unexpected(removed.error());
     }
-    co_return result<void>{};
+    co_return co_await settle_state(state);
 }
 
-// Removes every state object under a location. A disk backend also removes the directory itself,
-// as the repository did before its state went through the backend.
+// Removes every state object under a location, then barriers, so the removal is durable when it
+// returns. A disk backend also removes the directory itself, as the repository did before its
+// state went through the backend.
 auto remove_state_tree(const repository_state_location& state) -> runtime::task<void> {
     auto directory = state.prefix;
     if (directory.ends_with('/')) {
@@ -4282,9 +4458,13 @@ auto remove_state_tree(const repository_state_location& state) -> runtime::task<
         if (code) {
             co_return std::unexpected(failure(errc::io, code.message(), local->string()));
         }
-        co_return result<void>{};
+    } else {
+        auto removed = co_await store_detail::remove_backend_prefix(state.backend, state.prefix);
+        if (!removed) {
+            co_return std::unexpected(removed.error());
+        }
     }
-    co_return co_await store_detail::remove_backend_prefix(state.backend, state.prefix);
+    co_return co_await settle_state(state);
 }
 
 auto parse_state_digest(std::string text, std::string_view prefix = {}) -> result<digest> {
@@ -4462,6 +4642,8 @@ struct repository::impl {
     std::optional<retained_lease> cache_root_lease;
     std::map<node_id, retained_lease> directory_leases;
     signer signing_key;
+    // The signing key whose identity chain was last recorded in `current.metadata`.
+    std::string recorded_chain_key;
     std::shared_ptr<keyring> keys;
     cache_report cache_statistics;
     std::shared_ptr<flow_detail::controller> flow_limits;
@@ -4491,6 +4673,21 @@ struct repository::impl {
           hash_algorithm(algorithm_value), session(session_value), signing_key(std::move(key)),
           keys(std::move(encryption_keys)),
           flow_limits(flow_detail::shared_controller(root_path.generic_string(), current.flow)) {}
+    // A handle's leases protect what it is using; when the handle ends they are released, so a
+    // checkout opened and closed a thousand times does not keep a thousand sets (liquid #527).
+    ~impl() {
+        const auto release = [](std::optional<retained_lease>& retained) {
+            if (retained)
+                repository_detail::store_access::release_now(retained->value);
+        };
+        release(working_tree_lease);
+        release(checkpoint_lease);
+        release(cache_root_lease);
+        for (auto& [ignored, retained] : directory_leases)
+            repository_detail::store_access::release_now(retained.value);
+    }
+    impl(const impl&) = delete;
+    impl& operator=(const impl&) = delete;
     auto lease_owner(std::string_view kind) const -> std::string {
         constexpr auto digits = std::string_view{"0123456789abcdef"};
         auto output = std::string{"repository:"};
@@ -4503,6 +4700,51 @@ struct repository::impl {
         output.push_back('\n');
         output.append(kind);
         return output;
+    }
+    // The owner of a lease this handle holds for itself: its kind and this process as holder, so
+    // a later open can tell a lease whose process ended (liquid #527).
+    auto held_owner(std::string_view kind) const -> std::string {
+        return lease_owner(kind) + "\n" + store_detail::process_holder();
+    }
+    // Releases this repository's leases whose holder process has ended on this host. They are what
+    // a killed or crashed handle left; the published state is leased again by the open that calls
+    // this, which has already checkpointed.
+    runtime::task<std::uint64_t> collect_ended_holders() {
+        auto store_root = repository_detail::store_access::root_path(objects);
+        if (!store_root) {
+            co_return std::unexpected(store_root.error());
+        }
+        auto store_configuration = repository_detail::store_access::configuration(objects);
+        if (!store_configuration) {
+            co_return std::unexpected(store_configuration.error());
+        }
+        const auto backend = store_configuration->backend;
+        if (!backend) {
+            co_return std::unexpected(failure(
+                errc::not_configured, "store backend is unavailable", store_root->string()));
+        }
+        auto existing = co_await store_detail::load_leases(backend, *store_root / "leases");
+        if (!existing) {
+            co_return std::unexpected(existing.error());
+        }
+        const auto scope = lease_owner("");
+        auto collected = std::uint64_t{};
+        for (const auto& record : *existing) {
+            if (!record.owner.starts_with(scope) ||
+                store_detail::lease_holder_state(record.owner) !=
+                    store_detail::holder_state::dead) {
+                continue;
+            }
+            auto state = std::make_shared<store_detail::lease_state>();
+            state->backend = backend;
+            state->record = record;
+            auto released = co_await store_detail::release_lease(std::move(state));
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+            ++collected;
+        }
+        co_return collected;
     }
     runtime::task<void> restore_paged_tree(working_entry& destination, std::string path = {}) {
         auto bytes = co_await objects.get(destination.object);
@@ -4781,7 +5023,7 @@ struct repository::impl {
             co_return co_await retained->value.renew(lease_ttl);
         }
         auto replacement = co_await repository_detail::store_access::lease_root(
-            objects, id, lease_ttl, lease_owner("checkpoint"));
+            objects, id, lease_ttl, held_owner("checkpoint"));
         if (!replacement) {
             co_return std::unexpected(replacement.error());
         }
@@ -4854,7 +5096,7 @@ struct repository::impl {
             co_return co_await existing->second.value.renew(lease_ttl);
         }
         auto replacement = co_await repository_detail::store_access::lease_root(
-            objects, id, lease_ttl, lease_owner("directory"));
+            objects, id, lease_ttl, held_owner("directory"));
         if (!replacement) {
             co_return std::unexpected(replacement.error());
         }
@@ -4949,6 +5191,21 @@ struct repository::impl {
         }
         co_return co_await remove_state(state, "LIQUID_JOURNAL");
     }
+    // Records the local signer's identity chain with the repository the first time each key
+    // signs here (liquid#383), so the chain can travel with these drips later. A signer without a
+    // stored chain records nothing; receivers then refuse its drips as an unknown signer.
+    void record_signer_chain() {
+        const auto identity = signing_key.identity();
+        if (identity.taap_id.empty() || recorded_chain_key == identity.key_fingerprint) {
+            return;
+        }
+        auto chain = load_identity_chain(identity.taap_id);
+        if (!chain) {
+            return;
+        }
+        remember_identity_chain(current.metadata, identity.taap_id, *chain);
+        recorded_chain_key = identity.key_fingerprint;
+    }
     runtime::task<void> checkpoint_or_journal() {
         if (defer_persistence) {
             co_return result<void>{};
@@ -5028,6 +5285,7 @@ struct repository::impl {
         }
         current.drips.push_back(
             {signing_key.identity(), std::move(*body), std::move(*encoded_signature)});
+        record_signer_chain();
         journal_bytes += current.drips.back().body.size();
         journal_bytes += current.drips.back().signature.size();
         co_return result<void>{};
@@ -5070,6 +5328,7 @@ struct repository::impl {
         }
         current.drips.push_back(
             {signing_key.identity(), std::move(*body), std::move(*encoded_signature)});
+        record_signer_chain();
         journal_bytes += current.drips.back().body.size();
         journal_bytes += current.drips.back().signature.size();
         co_return result<void>{};
@@ -5097,6 +5356,7 @@ struct repository::impl {
         }
         current.drips.push_back(
             {signing_key.identity(), std::move(*body), std::move(*encoded_signature)});
+        record_signer_chain();
         co_return result<void>{};
     }
     void record_operation(op_id id,
@@ -5802,6 +6062,12 @@ struct repository::impl {
         co_return result<void>{};
     }
     auto ignored(std::string_view path, const import_options& options) const -> bool {
+        // Checkout-local state is never repository content, and no `!` pattern re-includes it
+        // (liquid #420): otherwise a pushed tree would carry release policy or a repository marker
+        // that a later clone materialises.
+        if (repository_detail::local_state_path(path)) {
+            return true;
+        }
         auto ignored = false;
         for (const auto& configured : options.ignore_patterns) {
             auto pattern = std::string_view{configured};
@@ -6299,7 +6565,31 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     auto checkpointed = co_await output.impl_->checkpoint();
     if (!checkpointed)
         co_return std::unexpected(checkpointed.error());
+    // After the checkpoint, which leased the published state for this handle, so the leases of
+    // ended handles are no longer what retains it (liquid #527).
+    auto collected = co_await output.impl_->collect_ended_holders();
+    if (!collected)
+        co_return std::unexpected(collected.error());
     co_return output;
+}
+
+runtime::task<std::uint64_t> repository::lease_count() {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto store_root = repository_detail::store_access::root_path(impl_->objects);
+    if (!store_root)
+        co_return std::unexpected(store_root.error());
+    auto store_configuration = repository_detail::store_access::configuration(impl_->objects);
+    if (!store_configuration)
+        co_return std::unexpected(store_configuration.error());
+    if (!store_configuration->backend)
+        co_return std::unexpected(
+            failure(errc::not_configured, "store backend is unavailable", store_root->string()));
+    auto existing =
+        co_await store_detail::load_leases(store_configuration->backend, *store_root / "leases");
+    if (!existing)
+        co_return std::unexpected(existing.error());
+    co_return static_cast<std::uint64_t>(existing->size());
 }
 
 std::optional<remote_config> repository::remote_configuration() const {
@@ -6498,6 +6788,8 @@ runtime::task<std::vector<drip>> repository::drips() {
                           .reasoned_from = decoded->reasoned_from,
                           .revalidated = decoded->revalidated,
                           .delegation = decoded->delegation};
+        value.identity_verified =
+            drip_signed_by_verified_identity(saved, impl_->signing_key.identity());
         for (auto& path : decoded->paths) {
             value.ops.push_back({std::move(path)});
         }
@@ -7530,6 +7822,7 @@ result<repository_status> repository::status() {
     for (const auto& branch : impl_->current.data_branches) {
         output.data_branches.push_back(branch.record);
     }
+    output.store_recoveries = repository_detail::store_access::recorded_recoveries(impl_->objects);
     auto visit = [&](auto&& self, const working_entry& entry, std::string path) -> result<void> {
         if (entry.kind == entry_kind::file) {
             auto remote =
@@ -7569,6 +7862,7 @@ runtime::task<std::vector<change>> repository::log(log_options options) {
             auto value = objects::decode_change(*bytes, next->value.alg);
             if (!value)
                 co_return std::unexpected(value.error());
+            value->identity_verified = change_signed_by_verified_identity(*value);
             output.push_back(*value);
             if (value->parents.empty() ||
                 !history_repository(impl_->current, value->parents.front().repo_id)) {
@@ -7597,6 +7891,7 @@ runtime::task<std::vector<change>> repository::log(log_options options) {
         auto value = objects::decode_change(*bytes, id.value.alg);
         if (!value)
             co_return std::unexpected(value.error());
+        value->identity_verified = change_signed_by_verified_identity(*value);
         indexes.emplace(key, changes.size());
         changes.push_back(*value);
         for (const auto& parent : value->parents)
@@ -8274,17 +8569,19 @@ runtime::task<std::vector<operation_record>> repository::operations(log_options)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     auto output = std::vector<operation_record>{};
     output.reserve(impl_->current.operations.size());
+    auto verifier = operation_verifier{impl_->current, impl_->signing_key.identity()};
     for (auto operation = impl_->current.operations.rbegin();
          operation != impl_->current.operations.rend();
          ++operation) {
-        output.push_back({operation->id,
-                          operation->kind,
-                          operation->from,
-                          operation->to,
-                          operation->by,
-                          operation->at,
-                          operation->session,
-                          operation->metadata});
+        output.push_back({.id = operation->id,
+                          .kind = operation->kind,
+                          .from = operation->from,
+                          .to = operation->to,
+                          .by = operation->by,
+                          .at = operation->at,
+                          .session = operation->session,
+                          .metadata = operation->metadata,
+                          .identity_verified = verifier.verified(*operation)});
     }
     co_return output;
 }
@@ -8300,6 +8597,8 @@ struct attribution_source {
     actor by;
     session_id session;
     bool agent{};
+    // Set from the change or operation the line came from (liquid#508).
+    bool identity_verified{};
 };
 
 auto attribution_groups(const repository_document& document)
@@ -8342,13 +8641,16 @@ auto content_operation(const stored_operation& operation) -> bool {
 }
 
 auto source_for_change(const std::map<std::string, attribution_operation_group>& groups,
+                       operation_verifier& verifier,
                        const change& value,
                        const node_id& node,
                        std::string_view old_path,
                        std::string_view new_path) -> attribution_source {
+    const auto from_change =
+        attribution_source{.by = value.author, .identity_verified = value.identity_verified};
     const auto found = groups.find(to_string(value.id.value));
     if (found == groups.end()) {
-        return {.by = value.author};
+        return from_change;
     }
     const auto& operations = found->second.operations;
     auto selected = static_cast<const stored_operation*>(nullptr);
@@ -8368,8 +8670,11 @@ auto source_for_change(const std::map<std::string, attribution_operation_group>&
         }
     }
     selected = selected ? selected : found->second.record;
-    return selected ? attribution_source{selected->by, selected->session, selected->agent}
-                    : attribution_source{.by = value.author};
+    return selected ? attribution_source{.by = selected->by,
+                                         .session = selected->session,
+                                         .agent = selected->agent,
+                                         .identity_verified = verifier.verified(*selected)}
+                    : from_change;
 }
 
 auto text_lines(std::span<const std::byte> bytes) -> std::vector<std::string> {
@@ -8417,7 +8722,8 @@ auto apply_attribution_hunks(std::span<const line_attribution> previous,
                               .by = source.by,
                               .session = source.session,
                               .change = change_value,
-                              .agent = source.agent});
+                              .agent = source.agent,
+                              .identity_verified = source.identity_verified});
         }
         old_offset = old_start + static_cast<std::size_t>(hunk.old_count);
         new_offset = new_start + static_cast<std::size_t>(hunk.new_count);
@@ -8485,6 +8791,7 @@ runtime::task<std::vector<line_attribution>> repository::attribution(std::string
     }
     std::ranges::reverse(*history);
     const auto groups = attribution_groups(impl_->current);
+    auto verifier = operation_verifier{impl_->current, impl_->signing_key.identity()};
     auto output = std::vector<line_attribution>{};
     auto previous = std::optional<change_id>{};
     for (const auto& revision : *history) {
@@ -8525,6 +8832,7 @@ runtime::task<std::vector<line_attribution>> repository::attribution(std::string
         }
         auto lines = text_lines(*contents);
         const auto source = source_for_change(groups,
+                                              verifier,
                                               revision,
                                               target_entry->node,
                                               changed->old_path.value_or(changed->path),
@@ -8580,10 +8888,14 @@ struct session::impl {
     actor agent;
     attestation delegation;
     digest delegation_id{};
+    // The delegations above `delegation`, root first, and their digests (liquid#517).
+    std::vector<attestation> chain;
+    std::vector<digest> chain_ids;
     std::vector<std::string> scopes;
     bool may_publish{};
     bool may_lease{};
     bool active{true};
+    delegation_status_resolver status;
 };
 
 namespace {
@@ -8591,6 +8903,11 @@ namespace {
 struct stored_session {
     actor agent;
     attestation delegation;
+    // The digests the delegation and each chain link had at fork (liquid#516). `open_session`
+    // refuses a session whose stored delegation no longer hashes to them.
+    digest delegation_id{};
+    std::vector<attestation> chain;
+    std::vector<digest> chain_ids;
     digest base_tree{};
     change_id base_change{};
     journal_cursor base_cursor;
@@ -8601,9 +8918,24 @@ auto encode_stored_session(const stored_session& value) -> result<std::vector<st
     if (!delegation) {
         return std::unexpected(delegation.error());
     }
-    return cbor::encode(map({{"v", cbor::value{std::uint64_t{1}}},
+    auto chain = cbor::value::array{};
+    for (const auto& link : value.chain) {
+        auto encoded = encode_attestation(link);
+        if (!encoded) {
+            return std::unexpected(encoded.error());
+        }
+        chain.push_back(bytes(*encoded));
+    }
+    auto chain_ids = cbor::value::array{};
+    for (const auto& id : value.chain_ids) {
+        chain_ids.push_back(digest_value(id));
+    }
+    return cbor::encode(map({{"v", cbor::value{std::uint64_t{2}}},
                              {"agent", actor_value(value.agent)},
                              {"delegation", bytes(*delegation)},
+                             {"delegation_id", digest_value(value.delegation_id)},
+                             {"chain", cbor::value{std::move(chain)}},
+                             {"chain_ids", cbor::value{std::move(chain_ids)}},
                              {"base_tree", digest_value(value.base_tree)},
                              {"base_change", digest_value(value.base_change.value)},
                              {"base_cursor", cbor::value{value.base_cursor.token}}}));
@@ -8622,9 +8954,45 @@ auto decode_stored_session(std::span<const std::byte> encoded) -> result<stored_
     const auto* delegation_bytes =
         delegation_value ? std::get_if<cbor::value::bytes>(&delegation_value->data) : nullptr;
     const auto* cursor = cursor_value ? std::get_if<std::string>(&cursor_value->data) : nullptr;
-    if (!value || !version || *version != 1 || !agent_value || !delegation_bytes || !tree_value ||
-        !change_value || !cursor) {
+    // Version 2 (liquid#516) adds the delegation and chain digests. A version-1 record has neither
+    // and is refused; its delegation predates the required `not_after` and `repository` anyway.
+    const auto* delegation_id_value = value ? find(*value, "delegation_id") : nullptr;
+    const auto* chain_ids_value = value ? find(*value, "chain_ids") : nullptr;
+    const auto* chain_id_items =
+        chain_ids_value ? std::get_if<cbor::value::array>(&chain_ids_value->data) : nullptr;
+    if (!value || !version || *version != 2 || !agent_value || !delegation_bytes || !tree_value ||
+        !change_value || !cursor || !delegation_id_value || !chain_id_items) {
         return std::unexpected(failure(errc::corrupt, "invalid session metadata"));
+    }
+    auto delegation_id = decode_digest(*delegation_id_value);
+    if (!delegation_id) {
+        return std::unexpected(delegation_id.error());
+    }
+    auto chain_ids = std::vector<digest>{};
+    for (const auto& item : *chain_id_items) {
+        auto decoded = decode_digest(item);
+        if (!decoded) {
+            return std::unexpected(decoded.error());
+        }
+        chain_ids.push_back(*decoded);
+    }
+    auto chain = std::vector<attestation>{};
+    if (const auto* chain_value = find(*value, "chain")) {
+        const auto* links = std::get_if<cbor::value::array>(&chain_value->data);
+        if (!links) {
+            return std::unexpected(failure(errc::corrupt, "invalid session delegation chain"));
+        }
+        for (const auto& link : *links) {
+            const auto* encoded = std::get_if<cbor::value::bytes>(&link.data);
+            if (!encoded) {
+                return std::unexpected(failure(errc::corrupt, "invalid session delegation chain"));
+            }
+            auto decoded = decode_attestation(*encoded);
+            if (!decoded) {
+                return std::unexpected(decoded.error());
+            }
+            chain.push_back(std::move(*decoded));
+        }
     }
     auto agent = decode_actor(*agent_value);
     auto delegation = decode_attestation(*delegation_bytes);
@@ -8638,6 +9006,9 @@ auto decode_stored_session(std::span<const std::byte> encoded) -> result<stored_
     }
     return stored_session{.agent = std::move(*agent),
                           .delegation = std::move(*delegation),
+                          .delegation_id = *delegation_id,
+                          .chain = std::move(chain),
+                          .chain_ids = std::move(chain_ids),
                           .base_tree = *tree,
                           .base_change = change_id{*change},
                           .base_cursor = journal_cursor{*cursor}};
@@ -8654,6 +9025,188 @@ auto session_path_allowed(std::span<const std::string> scopes, std::string_view 
                                [&](const auto& scope) { return glob_matches(scope, path); });
 }
 
+// Whether one delegation may be acted on at `now` (liquid#514): inside its validity window,
+// revoked by nothing the session's resolver reports, and correctly signed by its issuer. An empty
+// resolver, or one that cannot answer, refuses.
+auto check_link_now(const attestation& link,
+                    const digest& id,
+                    const delegation_status_resolver& status,
+                    std::chrono::sys_seconds now) -> result<void> {
+    auto window = check_delegation_window(link, now);
+    if (!window) {
+        return std::unexpected(window.error());
+    }
+    if (!status) {
+        return std::unexpected(
+            failure(errc::unauthorized, "delegation status is required", "delegation/1"));
+    }
+    auto answered = status(link, id);
+    if (!answered) {
+        return std::unexpected(
+            failure(errc::unauthorized, answered.error().message, "delegation status"));
+    }
+    auto verified = verify_attestation(link, {.now = now, .status = *answered});
+    if (!verified || !verified->verified) {
+        return std::unexpected(failure(errc::unauthorized,
+                                       verified ? verified->reason : verified.error().message,
+                                       "delegation/1"));
+    }
+    return {};
+}
+
+// Whether a session's authority may be acted on now (liquid#514, liquid#517): every link of its
+// chain (root first) and its own delegation pass `check_link_now`, and the root was issued by
+// `principal`. Asked when a session is forked and again before every lease and publish, so a
+// revocation or expiry anywhere in the chain stops a session that is already running.
+auto check_delegation_now(const attestation& delegation,
+                          const digest& id,
+                          std::span<const attestation> chain,
+                          std::span<const digest> chain_ids,
+                          std::string_view principal,
+                          const delegation_status_resolver& status) -> result<void> {
+    if (chain.size() != chain_ids.size()) {
+        return std::unexpected(failure(errc::corrupt, "session delegation chain is incomplete"));
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    for (auto index = std::size_t{}; index < chain.size(); ++index) {
+        auto checked = check_link_now(chain[index], chain_ids[index], status, now);
+        if (!checked) {
+            return std::unexpected(checked.error());
+        }
+    }
+    auto checked = check_link_now(delegation, id, status, now);
+    if (!checked) {
+        return std::unexpected(checked.error());
+    }
+    const auto& root = chain.empty() ? delegation : chain.front();
+    if (root.issuer.taap_id != principal) {
+        return std::unexpected(
+            failure(errc::unauthorized, "delegation was not issued by this principal"));
+    }
+    return {};
+}
+
+// Whether `delegation` was issued to `agent`, by the dispatcher it names, for this repository
+// (liquid#515): its subject is `delegation_subject(agent)`, its `dispatcher` is its own issuer, and
+// its `repository` is `repository`, the hex id of the repository it is used in. Without this, a
+// delegation minted for one agent could be used by another, and one leaked from one repository
+// would grant the same scopes in every repository of the same principal.
+auto check_delegation_binding(const attestation& delegation,
+                              const actor& agent,
+                              std::string_view repository) -> result<void> {
+    auto subject = delegation_subject(agent);
+    if (!subject) {
+        return std::unexpected(
+            failure(errc::unauthorized, subject.error().message, "delegation subject"));
+    }
+    if (subject->alg != delegation.subject.alg || subject->bytes != delegation.subject.bytes) {
+        return std::unexpected(
+            failure(errc::unauthorized, "delegation was issued to another agent", agent.taap_id));
+    }
+    const auto* dispatcher =
+        std::get_if<std::string>(delegation_attribute(delegation, "dispatcher"));
+    if (!dispatcher || *dispatcher != delegation.issuer.taap_id) {
+        return std::unexpected(
+            failure(errc::unauthorized, "delegation dispatcher is not its issuer", "delegation/1"));
+    }
+    const auto* bound = std::get_if<std::string>(delegation_attribute(delegation, "repository"));
+    if (!bound || *bound != repository) {
+        return std::unexpected(failure(errc::unauthorized,
+                                       "delegation was issued for another repository",
+                                       std::string{repository}));
+    }
+    return {};
+}
+
+// The authority a session acts on, once every check has passed.
+struct session_authority {
+    digest delegation_id{};
+    std::vector<digest> chain_ids;
+    std::vector<std::string> scopes;
+    bool may_publish{};
+    bool may_lease{};
+};
+
+// Every check a delegation and its chain must pass before a session acts on them, shared by
+// `fork_session` and `open_session` (liquid#516), so authority restored from session state is
+// verified exactly as authority presented at fork: each link a linked attenuation of the one
+// before it (#517), bound to its agent, dispatcher and `repository` (#515), inside its window, not
+// revoked and correctly signed, with the root issued by `principal` (#514). Each delegation is
+// stored under its digest, which the status resolver is given.
+auto authorize_session(store& objects,
+                       std::string principal,
+                       std::string repository,
+                       const actor& agent,
+                       const attestation& delegation,
+                       std::span<const attestation> chain,
+                       const delegation_status_resolver& status)
+    -> runtime::task<session_authority> {
+    for (auto index = std::size_t{}; index < chain.size(); ++index) {
+        auto link_valid =
+            validate_delegation(chain[index], index == 0 ? nullptr : &chain[index - 1]);
+        if (!link_valid) {
+            co_return std::unexpected(link_valid.error());
+        }
+    }
+    auto delegation_valid =
+        validate_delegation(delegation, chain.empty() ? nullptr : &chain.back());
+    if (!delegation_valid) {
+        co_return std::unexpected(delegation_valid.error());
+    }
+    for (auto index = std::size_t{}; index < chain.size(); ++index) {
+        const auto& delegate =
+            index + 1 < chain.size() ? chain[index + 1].issuer : delegation.issuer;
+        auto link_bound = check_delegation_binding(chain[index], delegate, repository);
+        if (!link_bound) {
+            co_return std::unexpected(link_bound.error());
+        }
+    }
+    auto bound = check_delegation_binding(delegation, agent, repository);
+    if (!bound) {
+        co_return std::unexpected(bound.error());
+    }
+    auto authority = session_authority{};
+    for (const auto& link : chain) {
+        auto encoded_link = encode_attestation(link);
+        if (!encoded_link) {
+            co_return std::unexpected(encoded_link.error());
+        }
+        auto link_id =
+            co_await repository_detail::store_access::put_plain(objects, std::move(*encoded_link));
+        if (!link_id) {
+            co_return std::unexpected(link_id.error());
+        }
+        authority.chain_ids.push_back(*link_id);
+    }
+    auto encoded_delegation = encode_attestation(delegation);
+    if (!encoded_delegation) {
+        co_return std::unexpected(encoded_delegation.error());
+    }
+    auto delegation_id = co_await repository_detail::store_access::put_plain(
+        objects, std::move(*encoded_delegation));
+    if (!delegation_id) {
+        co_return std::unexpected(delegation_id.error());
+    }
+    authority.delegation_id = *delegation_id;
+    auto still_valid = check_delegation_now(
+        delegation, authority.delegation_id, chain, authority.chain_ids, principal, status);
+    if (!still_valid) {
+        co_return std::unexpected(still_valid.error());
+    }
+    const auto* scopes =
+        std::get_if<std::vector<std::string>>(delegation_attribute(delegation, "scopes"));
+    const auto* may_publish = std::get_if<bool>(delegation_attribute(delegation, "may_publish"));
+    const auto* may_lease = std::get_if<bool>(delegation_attribute(delegation, "may_lease"));
+    if (!scopes || scopes->empty() || !may_publish || !may_lease) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "delegation has no usable authority"));
+    }
+    authority.scopes = *scopes;
+    authority.may_publish = *may_publish;
+    authority.may_lease = *may_lease;
+    co_return authority;
+}
+
 } // namespace
 
 runtime::task<session> repository::fork_session(session_options options) {
@@ -8664,45 +9217,18 @@ runtime::task<session> repository::fork_session(session_options options) {
         co_return std::unexpected(
             failure(errc::not_found, "a session requires a recorded fork point"));
     }
-    auto delegation_valid = validate_delegation(options.delegation);
-    if (!delegation_valid) {
-        co_return std::unexpected(delegation_valid.error());
+    const auto principal = impl_->signing_key.identity().taap_id;
+    auto authority = co_await authorize_session(impl_->objects,
+                                                principal,
+                                                node_text(impl_->current.repository),
+                                                options.actor,
+                                                options.delegation,
+                                                options.chain,
+                                                options.status);
+    if (!authority) {
+        co_return std::unexpected(authority.error());
     }
-    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
-    auto verified = verify_attestation(
-        options.delegation,
-        {.now = now, .status = attestation_status{.revoked = false, .checked_at = now}});
-    if (!verified || !verified->verified) {
-        co_return std::unexpected(failure(errc::unauthorized,
-                                          verified ? verified->reason : verified.error().message,
-                                          "delegation/1"));
-    }
-    if (options.delegation.issuer.taap_id != impl_->signing_key.identity().taap_id) {
-        co_return std::unexpected(
-            failure(errc::unauthorized, "delegation was not issued by this principal"));
-    }
-    const auto* scopes =
-        std::get_if<std::vector<std::string>>(delegation_attribute(options.delegation, "scopes"));
-    const auto* may_publish =
-        std::get_if<bool>(delegation_attribute(options.delegation, "may_publish"));
-    const auto* may_lease =
-        std::get_if<bool>(delegation_attribute(options.delegation, "may_lease"));
-    if (!scopes || scopes->empty() || !may_publish || !may_lease) {
-        co_return std::unexpected(
-            failure(errc::invalid_argument, "delegation has no usable authority"));
-    }
-    const auto delegated_scopes = *scopes;
-    const auto delegated_publish = *may_publish;
-    const auto delegated_lease = *may_lease;
-    auto encoded_delegation = encode_attestation(options.delegation);
-    if (!encoded_delegation) {
-        co_return std::unexpected(encoded_delegation.error());
-    }
-    auto delegation_id = co_await repository_detail::store_access::put_plain(
-        impl_->objects, std::move(*encoded_delegation));
-    if (!delegation_id) {
-        co_return std::unexpected(delegation_id.error());
-    }
+    const auto delegation_id = authority->delegation_id;
     auto encoded = encode_repository_document(impl_->current);
     if (!encoded) {
         co_return std::unexpected(encoded.error());
@@ -8740,7 +9266,7 @@ runtime::task<session> repository::fork_session(session_options options) {
         }
     }
     private_repository.impl_->acting_actor = options.actor;
-    private_repository.impl_->acting_delegation = *delegation_id;
+    private_repository.impl_->acting_delegation = delegation_id;
     auto checkpointed = co_await private_repository.impl_->checkpoint();
     if (!checkpointed) {
         co_return std::unexpected(checkpointed.error());
@@ -8757,12 +9283,18 @@ runtime::task<session> repository::fork_session(session_options options) {
     implementation->base_cursor = journal_cursor{std::to_string(impl_->current.drips.size())};
     implementation->agent = std::move(options.actor);
     implementation->delegation = std::move(options.delegation);
-    implementation->delegation_id = *delegation_id;
-    implementation->scopes = delegated_scopes;
-    implementation->may_publish = delegated_publish;
-    implementation->may_lease = delegated_lease;
+    implementation->delegation_id = delegation_id;
+    implementation->chain = std::move(options.chain);
+    implementation->chain_ids = std::move(authority->chain_ids);
+    implementation->scopes = std::move(authority->scopes);
+    implementation->may_publish = authority->may_publish;
+    implementation->may_lease = authority->may_lease;
+    implementation->status = std::move(options.status);
     auto metadata = encode_stored_session({.agent = implementation->agent,
                                            .delegation = implementation->delegation,
+                                           .delegation_id = implementation->delegation_id,
+                                           .chain = implementation->chain,
+                                           .chain_ids = implementation->chain_ids,
                                            .base_tree = implementation->base_tree,
                                            .base_change = implementation->base_change,
                                            .base_cursor = implementation->base_cursor});
@@ -8777,7 +9309,7 @@ runtime::task<session> repository::fork_session(session_options options) {
     co_return session{std::move(implementation)};
 }
 
-runtime::task<session> repository::open_session(session_id id) {
+runtime::task<session> repository::open_session(session_id id, session_open_options options) {
     if (!impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
@@ -8794,6 +9326,31 @@ runtime::task<session> repository::open_session(session_id id) {
     auto metadata = decode_stored_session(**metadata_bytes);
     if (!metadata) {
         co_return std::unexpected(metadata.error());
+    }
+    // Session state is unsigned and may have been written by anyone who can write the state
+    // backend, or carried here by a transfer, so the stored authority is verified exactly as at
+    // fork, with this repository's principal and the caller's status, before anything acts on it
+    // (liquid#516).
+    auto authority = co_await authorize_session(impl_->objects,
+                                                impl_->signing_key.identity().taap_id,
+                                                node_text(impl_->current.repository),
+                                                metadata->agent,
+                                                metadata->delegation,
+                                                metadata->chain,
+                                                options.status);
+    if (!authority) {
+        co_return std::unexpected(authority.error());
+    }
+    const auto same_digest = [](const digest& left, const digest& right) {
+        return left.alg == right.alg && left.bytes == right.bytes;
+    };
+    if (!same_digest(authority->delegation_id, metadata->delegation_id) ||
+        authority->chain_ids.size() != metadata->chain_ids.size() ||
+        !std::ranges::equal(authority->chain_ids, metadata->chain_ids, same_digest)) {
+        co_return std::unexpected(
+            failure(errc::unauthorized,
+                    "session delegation differs from the one it was forked with",
+                    private_state.key("LIQUID_SESSION")));
     }
     auto document = co_await load_state_document(private_state, impl_->objects);
     if (!document) {
@@ -8821,28 +9378,7 @@ runtime::task<session> repository::open_session(session_id id) {
         }
     }
     private_repository.impl_->acting_actor = metadata->agent;
-    auto encoded_delegation = encode_attestation(metadata->delegation);
-    if (!encoded_delegation) {
-        co_return std::unexpected(encoded_delegation.error());
-    }
-    auto delegation_id = co_await repository_detail::store_access::put_plain(
-        impl_->objects, std::move(*encoded_delegation));
-    if (!delegation_id) {
-        co_return std::unexpected(delegation_id.error());
-    }
-    private_repository.impl_->acting_delegation = *delegation_id;
-    const auto* scopes =
-        std::get_if<std::vector<std::string>>(delegation_attribute(metadata->delegation, "scopes"));
-    const auto* may_publish =
-        std::get_if<bool>(delegation_attribute(metadata->delegation, "may_publish"));
-    const auto* may_lease =
-        std::get_if<bool>(delegation_attribute(metadata->delegation, "may_lease"));
-    if (!scopes || !may_publish || !may_lease) {
-        co_return std::unexpected(failure(errc::corrupt, "session authority is incomplete"));
-    }
-    const auto delegated_scopes = *scopes;
-    const auto delegated_publish = *may_publish;
-    const auto delegated_lease = *may_lease;
+    private_repository.impl_->acting_delegation = authority->delegation_id;
     auto implementation = std::make_unique<session::impl>();
     implementation->shared = this;
     implementation->private_replica = std::move(private_repository);
@@ -8851,10 +9387,13 @@ runtime::task<session> repository::open_session(session_id id) {
     implementation->base_cursor = metadata->base_cursor;
     implementation->agent = std::move(metadata->agent);
     implementation->delegation = std::move(metadata->delegation);
-    implementation->delegation_id = *delegation_id;
-    implementation->scopes = delegated_scopes;
-    implementation->may_publish = delegated_publish;
-    implementation->may_lease = delegated_lease;
+    implementation->delegation_id = authority->delegation_id;
+    implementation->chain = std::move(metadata->chain);
+    implementation->chain_ids = std::move(authority->chain_ids);
+    implementation->scopes = std::move(authority->scopes);
+    implementation->may_publish = authority->may_publish;
+    implementation->may_lease = authority->may_lease;
+    implementation->status = std::move(options.status);
     co_return session{std::move(implementation)};
 }
 
@@ -8925,6 +9464,15 @@ runtime::task<void> session::lease(lease_claim claim, std::chrono::seconds ttl) 
         co_return std::unexpected(
             failure(errc::unauthorized, "delegation does not permit leases", claim.path));
     }
+    auto still_valid = check_delegation_now(impl_->delegation,
+                                            impl_->delegation_id,
+                                            impl_->chain,
+                                            impl_->chain_ids,
+                                            impl_->shared->impl_->signing_key.identity().taap_id,
+                                            impl_->status);
+    if (!still_valid) {
+        co_return std::unexpected(still_valid.error());
+    }
     if (!session_path_allowed(impl_->scopes, claim.path)) {
         co_return std::unexpected(
             failure(errc::unauthorized, "lease is outside delegation scopes", claim.path));
@@ -8973,6 +9521,15 @@ runtime::task<publish_report> session::publish(publish_options options) {
     if (!impl_->may_publish) {
         co_return std::unexpected(
             failure(errc::unauthorized, "delegation does not permit publishing"));
+    }
+    auto still_valid = check_delegation_now(impl_->delegation,
+                                            impl_->delegation_id,
+                                            impl_->chain,
+                                            impl_->chain_ids,
+                                            impl_->shared->impl_->signing_key.identity().taap_id,
+                                            impl_->status);
+    if (!still_valid) {
+        co_return std::unexpected(still_valid.error());
     }
     auto private_tree = co_await impl_->private_replica.root_digest();
     if (!private_tree) {
@@ -9936,6 +10493,43 @@ runtime::task<sync_export> repository::export_drips(journal_cursor cursor,
         }
     }
 
+    // Each author's identity chain travels ahead of the records it signs, so the receiver can
+    // bind the author's name to its key (liquid#383). An author whose chain this machine does not
+    // hold is sent without one, and the receiver refuses that author's records.
+    auto authors = std::vector<actor>{};
+    for (const auto& item : items) {
+        if (!std::ranges::contains(authors, item.author.taap_id, &actor::taap_id)) {
+            authors.push_back(item.author);
+        }
+    }
+    auto identities = std::vector<sync_item>{};
+    for (const auto& author : authors) {
+        auto chain = load_identity_chain(author.taap_id);
+        if (!chain && !is_unknown_signer(chain.error())) {
+            co_return std::unexpected(chain.error());
+        }
+        const auto recorded =
+            impl_->current.metadata.find(identity_chain_metadata_key(author.taap_id));
+        if (recorded != impl_->current.metadata.end()) {
+            auto kept = decode_identity_chain(recorded->second);
+            if (kept && (!chain || kept->size() > chain->size())) {
+                chain = std::move(*kept);
+            }
+        }
+        if (!chain) {
+            continue;
+        }
+        auto body = encode_identity_chain(*chain);
+        if (!body) {
+            co_return std::unexpected(body.error());
+        }
+        identities.push_back(
+            {.kind = sync_item_kind::identity, .author = author, .body = std::move(*body)});
+    }
+    items.insert(items.begin(),
+                 std::make_move_iterator(identities.begin()),
+                 std::make_move_iterator(identities.end()));
+
     auto directories = std::set<node_id>{};
     append_working_directories(impl_->current.root, directories);
     for (const auto& node : directories) {
@@ -10519,7 +11113,8 @@ runtime::task<std::vector<path_history_entry>> repository::history(std::string p
                               .mode = current->entry.mode,
                               .by = change.author,
                               .at = change.at,
-                              .message = change.message});
+                              .message = change.message,
+                              .identity_verified = change.identity_verified});
             continue;
         }
         output.push_back({.change = change.id,
@@ -10528,7 +11123,8 @@ runtime::task<std::vector<path_history_entry>> repository::history(std::string p
                           .by = change.author,
                           .at = change.at,
                           .message = change.message,
-                          .deleted = true});
+                          .deleted = true,
+                          .identity_verified = change.identity_verified});
     }
     co_return output;
 }
@@ -10905,7 +11501,13 @@ repository_detail::build_access::path_change(repository& source, std::string pat
         if (!id) {
             co_return std::unexpected(id.error());
         }
-        co_return change_attribution{*id, operation->by, operation->at};
+        // The write is shown as its author's only when the drip that records it checks against
+        // that author's identity chain (liquid#508).
+        co_return change_attribution{.drip = *id,
+                                     .by = operation->by,
+                                     .at = operation->at,
+                                     .identity_verified = drip_signed_by_verified_identity(
+                                         *candidate, source.impl_->signing_key.identity())};
     }
     co_return std::nullopt;
 }
@@ -11362,12 +11964,26 @@ runtime::task<digest> repository_detail::drive_access::snapshot(repository& sour
     co_return co_await source.impl_->snapshot(source.impl_->current.root, {}, false);
 }
 
-runtime::task<repository_detail::staged_drive_file> repository_detail::drive_access::stage(
-    repository& destination, std::filesystem::path source, std::string name, std::uint32_t mode) {
+runtime::task<repository_detail::staged_drive_file>
+repository_detail::drive_access::stage(repository& destination,
+                                       std::filesystem::path folder,
+                                       std::filesystem::path relative,
+                                       std::string name,
+                                       std::uint32_t mode) {
     if (!destination.impl_) {
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
     }
-    auto content = co_await destination.impl_->objects.put_file(std::move(source));
+    auto opened =
+        co_await runtime::offload([folder = std::move(folder), relative = std::move(relative)] {
+            return drive_detail::source_file::open(folder, relative);
+        });
+    if (!opened) {
+        co_return std::unexpected(opened.error());
+    }
+    if (!*opened) {
+        co_return std::unexpected(opened->error());
+    }
+    auto content = co_await destination.impl_->objects.put_file((**opened).path());
     if (!content) {
         co_return std::unexpected(content.error());
     }
@@ -11548,9 +12164,32 @@ auto repository_detail::search_access::index_path(repository& source)
     return source.impl_->root_path / ".liquid" / "index";
 }
 
+auto repository_detail::testing::decode_drip_body(std::span<const std::byte> bytes)
+    -> result<std::size_t> {
+    auto decoded = decode_repository_drip(bytes);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    return decoded->paths.size();
+}
+
 void repository_detail::testing::reset_directory_loads(repository& value) {
     if (value.impl_)
         value.impl_->directory_load_count = 0;
+}
+
+auto repository_detail::testing::rename_working_entry(repository& value,
+                                                      const std::string& from,
+                                                      std::string to) -> bool {
+    if (!value.impl_)
+        return false;
+    auto& entries = value.impl_->current.root.entries;
+    auto found = entries.find(from);
+    if (found == entries.end())
+        return false;
+    auto entry = std::move(found->second);
+    entries.erase(found);
+    return entries.emplace(std::move(to), std::move(entry)).second;
 }
 
 auto repository_detail::shared_state_prefix(const std::filesystem::path& identifier)

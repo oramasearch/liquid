@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """GNOME Files badge provider for liquid drive mounts."""
 
 import os

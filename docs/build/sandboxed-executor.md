@@ -25,6 +25,12 @@ rules, but cannot execute an action until macFUSE provides a fixed `/liquid` mou
 profile remains present so macFUSE integration has one platform enforcement definition. Windows
 returns `errc::unsupported` with the Phase 6 Cloud Files and job-object explanation.
 
+**What a path may hold** (L-17, liquid#399). The macOS profile writes each path as an SBPL string
+with `\` and `"` escaped, and refuses a path that holds a control character (`invalid_argument`), so
+no path can end its string or add a rule. The Linux bootstrap single-quotes every word for `sh`, in
+which everything but `'` is literal, and refuses a command, variable or path that holds a NUL, which
+no quoting can carry.
+
 ## Verification
 
 The privileged Ubuntu 24.04 FUSE container runs the observed-mount executor tests as real FUSE

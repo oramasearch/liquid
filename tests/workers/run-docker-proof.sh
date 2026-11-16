@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
@@ -65,18 +67,35 @@ read_scheduler_metrics() {
   return 1
 }
 
+# liquid #416: each process has its own identity, and each side pins the other's document.
+provision_identity() {
+  local image=$1 name=$2 output=$3
+  mkdir -p "$runtime/$name-home"
+  docker run --rm -e LIQUID_HOME=/var/lib/liquid-identity \
+    -v "$runtime/$name-home:/var/lib/liquid-identity" \
+    --entrypoint /usr/local/bin/liquid "$image" identity show --document >"$output"
+}
+
 start_workers() {
   docker run -d --name "$worker_one" --network host --privileged --device /dev/fuse \
+    -e LIQUID_HOME=/var/lib/liquid-identity \
+    -v "$runtime/worker-one-home:/var/lib/liquid-identity" \
+    -v "$runtime/trust:/etc/liquid:ro" \
     -v "$runtime/worker-one:/var/lib/liquid-worker" \
     "$worker_image" \
     --scheduler 127.0.0.1:50051 \
+    --trust-scheduler /etc/liquid/scheduler \
     --control-listen 0.0.0.0:8081 \
     --poll-ms 2000 \
     --root /var/lib/liquid-worker >/dev/null
   docker run -d --name "$worker_two" --network host --privileged --device /dev/fuse \
+    -e LIQUID_HOME=/var/lib/liquid-identity \
+    -v "$runtime/worker-two-home:/var/lib/liquid-identity" \
+    -v "$runtime/trust:/etc/liquid:ro" \
     -v "$runtime/worker-two:/var/lib/liquid-worker" \
     "$worker_image" \
     --scheduler 127.0.0.1:50051 \
+    --trust-scheduler /etc/liquid/scheduler \
     --control-listen 0.0.0.0:8082 \
     --poll-ms 2000 \
     --root /var/lib/liquid-worker >/dev/null
@@ -114,11 +133,19 @@ docker run --rm --privileged --device /dev/fuse \
   tests/workers/client-proof.sh "$build_dir" seed
 
 rm -rf "$runtime"
-mkdir -p "$runtime/scheduler" "$runtime/worker-one" "$runtime/worker-two"
+mkdir -p "$runtime/scheduler" "$runtime/worker-one" "$runtime/worker-two" \
+  "$runtime/trust/workers"
+provision_identity "$scheduler_image" scheduler "$runtime/trust/scheduler"
+provision_identity "$worker_image" worker-one "$runtime/trust/workers/worker-one"
+provision_identity "$worker_image" worker-two "$runtime/trust/workers/worker-two"
 docker run -d --name "$scheduler" --network host \
+  -e LIQUID_HOME=/var/lib/liquid-identity \
+  -v "$runtime/scheduler-home:/var/lib/liquid-identity" \
+  -v "$runtime/trust:/etc/liquid:ro" \
   -v "$runtime/scheduler:/var/lib/liquid-scheduler" \
   "$scheduler_image" \
-  --listen 0.0.0.0:50051 \
+  --listen 127.0.0.1:50051 \
+  --trust-worker /etc/liquid/workers \
   --control-listen 0.0.0.0:8080 \
   --store /var/lib/liquid-scheduler \
   --lease-ms 8000 >/dev/null

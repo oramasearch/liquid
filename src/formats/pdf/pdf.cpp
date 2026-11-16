@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/builtin.hpp"
 
 #include <algorithm>
@@ -88,7 +90,9 @@ auto normalise(std::string value) -> std::string {
     return value;
 }
 
-auto content_text(std::string_view content) -> std::string {
+// Extracts the literal strings shown by text operators, failing before the text passes `limit`
+// bytes.
+auto content_text(std::string_view content, std::uint64_t limit) -> result<std::string> {
     auto output = std::string{};
     for (auto position = std::size_t{}; position < content.size(); ++position) {
         if (content[position] != '(') {
@@ -116,6 +120,10 @@ auto content_text(std::string_view content) -> std::string {
                                        : tail.substr(operator_start);
         if (operator_tail.starts_with("Tj") || operator_tail.starts_with("TJ") ||
             operator_tail.starts_with("'") || operator_tail.starts_with("\"")) {
+            if (literal.size() + 1 > limit - std::min<std::uint64_t>(limit, output.size())) {
+                return std::unexpected(
+                    error{errc::unsupported, "PDF text exceeds byte budget", "pdf"});
+            }
             output += literal;
             output.push_back('\n');
         }
@@ -210,24 +218,32 @@ public:
                 if (start < body.size() && body[start] == '\n') {
                     ++start;
                 }
-                auto bytes = std::vector<std::byte>{
-                    reinterpret_cast<const std::byte*>(body.data() + start),
-                    reinterpret_cast<const std::byte*>(body.data() + stream_end)};
+                auto content = body.substr(start, stream_end - start);
+                // Inflated bytes and the text taken from them both stay charged, so streams
+                // cannot each inflate against the same allowance.
+                auto decoded = std::vector<std::byte>{};
                 if (body.find("/FlateDecode") != std::string_view::npos) {
-                    auto decoded = inflate(bytes, remaining);
-                    if (!decoded) {
-                        return std::unexpected(decoded.error());
+                    auto inflated = inflate(std::as_bytes(std::span{content}), remaining);
+                    if (!inflated) {
+                        return std::unexpected(inflated.error());
                     }
-                    bytes = std::move(*decoded);
+                    decoded = std::move(*inflated);
+                    remaining -= decoded.size();
+                    content = text(decoded);
                 }
-                auto extracted = content_text(text(bytes));
-                if (!extracted.empty()) {
-                    auto text_entry = make_entry(
-                        "text/" + std::string{header},
-                        format_entry_kind::member,
-                        std::vector<std::byte>{reinterpret_cast<const std::byte*>(extracted.data()),
-                                               reinterpret_cast<const std::byte*>(
-                                                   extracted.data() + extracted.size())});
+                auto extracted = content_text(content, remaining);
+                if (!extracted) {
+                    return std::unexpected(extracted.error());
+                }
+                remaining -= extracted->size();
+                if (!extracted->empty()) {
+                    auto text_entry =
+                        make_entry("text/" + std::string{header},
+                                   format_entry_kind::member,
+                                   std::vector<std::byte>{
+                                       reinterpret_cast<const std::byte*>(extracted->data()),
+                                       reinterpret_cast<const std::byte*>(extracted->data() +
+                                                                          extracted->size())});
                     if (!text_entry) {
                         return std::unexpected(text_entry.error());
                     }

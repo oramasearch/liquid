@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include <chrono>
@@ -201,6 +203,9 @@ struct LIQUID_EXPORT repository_status {
     std::optional<change_id> head;
     agents_config agents;
     std::vector<data_branch_record> data_branches;
+    // The last repairs any process made to the repository's store when it opened, oldest first,
+    // each "<UTC time> <what>", for example an index rebuilt from the packs (liquid #526).
+    std::vector<std::string> store_recoveries;
 };
 
 struct LIQUID_EXPORT snapshot {
@@ -322,6 +327,9 @@ struct LIQUID_EXPORT path_history_entry {
     std::chrono::sys_seconds at;
     std::string message;
     bool deleted{};
+    // Set from the change: true only when an identity chain binds `by` to the change's signature.
+    // Otherwise show `unverified_signer_label`, never `by` (liquid#508).
+    bool identity_verified{};
 };
 
 struct LIQUID_EXPORT record_cursor {
@@ -407,6 +415,10 @@ struct LIQUID_EXPORT operation_record {
     std::chrono::sys_seconds at;
     session_id session;
     std::map<std::string, std::string> metadata;
+    // True when the local identity recorded the operation, or when a drip that records it checks
+    // against its author's identity chain. Otherwise show `unverified_signer_label`, never `by`
+    // (liquid#508).
+    bool identity_verified{};
 };
 
 enum class conflict_resolution_kind : std::uint8_t {
@@ -593,6 +605,10 @@ public:
     [[nodiscard]] runtime::task<std::vector<ref>> refs();
     [[nodiscard]] runtime::task<void> set_ref(std::string name, change_id id);
     [[nodiscard]] result<repository_status> status();
+    // How many leases the repository's store holds: every repository's in a shared store. Each open
+    // handle holds its own and releases them when it ends; an ended process's are collected by the
+    // next open (liquid #527).
+    [[nodiscard]] runtime::task<std::uint64_t> lease_count();
     [[nodiscard]] runtime::task<std::vector<change>> log(log_options options = {});
     [[nodiscard]] runtime::task<std::vector<drip>> drips();
     [[nodiscard]] runtime::task<stale_base_report> explain_stale(write_base base,
@@ -647,7 +663,8 @@ public:
     [[nodiscard]] runtime::task<undo_report> undo_session(session_id session,
                                                           undo_options options = {});
     [[nodiscard]] runtime::task<session> fork_session(session_options options);
-    [[nodiscard]] runtime::task<session> open_session(session_id id);
+    [[nodiscard]] runtime::task<session> open_session(session_id id,
+                                                      session_open_options options = {});
     [[nodiscard]] runtime::task<void> lock(std::string path,
                                            std::string reason = "exclusive checkout");
     [[nodiscard]] runtime::task<void> unlock(std::string path);

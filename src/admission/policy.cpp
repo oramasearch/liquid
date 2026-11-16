@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/admission.hpp"
 
 #include <array>
@@ -376,6 +378,11 @@ result<admission_policy> decode_admission_policy(std::string_view input) {
         auto valid_lake = http1::validate_url(*lake);
         if (!valid_lake) {
             return std::unexpected(policy_error(valid_lake.error().message, "log.lake"));
+        }
+        // The log client's own rule: plain HTTP only to loopback (liquid#389).
+        auto log_source = transparency::http_log_source::create(*lake);
+        if (!log_source) {
+            return std::unexpected(policy_error(log_source.error().message, "log.lake"));
         }
         if (identity_id->empty() || !identity_id->starts_with("taap:1:ed25519:") ||
             identity_key->size() != transparency::hash{}.size()) {

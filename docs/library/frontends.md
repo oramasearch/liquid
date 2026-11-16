@@ -31,8 +31,7 @@ The format registry follows the same module pattern in the separately versioned
 values, owned bytes, and progress/cancellation callbacks. The two descriptors remain purpose-built
 because their operation sets differ.
 
-The same header defines `liquify_plugin_v1`, the native editor plugin descriptor from bridge
-decision 14. It reuses the frontend ABI's byte spans, owned results, errors, progress, cancellation,
+The same header defines `liquify_plugin_v1`, the native editor plugin descriptor. It reuses the frontend ABI's byte spans, owned results, errors, progress, cancellation,
 and destroy callback instead of creating another set of boundary types. Dynamic plugins export
 `liquify_plugin_get_v1`; static plugins pass the same descriptor to liquify's checked host.
 

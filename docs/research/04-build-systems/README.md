@@ -107,7 +107,7 @@ build world is going — see
 
 ## Why "build the world" happens
 
-Steve's specific complaint. It has four distinct causes, and they need four
+The specific complaint this project starts from. It has four distinct causes, and they need four
 distinct fixes:
 
 | Cause | Fix |

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/release.hpp"
 
 #include <algorithm>
@@ -142,16 +144,37 @@ runtime::task<release_approval> approve_release(digest artifact,
 result<release_verification> verify_release(digest artifact,
                                             const release_policy& policy,
                                             std::span<const release_approval> approvals,
+                                            const release_trust& trust,
                                             std::chrono::sys_seconds now) {
+    // liquid#384: the policy ships with the repository, so only an issuer pinned outside it may
+    // define who approves a release. With no issuer configured, every policy is refused.
+    if (trust.policy_issuers.empty()) {
+        return std::unexpected(
+            failure(errc::unauthorized,
+                    "no release-policy issuers are configured; every policy is refused"));
+    }
+    if (!std::ranges::contains(trust.policy_issuers, policy.statement.issuer.taap_id)) {
+        return std::unexpected(failure(errc::unauthorized,
+                                       "release policy issuer " + policy.statement.issuer.taap_id +
+                                           " is not a configured release-policy issuer"));
+    }
+    // The listed issuer's name is bound to its key only through the identity chain this machine
+    // holds; an unknown issuer is refused like a bad signature (liquid#383).
     auto policy_verified = verify_attestation(policy.statement, {.now = now});
     if (!policy_verified || !policy_verified->verified) {
-        return std::unexpected(failure(
-            errc::unauthorized,
-            policy_verified ? policy_verified->reason : policy_verified.error().message));
+        return std::unexpected(
+            failure(errc::unauthorized,
+                    policy_verified ? policy_verified->reason : policy_verified.error().message));
     }
     if (policy.statement.profile != "release_policy/1" ||
         policy.statement.subject_kind != attestation_subject_kind::repository) {
         return std::unexpected(failure(errc::unauthorized, "invalid release policy profile"));
+    }
+    // A pinned issuer's policy for one repository must not authorize releases of another.
+    if (policy.statement.subject.alg != trust.repository.alg ||
+        policy.statement.subject.bytes != trust.repository.bytes) {
+        return std::unexpected(
+            failure(errc::unauthorized, "release policy is for another repository"));
     }
     const auto* threshold = std::get_if<std::uint64_t>(attribute(policy.statement, "threshold"));
     const auto* signers =
@@ -179,6 +202,7 @@ result<release_verification> verify_release(digest artifact,
     }
     const auto expected_policy = to_string(*policy_id);
     auto accepted = std::set<std::string>{};
+    auto unknown = std::set<std::string>{};
     for (const auto& approval : approvals) {
         const auto& statement = approval.statement;
         const auto* approval_policy =
@@ -194,9 +218,16 @@ result<release_verification> verify_release(digest artifact,
         auto verified = verify_attestation(statement, {.now = checked_at});
         if (verified && verified->verified) {
             accepted.insert(statement.issuer.taap_id);
+        } else if (verified && verified->unknown_signer) {
+            unknown.insert(statement.issuer.taap_id);
         }
     }
     output.distinct_valid_signers.assign(accepted.begin(), accepted.end());
+    for (const auto& identifier : unknown) {
+        if (!accepted.contains(identifier)) {
+            output.unknown_signers.push_back(identifier);
+        }
+    }
     for (const auto& signer : *signers) {
         if (!accepted.contains(signer)) {
             output.missing.push_back(signer);

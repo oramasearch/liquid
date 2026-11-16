@@ -19,6 +19,8 @@ request state and stay outside those immutable bytes. `build_trace` records pres
 dependency edges, phase timing, cache outcomes, schedules, and build wall time. Canonical `sbom`
 records hold the unsigned base SPDX or CycloneDX document. Canonical `abi` records bind a library
 blob to its binary kind, architecture, install name, exports, and needed libraries.
+Incomplete ABI inspection adds an optional `truncated=true` field; its absence means false and
+complete records retain their canonical bytes. Decoding rejects a non-boolean truncation flag.
 The scheduling-record encoder and decoder are also reused as one length-delimited field in the
 private worker protocol, keeping the signed result and submitted placement decision byte-identical.
 Result record version 4 adds the canonical `output_tree` referenced by the producer signature.

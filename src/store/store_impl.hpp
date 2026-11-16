@@ -1,10 +1,15 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -16,6 +21,7 @@
 #include "mutation_mutex.hpp"
 #include "owner.hpp"
 #include "subject_index.hpp"
+#include "write_lock.hpp"
 
 namespace liquid::store_detail {
 
@@ -51,6 +57,26 @@ struct transfer_counts {
     std::uint64_t bytes_read{};
     std::uint64_t objects_written{};
     std::uint64_t bytes_written{};
+};
+
+class store_backend;
+
+// One hold on a store's cross-process write lock (liquid #526). Holds nest within one handle; the
+// last one released publishes a new generation when the store changed and unlocks the file.
+class [[nodiscard]] write_hold {
+public:
+    write_hold() noexcept = default;
+    explicit write_hold(store_backend* owner) noexcept : owner_(owner) {}
+    ~write_hold();
+    write_hold(write_hold&& other) noexcept;
+    write_hold& operator=(write_hold&& other) noexcept;
+    write_hold(const write_hold&) = delete;
+    write_hold& operator=(const write_hold&) = delete;
+
+    void release() noexcept;
+
+private:
+    store_backend* owner_{};
 };
 
 class store_backend {
@@ -97,6 +123,16 @@ public:
     // Detaches the owner so store::close can destroy the store and then await the release.
     [[nodiscard]] owner_hold take_owner() noexcept;
 
+    // What open repaired, one sentence each: an index rebuilt from the packs, and why (liquid
+    // #526). Empty when the store opened as it was.
+    [[nodiscard]] std::vector<std::string> recoveries() const;
+    // The repairs any process recorded in `recoveries.log`, oldest first, each prefixed with its
+    // UTC time; the last 20 are kept.
+    [[nodiscard]] std::vector<std::string> recorded_recoveries() const;
+    // Reloads this handle's view when another process has written the store since this handle
+    // last held its write lock. Returns true when it reloaded, so a read that missed can retry.
+    [[nodiscard]] runtime::task<bool> refresh_if_stale();
+
     // Whole-repository transfer primitives (liquid #328); see docs/library/store.md. Copies keep
     // every identity: chunks are read verified from the source and appended to this store's packs
     // under the same digest, and an object is published with the source's chunk list once every
@@ -123,7 +159,22 @@ public:
     [[nodiscard]] std::vector<std::string> transfer_verify_remote(const blob& expected) const;
 
 private:
+    friend class write_hold;
+
     explicit store_backend(std::filesystem::path root, store_options options);
+    // Takes the cross-process write lock for one mutation, reloading this handle's state first
+    // when another process wrote since this handle last held it. The caller holds `mutation_`, so
+    // the first hold of a nest is never taken by two coroutines at once. A store with an owner, or
+    // without a local root, has no write lock and the hold is empty.
+    [[nodiscard]] runtime::task<write_hold> hold_writes();
+    void release_writes() noexcept;
+    // Reads the object map, remote map, collection state, index and pack tables from the backend.
+    // Open calls it once; a refresh calls it after dropping the handle's in-memory state, keeping
+    // the objects of an unpublished object batch.
+    [[nodiscard]] runtime::task<void> load_state();
+    [[nodiscard]] runtime::task<void> refresh();
+    [[nodiscard]] runtime::task<void> load_recovery_log();
+    [[nodiscard]] runtime::task<void> record_recovery(std::string note);
     [[nodiscard]] runtime::task<void> load_objects();
     [[nodiscard]] runtime::task<void> load_remotes();
     [[nodiscard]] runtime::task<void> save_remotes();
@@ -204,7 +255,21 @@ private:
     // transfer_publish, which then flushes the index.
     std::uint32_t transfer_pack_{};
     bool transfer_appended_{};
+    // Objects added inside an object batch and not yet in the published object map; a refresh
+    // keeps them.
+    std::set<std::string> unpublished_objects_;
+    std::vector<std::string> recoveries_;
+    std::vector<std::string> recorded_recoveries_;
     mutation_mutex mutation_;
+
+    // The cross-process write lock (liquid #526): engaged for a disk store opened without an
+    // owner. `hold_state_` guards the nest count and the generation this handle last saw.
+    std::optional<write_lock> writes_;
+    mutable std::mutex hold_state_;
+    std::size_t holds_{};
+    std::uint64_t generation_{};
+    std::uint64_t mutations_at_hold_{};
+    bool reload_pending_{};
 };
 
 } // namespace liquid::store_detail

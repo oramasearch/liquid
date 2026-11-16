@@ -5,19 +5,21 @@
 ## Synopsis
 
 ```text
-liquid identity [show [--document]|rotate [--to software|fido2|piv:9c]] [--json]
+liquid identity [show [--document|--chain]|rotate [--to software|fido2|piv:9c]|custody [--to passphrase|keychain|file|<custody-uri>]|trust <chain|-> [--accept-compromise-rotation]] [--json]
 ```
 
 ## Description
 
-Show the device TAAP identity, export its public document for sign-up, or rotate its signing key with a linked successor document. The private signing key stays local for every custody.
+Show the device TAAP identity, export its public document for sign-up or its whole chain for other machines, rotate its signing key with a linked successor document, or trust another identity's chain. A signer name verifies only against a chain this machine holds: its own, one trusted here, or one received and verified during sync. The private signing key stays local for every custody. A software key is sealed under a wrapping key held by a passphrase (LIQUID_IDENTITY_PASSPHRASE_FILE or a terminal prompt), the macOS Keychain, or a key custody URI; LIQUID_IDENTITY_KEY_CUSTODY chooses it for a new identity (default: keychain on macOS, passphrase elsewhere). Only an explicit file custody leaves the key protected by file permissions alone, and identity show warns when it is. identity custody shows the custody and --to moves the key to another.
 
 ## Options
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
-| `--to` | `<software\|fido2\|piv:9c>` | Select the new identity-key custody. | software |
+| `--to` | `<custody>` | For rotate: the new signing-key custody (software, fido2, or piv:9c). For custody: the new wrapping-key custody of a software key (passphrase, keychain on macOS, a key custody URI such as tpm:pcrs=0,7, or file, which leaves the key protected only by file permissions). | software |
 | `--document` | — | Show only the public TAAP/1 document as unpadded base64url canonical CBOR, without a newline. Only for show; incompatible with --json (exit 2). | false |
+| `--chain` | — | Show the identity's whole public document chain, oldest first, as unpadded base64url canonical CBOR, without a newline: the input to identity trust on another machine. Only for show; incompatible with --document and --json (exit 2). | false |
+| `--accept-compromise-rotation` | — | Only for trust: also accept rotations that carry a compromise declaration but no signature from the key they replace. Decide this out of band; a sync never does. | false |
 | `--json` | — | Write stable JSON instead of text. | false |
 
 ## Availability
@@ -28,7 +30,10 @@ available
 
 ```sh
 liquid identity show --document
+liquid identity show --chain > me.chain
+liquid identity trust - < colleague.chain
 liquid identity rotate --json
+liquid identity custody --to passphrase
 ```
 
 ## Exit status

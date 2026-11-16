@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/format.hpp"
 
 #include <algorithm>
@@ -491,6 +493,68 @@ auto same_digest(const digest& left, const digest& right) -> bool {
     return left.alg == right.alg && left.bytes == right.bytes;
 }
 
+// The depth, byte and entry budgets of one unpack. The outermost format_codec::unpack or
+// format_registry::unpack on a thread opens it. A codec that decodes its own members through
+// format_registry::unpack (deb, apk and the ZIP-based documents do) runs inside it, so that call
+// draws on the same budgets instead of starting new ones (liquid#438).
+struct expansion {
+    std::uint32_t maximum_depth{};
+    // Depth of the tree whose codec is running; the outermost tree is depth 1.
+    std::uint32_t depth{1};
+    std::uint64_t budget{};
+    std::uint64_t entries{};
+    // The running codec was called to decode another codec's members.
+    bool member_decode{};
+};
+
+thread_local auto open_expansion = static_cast<expansion*>(nullptr);
+
+// Opens an expansion from `limits` for the scope's lifetime when none is open on this thread.
+class expansion_scope {
+public:
+    explicit expansion_scope(const format_limits& limits)
+        : owned_{.maximum_depth = limits.maximum_depth,
+                 .budget = limits.byte_budget,
+                 .entries = limits.maximum_entries},
+          outermost_{open_expansion == nullptr} {
+        if (outermost_) {
+            open_expansion = &owned_;
+        }
+    }
+    ~expansion_scope() {
+        if (outermost_) {
+            open_expansion = nullptr;
+        }
+    }
+    expansion_scope(const expansion_scope&) = delete;
+    auto operator=(const expansion_scope&) -> expansion_scope& = delete;
+
+    [[nodiscard]] auto outermost() const -> bool {
+        return outermost_;
+    }
+    [[nodiscard]] auto state() const -> expansion& {
+        return *open_expansion;
+    }
+
+private:
+    expansion owned_;
+    bool outermost_{};
+};
+
+// What is left of an expansion, as the limits handed to the codec running at its current depth.
+auto remaining_limits(const expansion& state) -> format_limits {
+    return {.maximum_depth =
+                state.depth <= state.maximum_depth ? state.maximum_depth - state.depth + 1 : 0,
+            .byte_budget = state.budget,
+            .maximum_entries = state.entries};
+}
+
+auto tighter(const format_limits& left, const format_limits& right) -> format_limits {
+    return {.maximum_depth = std::min(left.maximum_depth, right.maximum_depth),
+            .byte_budget = std::min(left.byte_budget, right.byte_budget),
+            .maximum_entries = std::min(left.maximum_entries, right.maximum_entries)};
+}
+
 } // namespace
 
 struct format_codec::impl {
@@ -661,6 +725,11 @@ auto format_codec::unpack(std::span<const std::byte> blob,
                           format_callbacks callbacks) const -> result<format_tree> {
     if (!impl_) {
         return std::unexpected(format_error(errc::invalid_argument, "format codec is empty"));
+    }
+    // Inside an open expansion a codec never gets more than what that expansion has left.
+    auto scope = expansion_scope{limits};
+    if (!scope.outermost()) {
+        limits = tighter(limits, remaining_limits(scope.state()));
     }
     auto output = invoke(impl_->module,
                          impl_->module->unpack,
@@ -925,6 +994,41 @@ auto format_registry::recognise(std::span<const std::byte> blob, std::string_vie
 auto format_registry::unpack(std::span<const std::byte> blob,
                              std::string_view path,
                              format_limits limits) const -> result<format_tree> {
+    auto scope = expansion_scope{limits};
+    auto& state = scope.state();
+    if (!scope.outermost()) {
+        // A codec is decoding its own members, such as a deb's control.tar and data.tar or a
+        // document's ZIP container. They belong to that codec's tree, so they are decoded at its
+        // depth and not expanded here; the outermost call expands the codec's entries against the
+        // shared budgets. A member decode may not decode members itself, which a package whose
+        // control.tar is another package would otherwise repeat without bound.
+        if (state.member_decode) {
+            return std::unexpected(format_error(
+                errc::unsupported, "format members nest inside format members", std::string{path}));
+        }
+        auto recognised = recognise(blob, path);
+        if (!recognised) {
+            return std::unexpected(recognised.error());
+        }
+        state.member_decode = true;
+        auto members = recognised->first->unpack(blob, remaining_limits(state));
+        state.member_decode = false;
+        if (!members) {
+            return std::unexpected(members.error());
+        }
+        auto decoded = std::uint64_t{};
+        for (const auto& entry : members->entries) {
+            decoded += entry.bytes.size();
+        }
+        if (members->entries.size() > state.entries || decoded > state.budget) {
+            return std::unexpected(format_error(errc::unsupported,
+                                                "format members exceed the remaining budget",
+                                                std::string{path}));
+        }
+        members->codec = recognised->first->descriptor().name;
+        members->tier = recognised->second.tier;
+        return members;
+    }
     auto recognised = recognise(blob, path);
     if (!recognised) {
         return std::unexpected(recognised.error());
@@ -935,18 +1039,17 @@ auto format_registry::unpack(std::span<const std::byte> blob,
     }
     root->codec = recognised->first->descriptor().name;
     root->tier = recognised->second.tier;
-    auto budget = limits.byte_budget;
-    auto entry_count = std::uint64_t{root->entries.size()};
+    state.entries -= std::min(state.entries, std::uint64_t{root->entries.size()});
     auto expand = [&](auto&& self, format_tree& tree, std::uint32_t depth) -> result<void> {
         for (auto& entry : tree.entries) {
-            if (entry.bytes.size() > budget) {
+            if (entry.bytes.size() > state.budget) {
                 tree.truncated = true;
                 tree.limits.push_back("byte budget reached at " + entry.path);
                 entry.opaque_reason = "byte budget reached";
                 entry.bytes.clear();
                 continue;
             }
-            budget -= entry.bytes.size();
+            state.budget -= entry.bytes.size();
             if (entry.bytes.empty()) {
                 continue;
             }
@@ -957,26 +1060,40 @@ auto format_registry::unpack(std::span<const std::byte> blob,
                 }
                 return std::unexpected(nested_recognition.error());
             }
-            if (depth >= limits.maximum_depth) {
+            if (depth >= state.maximum_depth) {
                 tree.truncated = true;
                 tree.limits.push_back("depth limit reached at " + entry.path);
                 entry.opaque_reason = "depth limit reached";
                 continue;
             }
-            auto nested = nested_recognition->first->unpack(entry.bytes, limits);
+            if (state.budget == 0) {
+                tree.truncated = true;
+                tree.limits.push_back("byte budget reached at " + entry.path);
+                entry.opaque_reason = "byte budget reached";
+                continue;
+            }
+            state.depth = depth + 1;
+            auto nested = nested_recognition->first->unpack(entry.bytes, remaining_limits(state));
             if (!nested) {
-                return std::unexpected(nested.error());
+                // The codec ran on what is left of the budgets, so a limit it reports leaves this
+                // member opaque instead of failing the whole unpack.
+                if (nested.error().code != errc::unsupported) {
+                    return std::unexpected(nested.error());
+                }
+                tree.truncated = true;
+                tree.limits.push_back(nested.error().message + " at " + entry.path);
+                entry.opaque_reason = nested.error().message;
+                continue;
             }
             nested->codec = nested_recognition->first->descriptor().name;
             nested->tier = nested_recognition->second.tier;
-            if (nested->entries.size() >
-                limits.maximum_entries - std::min(limits.maximum_entries, entry_count)) {
+            if (nested->entries.size() > state.entries) {
                 tree.truncated = true;
                 tree.limits.push_back("entry limit reached at " + entry.path);
                 entry.opaque_reason = "entry limit reached";
                 continue;
             }
-            entry_count += nested->entries.size();
+            state.entries -= nested->entries.size();
             auto expanded = self(self, *nested, depth + 1);
             if (!expanded) {
                 return expanded;

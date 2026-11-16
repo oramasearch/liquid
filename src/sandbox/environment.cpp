@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "sandbox/environment.hpp"
 
 #include <array>

@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/binary/macho.hpp"
 
 #include <algorithm>
 #include <map>
 #include <ranges>
+#include <string_view>
 
 namespace liquid::formats::binary {
 namespace {
@@ -88,9 +91,36 @@ struct symbol_entry {
     std::uint16_t description{};
 };
 
+// Borrow at most 64 KiB, examining one extra byte to distinguish an exact-length name.
+// Repeated string-table offsets never allocate until the retained copies have been charged.
+auto symbol_text(std::span<const std::byte> bytes, bool& truncated)
+    -> std::optional<std::string_view> {
+    constexpr auto maximum = std::size_t{64} << 10U;
+    const auto bounded = bytes.first(std::min(bytes.size(), maximum + 1));
+    const auto end = std::ranges::find(bounded, std::byte{});
+    const auto size = static_cast<std::size_t>(end - bounded.begin());
+    if (size > maximum) {
+        truncated = true;
+        auto length = maximum;
+        // Keep a valid UTF-8 name valid when the cutoff falls inside a code point.
+        while (length != 0 && (std::to_integer<unsigned char>(bytes[length]) & 0xc0U) == 0x80U) {
+            --length;
+        }
+        return std::string_view{reinterpret_cast<const char*>(bytes.data()), length};
+    }
+    if (end == bounded.end()) {
+        return std::nullopt;
+    }
+    return std::string_view{reinterpret_cast<const char*>(bytes.data()), size};
+}
+
 } // namespace
 
 auto inspect_macho(std::span<const std::byte> bytes) -> result<image> {
+    return inspect_macho(bytes, 16ULL << 20U);
+}
+
+auto inspect_macho(std::span<const std::byte> bytes, std::uint64_t byte_budget) -> result<image> {
     const auto magic = integer<std::uint32_t>(bytes, 0, true);
     if (!magic) {
         return std::unexpected(malformed("missing Mach-O header"));
@@ -215,28 +245,45 @@ auto inspect_macho(std::span<const std::byte> bytes) -> result<image> {
             *name_offset >= string_size) {
             continue;
         }
-        auto name = c_text(bytes, string_offset + *name_offset, string_offset + string_size);
+        const auto exported = (*type & 0xe0U) == 0 && (*type & 0x01U) != 0 &&
+                              (*type & 0x0eU) != 0 && *section_index != 0;
+        const auto sampled = output.symbol_names.size() < 256;
+        if (!exported && !sampled) {
+            continue;
+        }
+        auto name =
+            symbol_text(bytes.subspan(static_cast<std::uint64_t>(string_offset) + *name_offset,
+                                      string_size - *name_offset),
+                        output.truncated);
         if (!name || name->empty()) {
             continue;
         }
-        if (output.symbol_names.size() < 256) {
-            output.symbol_names.push_back(*name);
+        // Charge both retained copies and both entry arrays before allocating either one.
+        // Moving entries into exported_symbols below avoids another name allocation.
+        const auto charge = (sampled ? sizeof(std::string) + name->size() : 0) +
+                            (exported ? sizeof(symbol_entry) + sizeof(symbol) + name->size() : 0);
+        if (charge > byte_budget - output.symbol_bytes) {
+            output.truncated = true;
+            break;
         }
-        if ((*type & 0xe0U) != 0 || (*type & 0x01U) == 0 || (*type & 0x0eU) == 0 ||
-            *section_index == 0) {
+        output.symbol_bytes += charge;
+        if (sampled) {
+            output.symbol_names.emplace_back(*name);
+        }
+        if (!exported) {
             continue;
         }
         if (name->starts_with('_')) {
-            name->erase(name->begin());
+            name->remove_prefix(1);
         }
-        entries.push_back({std::move(*name), *section_index, *value, *description});
+        entries.push_back({std::string{*name}, *section_index, *value, *description});
     }
     std::ranges::sort(entries, [](const auto& left, const auto& right) {
         return std::pair{left.section_index, left.value} <
                std::pair{right.section_index, right.value};
     });
     for (auto index = std::size_t{}; index < entries.size(); ++index) {
-        const auto& entry = entries[index];
+        auto& entry = entries[index];
         const auto weak = (entry.description & 0x0080U) != 0;
         const auto indexed_code =
             entry.section_index < section_is_code.size() && section_is_code[entry.section_index];
@@ -245,7 +292,7 @@ auto inspect_macho(std::span<const std::byte> bytes) -> result<image> {
                    entry.value - value.address < value.size;
         });
         const auto code = indexed_code || addressed_code;
-        output.exported_symbols.push_back({entry.name,
+        output.exported_symbols.push_back({std::move(entry.name),
                                            {},
                                            code ? symbol_kind::function : symbol_kind::object,
                                            0,

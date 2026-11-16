@@ -1,12 +1,17 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "liquid/drip.hpp"
@@ -27,6 +32,9 @@ enum class sync_item_kind : std::uint8_t {
     directory = 3,
     reference = 4,
     presence = 5,
+    // An author's identity document chain (`body` is `encode_identity_chain`). It travels ahead of
+    // the drips and changes it attributes; the receiver verifies and stores it before them.
+    identity = 6,
 };
 
 struct LIQUID_EXPORT sync_item {
@@ -87,6 +95,12 @@ struct LIQUID_EXPORT sync_endpoint_options {
     journal_cursor cursor;
     std::size_t batch_items{256};
     bool atomic{};
+    /// The longest one sync request waits in total, across its retries, on a peer that answers
+    /// `503` or `429` with a `Retry-After` header. A requested wait that would pass this budget is
+    /// not taken: the request fails with the peer's error at once.
+    std::chrono::milliseconds retry_budget{std::chrono::seconds{30}};
+    /// The most times one sync request is sent, the first time included. `1` turns retrying off.
+    unsigned retry_attempts{8};
 };
 
 struct LIQUID_EXPORT sync_ref_update {
@@ -104,12 +118,35 @@ struct LIQUID_EXPORT sync_ref_verdict {
     std::string reason;
 };
 
+// Runs before the pushed records are imported, so `sync_item::author` is still the name the frame
+// claims, not a verified identity. Authorize on the authenticated caller; the import that follows
+// refuses any drip or change whose author no identity chain verifies (liquid#429).
 using sync_authorizer = std::function<runtime::task<std::vector<sync_ref_verdict>>(
     const sync_item&, std::span<const sync_ref_update> reference_updates)>;
+
+// The name the push rate limit is charged to, for a record that names no author, when the host did
+// not say who authenticated the push (liquid#508). An unauthenticated push charges each record that
+// names an author to that author once its signature is verified (liquid#403).
+inline constexpr std::string_view unauthenticated_pusher = "unauthenticated";
 
 struct LIQUID_EXPORT sync_server_options {
     sync_authorizer authorize;
     std::size_t batch_items{256};
+    // The identity that authenticated the push: the session or TAAP identity the host verified
+    // (Lake's signed-in caller, for example). The push rate limit's actor bucket is keyed on it,
+    // never on a record's claimed `sync_item::author`, so a pusher cannot spend another person's
+    // budget by naming them (liquid#508). Empty means unauthenticated: each record is charged to
+    // its verified author, or to `unauthenticated_pusher` when it names none.
+    std::string pusher;
+    // Uploaded objects are held in a quarantine until a push that reaches them is authorized
+    // (liquid#403): then they enter the store; a refused push discards them. The quarantine holds
+    // at most `upload_quota_bytes` at once, an upload that would exceed it is refused whole with
+    // `errc::busy`, and an object no push claims within `upload_ttl` is discarded.
+    std::uint64_t upload_quota_bytes{std::uint64_t{1} << 30};
+    std::chrono::seconds upload_ttl{std::chrono::hours{1}};
+    // Where the quarantine lives: a private directory is created inside it and removed with the
+    // server. Empty selects the system temporary directory.
+    std::filesystem::path staging_directory;
 };
 
 class LIQUID_EXPORT sync_server {
@@ -122,8 +159,14 @@ public:
     sync_server(const sync_server&) = delete;
     sync_server& operator=(const sync_server&) = delete;
 
+    // Charges the push rate limit to `sync_server_options::pusher`.
     [[nodiscard]] runtime::task<std::vector<std::byte>>
     handle_push(std::span<const std::byte> request);
+    // Charges the push rate limit to `pusher`, the identity that authenticated this request, for a
+    // server that handles requests from more than one caller. Empty means unauthenticated, as for
+    // `sync_server_options::pusher`.
+    [[nodiscard]] runtime::task<std::vector<std::byte>>
+    handle_push(std::span<const std::byte> request, std::string pusher);
     [[nodiscard]] runtime::task<std::vector<std::byte>>
     handle_pull(std::span<const std::byte> request);
     [[nodiscard]] runtime::task<std::vector<std::byte>>

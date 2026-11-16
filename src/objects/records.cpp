@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "objects/records.hpp"
 
 #include <algorithm>
@@ -8,6 +10,7 @@
 
 #include "encoding/cbor.hpp"
 #include "liquid/attestation.hpp"
+#include "objects/entry_name.hpp"
 
 namespace liquid::objects {
 namespace {
@@ -767,6 +770,8 @@ auto encode(const tree& value) -> result<std::vector<std::byte>> {
         return std::unexpected(error{errc::invalid_argument, "duplicate tree entry", "tree"});
     auto output = cbor::value::array{};
     for (const auto& entry : entries) {
+        if (auto valid = validate_entry_name(entry.name, errc::invalid_argument); !valid)
+            return std::unexpected(valid.error());
         auto fields =
             cbor::value::map{{"name", cbor::value{entry.name}},
                              {"mode", cbor::value{std::uint64_t{entry.mode}}},
@@ -1235,6 +1240,9 @@ auto encode(const abi_descriptor& value) -> result<std::vector<std::byte>> {
     if (value.install_name) {
         fields.emplace_back("install_name", *value.install_name);
     }
+    if (value.truncated) {
+        fields.emplace_back("truncated", true);
+    }
     return cbor::encode(cbor::value{std::move(fields)});
 }
 
@@ -1342,6 +1350,8 @@ auto decode_tree(std::span<const std::byte> bytes) -> result<tree> {
         if (!text || !bits || !type || *bits > std::numeric_limits<std::uint32_t>::max() ||
             *type > static_cast<std::uint64_t>(node_kind::conflict))
             return std::unexpected(corrupt("invalid tree entry"));
+        if (auto valid = validate_entry_name(*text, errc::corrupt); !valid)
+            return std::unexpected(valid.error());
         auto object =
             id ? decode_digest(*id) : result<digest>{std::unexpected(corrupt("tree id missing"))};
         auto identity = node ? decode_node_id(*node)
@@ -2281,6 +2291,13 @@ auto decode_abi(std::span<const std::byte> bytes) -> result<abi_descriptor> {
     auto output = abi_descriptor{.subject = *subject,
                                  .binary = static_cast<abi_binary_kind>(*binary),
                                  .architecture = *architecture};
+    if (const auto* value = find(*source, "truncated")) {
+        const auto* truncated = std::get_if<bool>(&value->data);
+        if (!truncated) {
+            return std::unexpected(corrupt("invalid ABI truncation flag"));
+        }
+        output.truncated = *truncated;
+    }
     if (const auto* install_name_value = find(*source, "install_name")) {
         const auto* install_name = std::get_if<std::string>(&install_name_value->data);
         if (!install_name) {

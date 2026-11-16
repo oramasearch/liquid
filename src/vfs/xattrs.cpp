@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "xattrs.hpp"
 
 #include "drive/settings.hpp"

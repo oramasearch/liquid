@@ -54,9 +54,9 @@ bootstrap artifacts:
 
 ```text
 build/libliquid.a
-/Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-59/build/libliquid-wrap-hook.dylib
+$REPO/build/libliquid-wrap-hook.dylib
 build/liquid
-/Users/stevesperandeo/dev/oramasearch/codex-work/wt/liquid/issue-59/build/libliquid-wrap-hook.dylib
+$REPO/build/libliquid-wrap-hook.dylib
 ```
 
 libliquid now receives only the hook filename. A build-tree CLI finds the hook beside itself, a
@@ -65,7 +65,8 @@ test executable finds it in its parent build directory, and an installed CLI fin
 
 ## Verification record
 
-Linux proof deferred (decision 33). The Linux two-run action counts, hit rates, critical path,
+Linux proof deferred (no FUSE-capable Linux lane yet; see
+[the lane audit](../build/phase-2-exit-lane-audit.md)). The Linux two-run action counts, hit rates, critical path,
 largest rebuilt outputs, and bootstrap comparisons remain the privileged mount-backed proof.
 Native macOS static and shared suites verify the portable repository and wrapper behavior; a
 wrapped macOS build requires macFUSE.

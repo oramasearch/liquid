@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/ar/ar.hpp"
 
 #include <charconv>

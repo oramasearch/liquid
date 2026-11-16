@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
@@ -9,6 +11,8 @@
 #include "liquid/build.hpp"
 #include "liquid/error.hpp"
 #include "liquid/runtime.hpp"
+
+#include "cli/signer.hpp"
 
 namespace liquid_cli {
 
@@ -66,6 +70,8 @@ auto change_name(liquid::abi_change_kind kind) -> std::string_view {
         return "size_changed";
     case liquid::abi_change_kind::version_changed:
         return "version_changed";
+    case liquid::abi_change_kind::inspection_truncated:
+        return "inspection_truncated";
     }
     return "type_changed";
 }
@@ -99,7 +105,7 @@ void print_miss(const liquid::cache_miss& miss) {
     if (miss.changed_by) {
         std::println("  drip: {} by {} at {}",
                      liquid::to_string(miss.changed_by->drip),
-                     miss.changed_by->by.taap_id,
+                     shown_signer(miss.changed_by->by, miss.changed_by->identity_verified),
                      miss.changed_by->at.time_since_epoch().count());
     }
     if (miss.reason == liquid::cache_miss_reason::command_changed) {

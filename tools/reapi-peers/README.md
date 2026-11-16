@@ -38,7 +38,8 @@ the negotiated CAS/ActionCache client round trip against both. On Linux it also 
 Make wrap fixture with its disk index removed before the second run, proving a 100% remote hit rate
 against the 100% local baseline, then runs the read-guard refusal case.
 
-The script next starts `liquid serve reapi` and runs Bazel 7.4.1 twice from clean output bases. The
+The script next starts `liquid serve reapi` on `127.0.0.1:50161` (a plaintext listener is served
+only on loopback) and runs Bazel 7.4.1 twice from clean output bases. The
 first stock-client run uploads the genrule result and the second must report one remote cache hit.
 The fixture uses an empty WORKSPACE with module resolution disabled, keeping this server proof
 independent of registry downloads. Docker absence is an explicit skip; any available peer or

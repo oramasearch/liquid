@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "compactor.hpp"
 
 #include <algorithm>
@@ -136,6 +138,14 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
     if (!marker_written) {
         co_return std::unexpected(marker_written.error());
     }
+    // The marker is what lets recovery remove an uncommitted replacement, so it must be durable
+    // before any byte of the replacement (liquid #344): a backend may keep any subset of the
+    // writes issued between two barriers, and a replacement kept without its marker would be an
+    // orphan pack no recovery or collection accounts for.
+    auto marker_ordered = co_await store_.persistence_->barrier();
+    if (!marker_ordered) {
+        co_return std::unexpected(marker_ordered.error());
+    }
     pack_contents replacement{new_pack_id, {}, 16};
     std::vector<index_entry> moved;
     for (std::size_t frame = 0; frame != old_pack.entries.size(); ++frame) {
@@ -222,6 +232,12 @@ runtime::task<void> compactor::compact(std::uint32_t old_pack_id,
     auto removed = co_await store_.persistence_->remove(pack_key(old_pack_id));
     if (!removed && removed.error().code != errc::not_found) {
         co_return std::unexpected(removed.error());
+    }
+    // The old pack's removal must be durable before the marker's, for the same reason: without the
+    // marker, recovery no longer knows the old pack is to go.
+    auto removal_ordered = co_await store_.persistence_->barrier();
+    if (!removal_ordered) {
+        co_return std::unexpected(removal_ordered.error());
     }
     removed = co_await store_.persistence_->remove(marker);
     if (!removed && removed.error().code != errc::not_found) {

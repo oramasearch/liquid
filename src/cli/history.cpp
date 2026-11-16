@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <filesystem>
 #include <format>
 #include <optional>
@@ -7,6 +9,8 @@
 
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
+
+#include "cli/signer.hpp"
 
 namespace liquid_cli {
 namespace {
@@ -90,7 +94,7 @@ auto path_history(int argc, char** argv) -> int {
         std::println("{} {} {} {} {} {}",
                      liquid::to_string(entry.change.value),
                      entry.at.time_since_epoch().count(),
-                     entry.by.taap_id,
+                     shown_signer(entry.by, entry.identity_verified),
                      entry.deleted ? "deleted" : "version",
                      entry.path,
                      entry.message);
@@ -118,13 +122,14 @@ auto history_operations(int argc, char** argv) -> int {
         for (std::size_t index = 0; index < operations->size(); ++index) {
             const auto& operation = (*operations)[index];
             std::print("{}{{\"id\":{},\"kind\":{},\"from\":{},\"to\":{},\"actor\":{},"
-                       "\"at\":{},\"session\":{}}}",
+                       "\"identity_verified\":{},\"at\":{},\"session\":{}}}",
                        index == 0 ? "" : ",",
                        json_string(liquid::to_string(operation.id.value)),
                        json_string(operation.kind),
                        json_string(operation.from),
                        json_string(operation.to),
-                       json_string(operation.by.taap_id),
+                       json_string(shown_signer(operation.by, operation.identity_verified)),
+                       operation.identity_verified,
                        operation.at.time_since_epoch().count(),
                        json_string(liquid::to_string(operation.session)));
         }
@@ -136,7 +141,7 @@ auto history_operations(int argc, char** argv) -> int {
                          operation.kind,
                          operation.from,
                          operation.to,
-                         operation.by.taap_id,
+                         shown_signer(operation.by, operation.identity_verified),
                          operation.at.time_since_epoch().count(),
                          liquid::to_string(operation.session));
         }

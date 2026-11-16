@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -9,10 +11,12 @@
 #include <ranges>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "liquid/attestation.hpp"
 #include "liquid/hash.hpp"
+#include "liquid/identity.hpp"
 #include "liquid/release.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
@@ -239,10 +243,27 @@ auto load_approvals(const liquid::digest& artifact)
     return output;
 }
 
+// liquid#384: the trust root comes from this machine, never from the repository being released.
+auto load_release_trust() -> liquid::result<liquid::release_trust> {
+    auto issuers = liquid::load_trusted_identities("release-policy-issuers");
+    if (!issuers) {
+        return std::unexpected(issuers.error());
+    }
+    auto repository = repository_subject();
+    if (!repository) {
+        return std::unexpected(repository.error());
+    }
+    return liquid::release_trust{.repository = *repository, .policy_issuers = std::move(*issuers)};
+}
+
 auto verify(std::string_view artifact_text) -> int {
     auto artifact = liquid::parse_digest(artifact_text);
     if (!artifact) {
         return fail(artifact.error());
+    }
+    auto trust = load_release_trust();
+    if (!trust) {
+        return fail(trust.error());
     }
     auto policy = load_policy();
     if (!policy) {
@@ -252,7 +273,7 @@ auto verify(std::string_view artifact_text) -> int {
     if (!approvals) {
         return fail(approvals.error());
     }
-    auto verified = liquid::verify_release(*artifact, *policy, *approvals);
+    auto verified = liquid::verify_release(*artifact, *policy, *approvals, *trust);
     if (!verified) {
         return fail(verified.error());
     }
@@ -260,6 +281,14 @@ auto verify(std::string_view artifact_text) -> int {
     std::println("distinct_valid_signers={}", verified->distinct_valid_signers.size());
     for (const auto& missing : verified->missing) {
         std::println("missing={}", missing);
+    }
+    for (const auto& unknown : verified->unknown_signers) {
+        std::println("unknown_signer={}", unknown);
+    }
+    if (!verified->unknown_signers.empty()) {
+        std::println(stderr,
+                     "hint: an unknown signer's approval counts only after its identity chain is "
+                     "trusted: liquid identity trust <chain>");
     }
     return verified->satisfied ? 0 : 1;
 }

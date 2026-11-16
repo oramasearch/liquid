@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <gtest/gtest.h>
 
 #include <chrono>
@@ -13,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "../fuse_probe.hpp"
 #include "../socket_fixture.hpp"
 #include "../temporary_directory.hpp"
 #include "build/cache.hpp"
@@ -307,6 +310,10 @@ TEST(HotUpdateDemo, TierThreeInvokesRestartHook) {
     if (!LIQUID_BUILD_HAS_FUSE) {
         std::printf("tier=3 outcome=restart hook=skipped reason=sandbox-backend-unavailable\n");
         GTEST_SKIP() << "restart hooks require the configured sandbox backend";
+    }
+    if (const auto reason = liquid::test::fuse_unavailable_reason()) {
+        std::printf("tier=3 outcome=restart hook=skipped reason=sandbox-backend-unavailable\n");
+        GTEST_SKIP() << "restart hooks require the configured sandbox backend: " << *reason;
     }
     const auto root = liquid::test::fixture_path("liquid-hot-update-restart-demo");
     std::filesystem::remove_all(root);

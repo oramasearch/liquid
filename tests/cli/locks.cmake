@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_LOCK_ROOT)
   message(FATAL_ERROR "lock CLI test arguments are required")
 endif()

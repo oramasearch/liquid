@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "leases.hpp"
 
 #include <algorithm>
@@ -191,6 +193,22 @@ runtime::task<void> release_lease(std::shared_ptr<lease_state> state) {
     co_return result<void>{};
 }
 
+void release_lease_now(const std::shared_ptr<lease_state>& state) noexcept {
+    if (!state || state->released || !state->backend)
+        return;
+    try {
+        if (const auto path = backend_local_path(state->backend, state->record.key)) {
+            auto ignored = std::error_code{};
+            std::filesystem::remove(*path, ignored);
+            state->released = true;
+            return;
+        }
+        runtime::spawn(release_lease(state), [](result<void>) {});
+    } catch (...) {
+        // The holder's end is detected on the next open, which collects the lease.
+    }
+}
+
 runtime::task<std::vector<lease_record>>
 load_leases(std::shared_ptr<::liquid::store_backend> backend, std::filesystem::path context) {
     std::vector<lease_record> records;
@@ -203,6 +221,11 @@ load_leases(std::shared_ptr<::liquid::store_backend> backend, std::filesystem::p
             if (!entry.key.ends_with(".lease"))
                 continue;
             auto bytes = co_await read_backend_object(backend, entry.key);
+            // Another process renews and releases leases while this one lists them: a lease
+            // renewed or released between the listing and the read is simply no longer there
+            // (liquid #526).
+            if (!bytes && bytes.error().code == errc::not_found)
+                continue;
             if (!bytes)
                 co_return std::unexpected(bytes.error());
             auto decoded = decode(*bytes, entry.key);

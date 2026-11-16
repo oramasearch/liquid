@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/builtin.hpp"
 
 #include <algorithm>
@@ -14,10 +16,13 @@ namespace liquid::formats::detail {
 namespace {
 
 using reader = auto (*)(std::span<const std::byte>) -> result<binary::image>;
+using budgeted_reader = auto (*)(std::span<const std::byte>, std::uint64_t)
+    -> result<binary::image>;
 
 class binary_backend final : public codec_backend {
 public:
-    binary_backend(std::string name, reader inspect) : name_(std::move(name)), inspect_(inspect) {}
+    binary_backend(std::string name, reader inspect, budgeted_reader inspect_budgeted)
+        : name_(std::move(name)), inspect_(inspect), inspect_budgeted_(inspect_budgeted) {}
 
     auto recognise(std::span<const std::byte> blob, std::string_view)
         -> result<std::optional<format_recognition>> override {
@@ -31,22 +36,29 @@ public:
 
     auto unpack(std::span<const std::byte> blob, format_limits limits)
         -> result<format_tree> override {
-        auto image = inspect_(blob);
+        auto image =
+            inspect_budgeted_ ? inspect_budgeted_(blob, limits.byte_budget) : inspect_(blob);
         if (!image) {
             return std::unexpected(image.error());
         }
         auto output = format_tree{.codec = name_,
                                   .tier = format_tier::semantic_verbatim,
-                                  .original = {blob.begin(), blob.end()}};
-        auto remaining = limits.byte_budget;
+                                  .original = {blob.begin(), blob.end()},
+                                  .truncated = image->truncated};
+        if (image->truncated) {
+            output.limits.push_back("linked-binary symbol name or byte limit reached");
+        }
+        auto remaining = limits.byte_budget - std::min(limits.byte_budget, image->symbol_bytes);
         for (const auto& section : image->sections) {
-            if (section.size > remaining || section.offset > blob.size() ||
-                section.size > blob.size() - section.offset) {
+            const auto name_charge =
+                name_ == "elf" ? sizeof(format_entry) + 9U + section.name.size() : 0U;
+            if (name_charge > remaining || section.size > remaining - name_charge ||
+                section.offset > blob.size() || section.size > blob.size() - section.offset) {
                 output.truncated = true;
-                output.limits.push_back("byte budget reached at sections/" + section.name);
+                output.limits.push_back("byte budget reached at sections");
                 break;
             }
-            remaining -= section.size;
+            remaining -= section.size + name_charge;
             auto attributes = detail::attributes({{"address", std::to_string(section.address)},
                                                   {"flags", std::to_string(section.flags)},
                                                   {"type", std::to_string(section.type)}});
@@ -66,6 +78,16 @@ public:
             output.entries.push_back(std::move(*entry));
         }
         for (const auto& symbol : image->exported_symbols) {
+            if (inspect_budgeted_) {
+                const auto charge = sizeof(format_entry) + 8U + symbol.name.size() +
+                                    (symbol.version ? 4U * symbol.version->size() : 0U);
+                if (charge > remaining) {
+                    output.truncated = true;
+                    output.limits.push_back("byte budget reached at exports");
+                    break;
+                }
+                remaining -= charge;
+            }
             auto attributes = detail::attributes(
                 {{"binding", symbol.binding},
                  {"kind", symbol.kind == binary::symbol_kind::function ? "function" : "object"},
@@ -82,6 +104,15 @@ public:
             output.entries.push_back(std::move(*entry));
         }
         for (const auto& library : image->needed_libraries) {
+            if (inspect_budgeted_) {
+                const auto charge = sizeof(format_entry) + 8U + library.size();
+                if (charge > remaining) {
+                    output.truncated = true;
+                    output.limits.push_back("byte budget reached at imports");
+                    break;
+                }
+                remaining -= charge;
+            }
             auto entry = make_entry("imports/" + library, format_entry_kind::attribute, {});
             if (!entry) {
                 return std::unexpected(entry.error());
@@ -99,16 +130,17 @@ public:
 private:
     std::string name_;
     reader inspect_;
+    budgeted_reader inspect_budgeted_;
     static constexpr auto volatile_fields_ = std::array<std::string_view, 1>{"load_address"};
 };
 
-template <reader Reader>
+template <reader Reader, budgeted_reader BudgetedReader = nullptr>
 auto module(std::string_view name,
             const char* const* extensions,
             std::size_t extension_count,
             const liquid_format_magic_v1* magic,
             std::size_t magic_count) -> const liquid_format_module_v1* {
-    static auto backend = binary_backend{std::string{name}, Reader};
+    static auto backend = binary_backend{std::string{name}, Reader, BudgetedReader};
     static auto name_storage = std::string{name};
     static const auto volatile_names = std::array<const char*, 1>{"load_address"};
     static const auto value =
@@ -152,20 +184,21 @@ constexpr auto macho_magic =
 } // namespace
 
 auto elf_module() -> const liquid_format_module_v1* {
-    return module<binary::inspect_elf>(
+    return module<static_cast<reader>(binary::inspect_elf), binary::inspect_elf>(
         "elf", elf_extensions.data(), elf_extensions.size(), elf_magic.data(), elf_magic.size());
 }
 
 auto macho_module() -> const liquid_format_module_v1* {
-    return module<binary::inspect_macho>("macho",
-                                         macho_extensions.data(),
-                                         macho_extensions.size(),
-                                         macho_magic.data(),
-                                         macho_magic.size());
+    return module<static_cast<reader>(binary::inspect_macho), binary::inspect_macho>(
+        "macho",
+        macho_extensions.data(),
+        macho_extensions.size(),
+        macho_magic.data(),
+        macho_magic.size());
 }
 
 auto pe_module() -> const liquid_format_module_v1* {
-    return module<binary::inspect_pe>(
+    return module<static_cast<reader>(binary::inspect_pe), binary::inspect_pe>(
         "pe", pe_extensions.data(), pe_extensions.size(), pe_magic.data(), pe_magic.size());
 }
 

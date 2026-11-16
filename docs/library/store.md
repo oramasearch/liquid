@@ -38,7 +38,8 @@ store needs:
 - `remove(key)` deletes one complete object;
 - `list(prefix)` returns matching keys and sizes; and
 - `barrier()` completes the backend's configured durability level for all successful operations
-  before later publication; and
+  before later publication; what a crash may keep of the writes between two barriers is the
+  ordering contract below; and
 - `fenced(fence)` returns a view of the same objects whose every call carries an injected owner's
   fence. It is not pure virtual: the default is `errc::unsupported`, which only an open with
   `store_options::owner` reaches (see [Injected owners and fencing](#injected-owners-and-fencing)).
@@ -69,6 +70,62 @@ repository transfer suites (`store-write-once`) a second time over it, selected 
 remote-shaped destination, because lake transfers into Zetta. It hides the disk root, so those runs
 load index runs into memory as a remote store does.
 
+### Ordering between barriers
+
+`store_backend` states what a crash may keep (liquid #344; the contract is the comment on
+`barrier()` in `include/liquid/store.hpp`):
+
+- **Barriers cut the mutations into intervals.** When `barrier()` succeeds, every `put`,
+  `put_if_absent`, `put_range` and `remove` that succeeded before it is durable. A crash never keeps
+  a mutation issued after a barrier without everything issued before it.
+- **Within one interval, any subset.** A crash may keep any subset of the interval's mutations to
+  different keys, in any combination.
+- **One key's own mutations keep their order.** A crash keeps a prefix of each key's mutations: a
+  `put_range` never survives without the ranges before it, a later `put` is never undone by an earlier
+  one, and a `remove` followed by a `put` of the same key never leaves the removal last.
+- **Reads see everything that succeeded**, durable or not.
+
+Liquid relies on nothing stronger. Where its recovery depends on one key's write reaching the
+backend before another key's, a barrier stands between them. So a backend may send one interval's
+writes to different keys concurrently, or keep different keys in different logs, and still serve
+liquid. It must still apply one key's writes in issue order. Zetta's object storage refuses an
+append that is not at the object's end (liquid #332), so an append sent out of order fails rather
+than leaving a gap. Two puts of one key sent at once could land in either order, and a backend must
+not do that.
+
+**What Lake's workspace store gives today.** Lake's workspace store backend
+(`src/control/workspace_store.cpp` in oramasearch/lake, lake#527, lake#532, lake#535) gives more than
+the contract. It sends every mutation in liquid's issue order, one at a time, each answered before
+the next. A workspace Zetta's object bucket appends each write to one node's object log, and after
+any crash replays a prefix of that log: startup truncates it at the first torn frame (zetta's
+`src/core/data/object_log.hpp`, "DURABILITY"). Lake opens no workspace store on a bucket whose writes
+or barriers more than one node answered (lake#543), so the bucket keeps a prefix of liquid's whole
+issue order. Lake's backend makes liquid's `barrier()` a point in that order and sends no request for
+it. Lake's sync, once per store operation and before Lake answers, drains the held writes and sends
+one Zetta `:barrier` that fsyncs the bucket. A prefix of the issue order is what a backend keeping
+this contract would leave after a crash at some earlier point, so liquid recovers from it the same
+way, and Lake does not acknowledge an operation before its writes are durable.
+
+Allowing any subset would let Lake send an interval's writes concurrently again, which saved about 23
+of 80 round trips per one-file commit (lake#532). Doing so needs per-key order kept, and liquid's
+barriers turned into ordering points: everything before a barrier answered before anything after
+it is sent.
+
+**Where liquid relied on more, and was fixed.** The subset crash mode of the in-memory backend
+(`memory_store_backend::crash(crash_durability::subset, seed)`, see
+[simulation.md](simulation.md#ordering-between-barriers)) found four places that needed the order of
+two keys' writes in one interval. Each now has a barrier between them:
+
+| Where | The two writes | What a crash kept without the barrier |
+|---|---|---|
+| `chunk_index::rebuild` (`src/store/index.cpp`) | removing `index/MANIFEST`, then the old runs | the old manifest naming a removed run: the next open failed `errc::not_found` instead of rebuilding from the packs (`StoreCrashDurability`, seed 156) |
+| compaction (`src/store/compactor.cpp`) | the pending marker, then the replacement pack | the replacement without its marker: an orphan pack that recovery never removes (`StoreCompactionCrashDurability`) |
+| compaction, after the commit | removing the old pack, then the marker | the old, all-dead pack without its marker (`StoreCompactionCrashDurability`) |
+| `recover_pending_compactions` (`src/store/store_impl.cpp`) | removing the uncommitted replacement, then the marker | the replacement without its marker, after a crash during recovery (`StoreCompactionRecoveryCrash`) |
+
+Each costs one barrier per index rebuild, two per compacted pack and one per recovered marker. On
+Lake today a liquid barrier sends no request (lake#535), so they cost Lake no round trip.
+
 ## Layout and pack format
 
 ```
@@ -87,6 +144,8 @@ load index runs into memory as a remote store does.
 <root>/repositories/<id-hash>/sessions/<session-id>/…      private session state (same names)
 <root>/tmp/
 <root>/store.lock          exclusive owner lock and the owner's pid, host and start time
+<root>/store.write.lock    cross-process write lock: a generation, then the holder's pid, host and time
+<root>/recoveries.log      the last 20 repairs an open made, "<UTC time> <what>" per line
 ```
 
 The disk backend's `open` creates missing directories and refuses a marker other than format 1 with
@@ -112,7 +171,7 @@ all repositories in the store. `<id-hash>` is the hex BLAKE3 digest of the ident
 
 ## Repository state through the backend
 
-**Why (liquid #326, decision 54 / lake#512).** Lake keeps each workspace's store in the workspace
+**Why (liquid #326, lake#512).** Lake keeps each workspace's store in the workspace
 Zetta, through a remote `store_backend` over Zetta's object capability, and cannot mount the
 workspace's volume. Before this change a repository's own entry points were read, written and
 renamed with `std::filesystem` beside the store, so a store without a local root could hold the
@@ -147,6 +206,19 @@ an ordinary object and replaces the pointer, so a reader sees the previous point
 and never a torn record. A crash before the replacement leaves the previous journal and loses only
 the unacknowledged write. Open still reads a legacy journal holding an inline document.
 
+**Removals end with a barrier too** (liquid #343). A checkpoint publishes `LIQUID_REPO` and then
+removes `LIQUID_JOURNAL`; a session's publish and discard end by removing the session's state
+prefix. Each removal is followed by `barrier()` on the state backend (and on the store's backend
+when that is a different one, which covers the retention records a checkpoint writes after its
+marker) before the operation returns. Without it, a backend that keeps only what a barrier covered
+could lose the removal in a crash: open prefers the journal whenever it exists, so a resurrected
+journal would revert the acknowledged cut to the document from before it, and a resurrected session
+could be reopened and published again. What an operation acknowledged is durable when it returns.
+`RepositoryStateDurability.CutIsDurableWhenItReturns` (`tests/sim/test_repository_state.cpp`) and
+`Collaboration.published_and_discarded_sessions_stay_gone_after_a_crash`
+(`tests/test_collaboration.cpp`) crash right after each operation on the in-memory backend with
+`lose_unbarriered()`, which drops every mutation since the last barrier.
+
 **Exclusive create.** `repository::create` first refuses an existing `LIQUID_REPO` cheaply, before
 writing any object. The create's first checkpoint then publishes `LIQUID_REPO` with
 `put_if_absent`, so of two concurrent creators of one identifier exactly one succeeds and the other
@@ -171,7 +243,11 @@ an owned checkout repository by design and remain filesystem operations.
 format marker changes and there is nothing to refuse: a repository written before this change opens
 after it, and one written after it opens with an earlier build. A `LIQUID_REPO.tmp` left by an
 earlier release's interrupted rename is ignored. Disk replacement now goes through the backend's
-`.backend-tmp` temporary and rename.
+`.backend-tmp` temporary and rename. Since liquid #526 that temporary, like the conditional
+create's, is unique to the call (`<key>.<random>.backend-tmp`): with one fixed name, two processes
+publishing one key renamed each other's file and failed `in rename: No such file or directory`.
+A failed rename removes its temporary; open removes temporaries in `packs/`, `index/`, `gc/`,
+`leases/` and `keys/` that a killed writer left more than an hour ago.
 
 **Verify.** `tests/sim/test_repository_state.cpp`: the conditional create on both backends,
 including eight racing creators of one key; the default `unsupported`; the scoped disk `list`; a
@@ -514,7 +590,11 @@ decompresses, recompresses, or recalculates its identity. The new locations are 
 newest index run. The replacement pack and run are only preparation; the atomic
 collection-manifest put is the commit point. That manifest replaces the old pack's partial bitmap
 with an all-dead bitmap. Only after that put does the index manifest publish the new run and does the collector
-remove the old pack and its pending marker.
+remove the old pack and its pending marker. A barrier makes the marker durable before the
+replacement's first byte, and another makes the old pack's removal durable before the marker's;
+recovery likewise removes the pack, barriers, then removes the marker, so a backend that keeps any
+subset of one interval's writes never leaves a pack without the marker that names it (liquid #344,
+[Ordering between barriers](#ordering-between-barriers)).
 
 Recovery reads a pending marker before opening the index. Before the collection manifest put,
 it removes the replacement pack; after it, it removes the old pack. A crash between the collection
@@ -565,7 +645,7 @@ streaming k-way merge over the mapped input records. It does not load all input 
 fanout and the bloom follows it, but a merge learns the count, fanout and bloom only after it has
 seen every record, because duplicate digests collapse. Compaction used to write a placeholder
 header and an empty bloom, append the records, and then rewrite the header at offset 0 and the bloom
-in place. Zetta's object storage, under lake's per-workspace stores (liquid-bridge decision 54),
+in place. Zetta's object storage, under lake's per-workspace stores,
 refuses that rewrite with `409 conflict`. Compaction now merges twice over the immutable inputs. The
 first merge writes nothing: it counts the records and fills the fanout and bloom. The second
 writes the finished run as a complete-object `put` of the header, then appends the bloom and the
@@ -592,8 +672,21 @@ runs. The next merge takes the same unpublished key, because `next_sequence_` co
 manifest, and its complete-object `put` replaces the torn object whole rather than rewriting
 its bytes. The old runs are unmapped and removed only after the manifest names the replacement.
 
-If the manifest or a run header is absent or corrupt, `open` reconstructs the run sets from pack
-tables. Deleting `index/` is therefore recoverable. There is no index write-ahead log.
+If the manifest or a run header is absent or corrupt, or the manifest names a run file that is
+missing or the wrong size, `open` reconstructs the run sets from pack tables. Deleting `index/` is
+therefore recoverable. There is no index write-ahead log. Before liquid #526 only a corrupt
+manifest or header was rebuilt; a missing run failed every open with `io: No such file or
+directory (…/index/run-22.idx)`. A rebuild is recorded: `store::recoveries()` returns what this open
+repaired, and the open appends `<UTC time> index rebuilt from packs: <reason>` to
+`recoveries.log`, which `liquid status` prints as `store_recovery=` lines (and `store_recoveries`
+in `--json`), because the process that repaired the store is often the daemon.
+
+**Opening writes nothing (liquid #526).** Open used to insert every frame of every pack into the
+memtable and flush it, so each open, `liquid status` included, wrote a full copy of the index as a
+new run and rewrote the manifest. Every reader was a writer, and run numbers climbed with every
+command. Open now inserts only frames the index does not already locate at one of their live
+frames (the unsealed pack's frames, or a chunk two writers stored twice), and leaves them in the
+memtable: the next writer flushes them with its own entries. A rebuild still writes.
 
 Concurrent coroutines on one store serialize mutation with the store's thread-safe
 `mutation_mutex`. Reads use immutable
@@ -619,10 +712,8 @@ root and no injected `owner` is `errc::unsupported`. The descriptor is close-on-
 The kernel releases the lock when the owner's descriptor closes, however the process ends, so a
 successor never waits on a dead owner.
 
-Opens without `exclusive_owner` take no lock and keep the single-process contract: the caller must
-ensure that no other process writes the root. Existing callers that open one repository's store
-from several handles in one process (repository reopen, the CLI beside its daemon, readers in
-tests) are unchanged.
+Opens without `exclusive_owner` do not own the root. They share it with other writers through the
+write lock in the next section.
 
 **Why (liquid #321, found by lake#467).** A store keeps its pack append position, object map,
 chunk index memtable, and delta candidates in process memory. It appends at the offset it
@@ -663,6 +754,82 @@ between its clients.
 
 `store::close()` destroys the store and then awaits the owner's release, so a predecessor can hand
 over at a known point instead of relying on destruction; the handle is empty afterwards.
+
+### Several writers without an owner
+
+**What (liquid #526).** A checkout's store is written by several processes at once: the checkout
+daemon (`liquid daemon --serve`), each CLI command, and a library client such as liquify, possibly
+of two liquid builds. None of them owns the root. Each open store handle on a disk root without an
+owner opens `<root>/store.write.lock` and takes an exclusive advisory lock on it (`flock`,
+`LockFileEx` on Windows) for the length of one mutation, never for the life of the handle:
+
+- open, while it removes leftover publications, recovers compactions and loads its state;
+- every put, chunk hydration, remote registration, lease, object-batch commit, redaction, eviction
+  and transfer step;
+- a whole collection, from its snapshot to its sweep, so no other process writes below a high-water
+  mark it never saw. The collecting handle's own writes go on under the nested hold.
+
+The file's first eight bytes are a generation. A holder whose mutations changed anything (the disk
+backend counts its puts, range writes and removals) adds one before it unlocks. A handle remembers
+the generation it last saw; when the next acquisition finds another, a different process
+published, and the handle reloads its object map, remote map, collection manifest, pending
+compactions, index and pack tables before it mutates. Objects of an object batch it has not
+published yet are kept across the reload; their chunks are in the packs the reload indexes. After
+the reload the handle appends at the pack's real end, seals or starts the pack another writer left,
+names its next index run after the manifest's, and publishes an object map that holds every other
+writer's objects. Compaction removes old runs only after the manifest that replaces them is
+published, and under the lock no other process can publish a manifest that still names them.
+
+A read that misses (`not_found`, `corrupt` or `io`, or `contains` and `has` answering not local)
+checks the generation without the lock. If it moved, the handle reloads under the lock and retries
+once, so a reader sees an object another process published after it opened, and a location another
+process's compaction moved. Holder liveness is the kernel's: the lock is released when the
+descriptor closes, however the process ends. A writer that waits ten minutes gives up with
+`errc::busy` naming the holder's pid, host and start time.
+
+A store opened with `exclusive_owner` or an injected `owner` takes no write lock: the owner already
+excludes every other writer, and lake's services keep that hand-off. A backend without a local root
+and without an owner has no lock and keeps the single-process contract.
+
+**Why the lock and not the hand-off.** The hand-off above serialises whole processes and suits a
+service that holds the root for hours. A checkout's writers each need the root for milliseconds,
+and the daemon and an IDE hold their handles open indefinitely, so an owner held for a handle's
+life would lock the others out. liquid #321 set aside per-mutation safety because it needs a lock
+around each publication and a reload of everything the writer keeps in memory; that is what this
+does, at a cost paid only when another process has written. What it does not cover:
+
+- A collection still removes an object written before its snapshot that no lease retains yet, in
+  this process or another. A writer leases what it keeps (a repository leases its checkpoint), and
+  one that loses the race stores the object again.
+- A repository's own documents (`LIQUID_REPO`, `LIQUID_JOURNAL`) are replaced whole by each
+  process from its own view, so two processes saving one repository at once can drop each other's
+  drips from the published document. Their objects stay in the store.
+- A build from before liquid #526 takes no write lock and still races.
+- A reload reads every pack table again; a store with many packs pays that each time another
+  process wrote. Reads of a handle's in-memory maps are not synchronised with a reload on another
+  thread of the same process, as they already were not with that handle's own writes.
+
+**Verify.** `tests/store/test_writers.cpp` (`StoreWriters.*`). In one process: a manifest that
+names a missing run reopens by rebuilding from the packs, says so in `recoveries()` and
+`recoveries.log`, reads every object back, and the next open repairs nothing; reopening a current
+store leaves every file under the root byte for byte as it was, apart from the lock file's holder
+record; two handles on one root writing in turn each read every object the other wrote, and every
+pack frame verifies. Across processes, with `liquid-store-writers-fixture`: four writer processes
+on one root with 128 KiB packs, each putting and leasing 48 objects plus 48 unleased ones, reading
+its own and the other writers' newest objects and reopening the store every 16 writes, while a fifth
+process runs full collections in a loop; afterwards every pack frame verifies, the store opens with
+no repair, every acknowledged object reads back byte for byte, and a full collection keeps every
+one. And the reproduction from liquify#95: `liquid init`, `liquid daemon --serve`, a library client
+opening the repository and writing a file in a loop, and the CLI appending to tracked files and
+running `liquid status` and `liquid cut` for 60 seconds (`LIQUID_STORE_STRESS_SECONDS` changes it);
+every command succeeds, the daemon shuts down cleanly, every pack frame verifies, the store opens
+with no repair, and the repository opens and walks its whole reachable graph in a dry-run
+collection. On `dev` before this change the same tests fail as liquify#95 reported: the two-handle
+case reads `chunk header digest differs from index`; the writer processes fail `in rename: No such
+file or directory […/LIQUID_STORE.backend-tmp]` and `backend object was not found
+(packs/objects.meta.tmp)`; and in the checkout case the library client fails and `liquid status`
+fails `in rename: No such file or directory […/index/MANIFEST.backend-tmp]`.
+Without the lock the process cases fail (see the pull request for the counts).
 
 ### Injected owners and fencing
 
@@ -770,7 +937,7 @@ registrations, with whatever chunks the source holds locally. The destination is
 to the source in content digests, and an object it holds is readable with the destination's own
 verification.
 
-**Why (decision 54, lake#380).** Lake moves each workspace's repositories from the space's disk
+**Why (lake#380).** Lake moves each workspace's repositories from the space's disk
 store into the workspace's own store, which lives on a remote backend over the workspace Zetta
 (liquid #326, #327). `replicate_from` does this between two instances over HTTP; the move needs it
 locally between two `store` handles, resumable and checkable before lake switches the repository

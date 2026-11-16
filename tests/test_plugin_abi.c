@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/frontend_abi.h"
 
 #include <stddef.h>

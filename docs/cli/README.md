@@ -9,7 +9,9 @@ tree into its project cache. One-shot commands run library operations through `r
 it imports regular files through `repository::import_tree`; the local-tree form of `import` uses
 the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
 it on first use on macOS and Linux. That process owns watcher-backed capture and keeps running until
-its configured idle exit or `liquid daemon --shutdown`. Windows repository commands remain
+its configured idle exit or `liquid daemon --shutdown`. A client's request must arrive within 5
+seconds of connecting. A slow, truncated or oversize request closes that connection only, and the
+daemon goes on serving (L-16, liquid#398). Windows repository commands remain
 available, but daemon attachment returns the documented unsupported result because the current
 Corosio revision has no named-pipe transport.
 
@@ -65,17 +67,17 @@ built binary under the build directory before CTest compares it with the committ
 | `conflicts` | `conflicts [--json]` | List unresolved conflicts with kinds, paths, reasons, and nodes. | available |
 | `data` | `data <branch\|list\|discard\|promote> ...` | Manage session database branches. | available with PostgreSQL client tools |
 | `write` | `write <path> --from <file> --base <change>[@<cursor>] [--depends-on <path>]... [--on-stale refuse\|disjoint\|force]` | Write a file from a caller-stated base. | available |
-| `daemon` | `daemon [--shutdown]` | Start or stop the checkout daemon. | available on macOS and Linux |
+| `daemon` | `daemon [start \| stop \| --shutdown]` | Start or stop the checkout daemon; stopping with none running says `no daemon is running`. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
 | `inspect` | `inspect <path\|digest> [--json]` | Show the selected format codec, tier, and decoded entry tree. | available |
-| `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, or `log scan <log-url> <identity>` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
+| `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, `log scan <log-url> <identity>`, or `log trust <log-url> [--confirm <fingerprint>]` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
 | `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
 | `blame` | `blame <path> [--json]` | Show the session and change that last wrote each line. | available on macOS and Linux |
 | `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]\|pin <path>\|unpin <path>>` | Synchronize, inspect, pin, or unpin a configured drive folder. | available |
 | `registry` | `registry trust <pin <root.json>\|show>` | Pin or inspect the current repository's trusted TUF root. | available |
 | `resolve` | `resolve <spec>... [--universe <path>] [--reuse] [--explain] [--json]` or `resolve --why <package> <spec>... [--universe <path>] [--reuse] [--json]` | Concretise package specifications or explain one selection. | available |
 | `config` | `config check <file\|dir> \| config lower <file> [--json] [--trace] \| config format <file>` | Check, lower, trace, or canonically format `.liquid` configuration. | available |
-| `cut` | `cut <message>` | Cut the working change. | available |
+| `cut` | `cut -m <message> \| cut <message>` | Cut the working change. | available |
 | `refs` | `refs [--json]` | List repository references. | available |
 | `push` | `push [--atomic] <url>` | Push signed metadata and missing objects to a repository endpoint. | available |
 | `pull` | `pull <url>` | Pull signed metadata and missing objects from a repository endpoint. | available |
@@ -105,7 +107,7 @@ built binary under the build directory before CTest compares it with the committ
 | `sign` | `sign <macos\|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize]` or `sign verify <artifact>` | Apply or verify a native platform signature and its `platform_signature/1` sidecar outside the projection sandbox. | macOS signing on macOS; Windows signing on Windows |
 | `release` | `release policy set --threshold <k> --signer <id>...` or `release <approve\|verify> <artifact>` | Manage signed threshold release approval. | available |
 | `secret` | `secret <public-key\|seal\|unseal> ...` | Fetch a Lake key, seal a scoped value, or unseal locally. | available |
-| `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
+| `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. `show` names the issuer only when an identity chain verifies the signature, and otherwise prints "signed by an unverified key", with `issuer_verified=true\|false` (liquid#512). | available |
 | `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain] [--log <log-url>]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
@@ -116,7 +118,7 @@ built binary under the build directory before CTest compares it with the committ
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
 | `project` | `project <oci\|deb\|rpm\|apk\|helm\|macos-pkg\|macos-dmg\|msix\|winget> <result\|install-tree\|installer> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--json]` | Project a checked tree into a package or image, or an MSIX into winget manifests. Platform installers are unsigned and include a signing request. | available on the target platform; winget is portable |
-| `install` | `install <package\|install-tree> --root <dir> \| install --list --root <dir>` | Stage, apply, select, or list complete projected-tree generations. | available |
+| `install` | `install <package\|install-tree> --root <dir> \| install --list --root <dir>` | Stage, apply, select, or list complete projected-tree generations. It checks no package signature, like `dpkg -i`: install only what you trust (liquid#419). | available |
 | `rollback` | `rollback --root <dir>` | Atomically select the complete generation preceding the current one. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |
@@ -130,8 +132,8 @@ built binary under the build directory before CTest compares it with the committ
 | `pause` | `pause` | Pause working-tree capture. | available |
 | `resume` | `resume` | Resume working-tree capture. | available |
 | `watch` | `watch` | Capture changes until Ctrl-C. | available |
-| `scheduler` | `scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]` | Serve CAS, ActionCache, Execution, and the liquid worker queue. | available |
-| `worker` | `worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <tiny\|short\|medium\|long>] [--poll-ms <count>]` | Run the Phase 2 executor as a scheduler worker. | available on Linux with FUSE |
+| `scheduler` | `scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>] [--tls-cert <path> --tls-key <path>] [--token-file <path>] [--client-ca <path>]` | Serve CAS, ActionCache, Execution, and the liquid worker queue; off loopback only with TLS and a token or client CA. | available |
+| `worker` | `worker --scheduler <address> [--control-listen <address>] [--root <path>] [--instance <name>] [--size-class <tiny\|short\|medium\|long>] [--poll-ms <count>] [--scheduler-tls] [--scheduler-ca <path>] [--client-cert <path> --client-key <path>] [--token-file <path>]` | Run the Phase 2 executor as a scheduler worker. | available on Linux with FUSE |
 | `node-store` | `node-store <serve\|status\|mount\|unmount\|prefetch> [options]` | Run or control the runtime node chunk store. | available on Linux with FUSE and on macOS with macFUSE |
 | `repack` | `repack [repository]` | Rebase stored chunk deltas. | available |
 | `tree` | `tree` | Print the recorded root tree digest. | available |
@@ -182,7 +184,14 @@ action execution. The command refuses a result that fails the relocation publica
 `status`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache
 stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,
 and re-validation result. `ops --json` includes the stable operation-kind vocabulary and the
-32-digit session ID. `undo` prints one `applied <op-id>` line per inverse it appended and one
+32-digit session ID.
+
+Every command that prints an author (`log`, `log --ops`, `ops`, `history`, `blame`, `why` and
+`wrap`) prints it only when an identity chain verified it. Otherwise it prints `signed by an
+unverified key`, never the `taap_id` the record claims, and JSON output carries
+`"identity_verified": true|false` beside the author (`actor`, `author` or `by`). An operation is
+verified when the local identity recorded it, or when a drip recording it checks against its
+author's chain (liquid#429, liquid#508; [identity](../library/identity.md#every-decision-that-trusts-an-identity-requires-a-verified-chain)). `undo` prints one `applied <op-id>` line per inverse it appended and one
 `skipped <op-id> <path> <reason>` line when newer state prevented a path from changing. A session
 may be narrowed by repeating `--path` or `--drip`; those selectors require `--session` and cannot
 be combined with a positional operation ID.
@@ -228,7 +237,13 @@ reference=refs/heads/main outcome=refused reason=branch requires approval
 
 Allowed refs in a non-atomic push still apply. `--atomic` makes one refusal refuse every ref. A
 completed push exits with status 1 if any ref was refused and 0 when all were applied. Both commands
-use `LIQUID_TOKEN` as an optional bearer credential and never print it. A URL must use HTTP or HTTPS
+use `LIQUID_TOKEN` as an optional bearer credential and never print it. `LIQUID_TOKEN_FILE` names a
+file holding it instead, which is used only when its owner alone may read it (no group or other
+bits; liquid says so on stderr and sends no token otherwise; on Windows the file's ACL governs and
+the bits are not checked), and is preferred: a variable is readable in `/proc/<pid>/environ` by the same user and
+inherited by every child. The daemon, which lives long, wipes `LIQUID_TOKEN` from its environment
+and its copy of the environment block once read, so the processes it starts never carry it
+(L-30, liquid#410). A URL must use HTTP or HTTPS
 and identify one lake repository.
 `review` uses the same bearer rule. Its verbs are:
 
@@ -317,7 +332,13 @@ Lake checkpoint, tile, and proof authentication remains the separate `#207` veri
 signed Lake checkpoint and records trusted state. `log consistency <log-url>` accepts only an
 append-only extension of that record. `log scan <log-url> <identity>` validates the bulk tiles and
 prints matching canonical attestations. `verify --log <log-url>` requires inclusion for every
-agreeing reproducibility attestation.
+agreeing reproducibility attestation. Each of them checks the log against its pin in
+`$LIQUID_HOME/trust/transparency/` (the log's key, witnesses, and threshold) and refuses when there
+is no pin; nothing the log says about its own key or witnesses is trusted. `log trust <log-url>`
+prints what the log claims and a fingerprint, and pins nothing; `log trust <log-url> --confirm
+<fingerprint>` writes the pin only if the log still matches that fingerprint. Plain `http://` log
+URLs are refused unless the host is loopback
+([pin format](../library/transparency.md#pinned-log-key-and-witness-policy-389)).
 
 `anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
@@ -334,7 +355,8 @@ network request. HTTP authentication and repository lookup errors retain the lib
 remove clone-created target state and preserve an existing empty target directory.
 `blame` resolves the current head and asks the checkout daemon for the public attribution query.
 Its line-oriented form prints one-based line, change, session, actor, agent marker, and text.
-`--json` emits a version-1 object with `path`, `change`, and the same values under `lines`; strings
+`--json` emits a version-1 object with `path`, `change`, and the same values plus
+`identity_verified` under `lines`; strings
 use JSON escaping and empty files produce an empty array. The command refuses directories, missing
 paths, and non-UTF-8 content. See [`../library/multiplayer.md`](../library/multiplayer.md).
 `drive sync` prints the remote, local, and base tree digests, interrupted state, bounded-walk
@@ -350,9 +372,12 @@ writes an explicit online-only rule. See [`drive.md`](drive.md).
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
 listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
 pattern; `*` matches any sequence and `?` one character. Supplying the flag refuses each ref outside
-all allowed patterns while applying allowed refs unless the client requested `--atomic`. Without it
-there is no built-in authentication policy, so the default is appropriate for local use; network
-services embed the public server with their own authorization callback.
+all allowed patterns while applying allowed refs unless the client requested `--atomic`. A
+non-loopback `--listen` is refused unless `--tls-cert` and `--tls-key` are given with
+`--token-file <path>` (a bearer token in an owner-only file, required on every route; clients send it
+from `LIQUID_TOKEN`) or `--client-ca <path>`. Uploads are quarantined until a push authorizes them;
+`--upload-quota <bytes>` bounds the quarantine (default 1 GiB). See
+[`../library/sync.md`](../library/sync.md#local-server-command).
 `serve admission` loads either one JSON policy as `default` with `--policy`, or every
 `<name>.json` in `--policies <dir>`, as documented in
 [`../library/admission.md`](../library/admission.md). Named sets are served at `/admit/<name>` and
@@ -420,7 +445,9 @@ and the signer identity.
 writes `.liquid/release/policy.cbor`. `--role` defaults to `targets`; `--not-after` accepts an RFC
 3339 UTC expiry. `release approve <artifact>` writes the current identity's approval, and `release
 verify <artifact>` counts distinct valid allowed identities, prints missing identities, and exits 1
-when the policy threshold is not met. See
+when the policy threshold is not met. It accepts the policy only from an issuer listed in
+`$LIQUID_HOME/trust/release-policy-issuers` and only for the repository it runs in; a missing or
+empty file refuses. See
 [`../library/release-approval.md`](../library/release-approval.md) for the signed profiles and trust
 models.
 `resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
@@ -456,8 +483,9 @@ paths, and `revalidated` (`disjoint`, `forced`, or null) from the signed body.
 `log verify <log-url> <attestation-base64url>` validates exact canonical-TAAP inclusion in a
 signed checkpoint and records it in the current repository. `log consistency <log-url>` advances
 that record only when Lake provides a valid append-only proof. `log scan <log-url> <identity>`
-lists canonical entries naming the identity. A first accepted checkpoint prints
-`bootstrap_warning=true`; operators should record that trust decision. `verify --log <log-url>`
+lists canonical entries naming the identity. Every one of them needs the log's pin first (`log
+trust`, liquid #389). A first accepted checkpoint prints `bootstrap_warning=true`; operators should
+record that trust decision. `verify --log <log-url>`
 requires the agreeing action's reproducibility attestation to be included in the same verified log.
 The existing `log --ops` and `log --json` options may be supplied in either order.
 
@@ -658,7 +686,11 @@ remote tier counts in text and JSON.
 `liquid wrap` and `liquid build --profile` accept `--remote <endpoint>`, instance, TLS, custom
 header, deadline, and publication flags described in [`../library/reapi.md`](../library/reapi.md).
 Remote publication is off unless `--remote-publish` is supplied. `liquid serve reapi --listen
-<address> [--instance <name>]` exposes the current repository's SHA-256 CAS and ActionCache.
+<address> [--instance <name>]` exposes the current repository's SHA-256 CAS and ActionCache. It
+listens on loopback (`127.0.0.1:50051`) by default and refuses any other address unless
+`--tls-cert` and `--tls-key` are given together with `--token-file <path>` (a bearer token in a
+file only its owner can read, required on every RPC) or `--client-ca <path>` (mutual TLS); there is
+no plaintext mode off loopback ([`../library/reapi.md`](../library/reapi.md#listener-security-liquid415)).
 `--scheduler <endpoint>` selects liquid's scheduler beside the stock `--remote` REAPI backend and
 preserves the scheduler's signed scheduling record. `liquid scheduler` and `liquid worker` accept
 the flags and environment variables listed in [`../library/workers.md`](../library/workers.md).
@@ -676,8 +708,9 @@ outside every live root is reported as due for eviction by the next collection.
 `hot-update classify <old> <new> [--json]` prints the tier, first-class outcome, changed symbols,
 evidence records, and reason. Missing frontend evidence is tier 4 rather than a command error.
 `hot-update apply <patch> --endpoint <path>` verifies the `hot_update/1` signature before sending
-the object to the program's local endpoint. `hot-update status <result> [--json]` walks the signed
-chain and lists the original artifact followed by each patch in application order. Configuration
+the object to the program's local endpoint; the signer must be listed in
+`$LIQUID_HOME/trust/hot-update-signers`, and a missing or empty file refuses every patch.
+`hot-update status <result> [--json]` walks the signed chain and lists the original artifact followed by each patch in application order. Configuration
 and safety rules are in [`../library/hot-update.md`](../library/hot-update.md).
 `sbom` accepts a produced path and exactly one output-format flag. In a liquid repository or
 wrapped project it verifies and prints the result-bound `sbom/1` attestation and its graph-derived
@@ -774,8 +807,8 @@ liquid hot-update apply blake3:<patch-record> --endpoint .liquid/demo.sock
 liquid hot-update status blake3:<new-result> --json
 liquid wrap cmake -S . -B build -G Ninja
 liquid wrap --input zlib=blake3:<result-or-tree-digest> cmake --build build
-liquid scheduler --listen 0.0.0.0:50051 --control-listen 0.0.0.0:8080
-liquid worker --scheduler 127.0.0.1:50051 --control-listen 0.0.0.0:8081
+liquid scheduler --listen 0.0.0.0:50051 --tls-cert server.pem --tls-key server-key.pem --token-file scheduler.token --control-listen 0.0.0.0:8080
+liquid worker --scheduler scheduler.example:50051 --scheduler-ca ca.pem --token-file scheduler.token --control-listen 0.0.0.0:8081
 liquid wrap --scheduler 127.0.0.1:50051 make -j8
 liquid wrap --jobs 8 --explain cmake --build build
 liquid build --plan

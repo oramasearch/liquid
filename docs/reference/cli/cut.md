@@ -5,16 +5,18 @@
 ## Synopsis
 
 ```text
-liquid cut <message>
+liquid cut -m <message> | cut <message>
 ```
 
 ## Description
 
-Name the current aggregation of captured drips as a reviewable change.
+Name the current aggregation of captured drips as a reviewable change. The message is given with `-m`/`--message`, as in Git, or as the remaining words. A message that starts with `-` is refused, so a mistyped option never becomes part of history.
 
 ## Options
 
-This command has no command-specific options.
+| Flag | Argument | Description | Default |
+|---|---|---|---|
+| `--message` | `<message>` | The change message; `-m <message>` is the short form. | none |
 
 ## Availability
 
@@ -23,7 +25,8 @@ available
 ## Examples
 
 ```sh
-liquid cut "import existing files"
+liquid cut -m "import existing files"
+liquid cut import existing files
 ```
 
 ## Exit status

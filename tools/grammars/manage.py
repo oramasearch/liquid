@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+
 """Maintain liquid's canonical tree-sitter grammar lock and documentation table."""
 
 from __future__ import annotations
@@ -218,11 +220,50 @@ def relative(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
-def inspect_archive(language: str, repository: str, commit: str, archive: bytes) -> dict:
+PATCH_FIELDS = ("path", "find", "replace", "reference")
+
+
+def apply_patches(extracted: Path, patches: list[dict]) -> list[dict]:
+    """Applies locked patches to an extracted archive and returns them with their digests.
+
+    A patch is an exact replacement of `find`, which must occur once in `path` (liquid#462). The
+    lock records the file's digest before and after, and cmake/Grammars.cmake applies the patch
+    only to a file with the upstream digest.
+    """
+    output = []
+    for patch in patches:
+        missing = [field for field in PATCH_FIELDS if not patch.get(field)]
+        if missing:
+            raise ValueError(f"grammar patch is missing {', '.join(missing)}")
+        target = (extracted / patch["path"]).resolve()
+        if extracted.resolve() not in target.parents or not target.is_file():
+            raise ValueError(f"grammar patch names no file in the archive: {patch['path']}")
+        contents = target.read_bytes()
+        find = patch["find"].encode()
+        if contents.count(find) != 1:
+            raise ValueError(
+                f"grammar patch for {patch['path']} no longer applies: the text to replace must "
+                "occur exactly once; review the upstream change and drop the patch with --no-patches "
+                "if upstream carries the fix"
+            )
+        upstream = sha256_bytes(contents)
+        patched = contents.replace(find, patch["replace"].encode())
+        target.write_bytes(patched)
+        entry = {field: patch[field] for field in PATCH_FIELDS}
+        entry["upstream_sha256"] = upstream
+        entry["sha256"] = sha256_bytes(patched)
+        output.append(entry)
+    return output
+
+
+def inspect_archive(
+    language: str, repository: str, commit: str, archive: bytes, patches: list[dict] | None = None
+) -> dict:
     work_root = ROOT / ".grammar-work"
     work_root.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=work_root) as temporary:
         extracted = safe_extract(archive, Path(temporary))
+        applied = apply_patches(extracted, patches or [])
         grammar, grammar_root = grammar_configuration(extracted, language)
         parser = parser_path(extracted, grammar_root)
         text = parser.read_text(errors="replace")
@@ -244,7 +285,7 @@ def inspect_archive(language: str, repository: str, commit: str, archive: bytes)
                     }
                 )
         tags = query_path(extracted, grammar_root, grammar)
-        return {
+        entry = {
             "archive_sha256": sha256_bytes(archive),
             "commit": commit,
             "extensions": extensions_for(language, grammar),
@@ -264,6 +305,9 @@ def inspect_archive(language: str, repository: str, commit: str, archive: bytes)
             ),
             "tree_sitter_abi": int(version_match.group(1)),
         }
+        if applied:
+            entry["patches"] = applied
+        return entry
 
 
 def load_lock() -> dict:
@@ -308,12 +352,31 @@ def update_documentation(value: dict) -> None:
     DOC.write_text(f"{before}{BEGIN}\n{generated}\n{END}{after}")
 
 
-def add(language: str, repository: str, commit: str) -> None:
+def locked_patches(value: dict, language: str) -> list[dict]:
+    for grammar in value["grammars"]:
+        if grammar["language"] == language:
+            return [
+                {field: patch[field] for field in PATCH_FIELDS}
+                for patch in grammar.get("patches", [])
+            ]
+    return []
+
+
+def add(
+    language: str,
+    repository: str,
+    commit: str,
+    keep_patches: bool = True,
+    extra_patches: list[dict] | None = None,
+) -> None:
     repository = normalise_repository(repository)
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("commit must be a full lowercase 40-character SHA-1")
     archive = download(archive_url(repository, commit))
-    entry = inspect_archive(language, repository, commit, archive)
+    # A bump carries the entry's patches forward; one that no longer applies stops the bump.
+    patches = locked_patches(load_lock(), language) if keep_patches else []
+    patches += extra_patches or []
+    entry = inspect_archive(language, repository, commit, archive, patches)
     value = load_lock()
     value["grammars"] = [
         grammar for grammar in value["grammars"] if grammar["language"] != language
@@ -325,6 +388,23 @@ def add(language: str, repository: str, commit: str) -> None:
     print(
         f"locked {language} at {commit}: archive sha256:{entry['archive_sha256']} "
         f"parser sha256:{entry['parser']['sha256']}"
+    )
+
+
+def patch(language: str, path: str, find: str, replace: str, reference: str) -> None:
+    """Adds a patch to a locked grammar at its locked commit and archive."""
+    value = load_lock()
+    locked = next((g for g in value["grammars"] if g["language"] == language), None)
+    if locked is None:
+        raise ValueError(f"grammar is not locked: {language}")
+    archive = download(archive_url(locked["repository"], locked["commit"]))
+    if sha256_bytes(archive) != locked["archive_sha256"]:
+        raise ValueError(f"{language}: the upstream archive no longer has its locked digest")
+    add(
+        language,
+        locked["repository"],
+        locked["commit"],
+        extra_patches=[{"path": path, "find": find, "replace": replace, "reference": reference}],
     )
 
 
@@ -352,13 +432,35 @@ def main() -> int:
     add_parser.add_argument("language")
     add_parser.add_argument("repository")
     add_parser.add_argument("commit")
+    add_parser.add_argument(
+        "--no-patches", action="store_true", help="drop the entry's locked patches"
+    )
+    patch_parser = subparsers.add_parser("patch")
+    patch_parser.add_argument("language")
+    patch_parser.add_argument("path")
+    patch_parser.add_argument("find")
+    patch_parser.add_argument("replace")
+    patch_parser.add_argument("reference")
     remove_parser = subparsers.add_parser("remove")
     remove_parser.add_argument("language")
     subparsers.add_parser("generate-docs")
     arguments = parser.parse_args()
     try:
         if arguments.command == "add":
-            add(arguments.language, arguments.repository, arguments.commit)
+            add(
+                arguments.language,
+                arguments.repository,
+                arguments.commit,
+                keep_patches=not arguments.no_patches,
+            )
+        elif arguments.command == "patch":
+            patch(
+                arguments.language,
+                arguments.path,
+                arguments.find,
+                arguments.replace,
+                arguments.reference,
+            )
         elif arguments.command == "remove":
             remove(arguments.language)
         else:

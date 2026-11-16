@@ -10,7 +10,9 @@ the repository without entering the drip journal.
 
 `session.cpp` walks references from caller-provided roots. Send enumerates blob payload identities
 without reading them, asks the peer for its missing set, and loads only payloads that need upload;
-receive range-reads absent objects, verifies each full digest, stores it, and then continues through
+it rejects the complete response before any upload if any algorithm-tagged digest was not offered
+in the current root closure, including when the roots are empty (liquid #446).
+Receive range-reads absent objects, verifies each full digest, stores it, and then continues through
 its references while preserving each transmitted digest algorithm.
 `receive_metadata` follows only tree and blob records, registers each blob's whole-content digest
 against the session's source and instance, and counts bytes whose chunks remain remote without
@@ -20,8 +22,14 @@ requesting any content chunk.
 checks repository/store pairing, derives old/new ref updates and fast-forward state from the change
 graph, associates new reachability with change callbacks, accumulates named verdicts, imports the
 accepted ref set, applies the optional atomic rule, exports pull pages, answers missing-object
-queries and logical range reads, verifies pack uploads, applies per-author flow limits before
+queries and logical range reads, verifies pack uploads one frame at a time after charging every
+frame against the request's 64 MiB decoded-size budget, applies per-author flow limits before
 metadata import, and encodes canonical error bodies including retry scope and delay.
+Its `upload_staging` class is the upload quarantine (liquid#403): verified uploads are staged in a
+private directory under a byte quota and a time limit, an authorized push moves what its roots reach
+into the store before importing, and a refused push discards it. Before flow admission it verifies
+each authored item against its author's stored or carried identity chain, so a budget is spent only
+for items that author signed.
 
 `endpoint.cpp` adapts sync bodies to the shared private Corosio HTTP/1.1 client in `src/net/`. It
 validates or synthesizes legacy push outcomes and composes metadata with the object session for

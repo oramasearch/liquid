@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <algorithm>
 #include <format>
 #include <print>
@@ -7,6 +9,8 @@
 #include "liquid/build.hpp"
 #include "liquid/error.hpp"
 #include "liquid/runtime.hpp"
+
+#include "cli/signer.hpp"
 
 namespace liquid_cli {
 namespace {
@@ -226,7 +230,8 @@ void print_cause(const liquid::cache_miss& cause) {
     }
     if (cause.changed_by) {
         std::println("drip: {}", liquid::to_string(cause.changed_by->drip));
-        std::println("by: {}", cause.changed_by->by.taap_id);
+        std::println("by: {}",
+                     shown_signer(cause.changed_by->by, cause.changed_by->identity_verified));
         std::println("at: {}", cause.changed_by->at.time_since_epoch().count());
     }
     if (cause.reason == liquid::cache_miss_reason::command_changed) {
@@ -282,21 +287,25 @@ void print_why_json(const liquid::why_report& report) {
     } else {
         std::print("\"line_change\":null,");
     }
-    std::print("\"tool\":{},\"drip\":{},\"by\":{},\"at\":{},\"detail\":{},\"schedule\":{},"
-               "\"cache\":{{\"disk_hits\":{},\"disk_misses\":{},"
-               "\"remote_available\":{},\"remote_hits\":{},\"remote_misses\":{}}}}}\n",
-               cause.tool.empty() ? "null" : json_string(cause.tool),
-               cause.changed_by ? json_string(liquid::to_string(cause.changed_by->drip)) : "null",
-               cause.changed_by ? json_string(cause.changed_by->by.taap_id) : "null",
-               cause.changed_by ? std::to_string(cause.changed_by->at.time_since_epoch().count())
-                                : "null",
-               cause.detail.empty() ? "null" : json_string(cause.detail),
-               schedule_json(report.schedule),
-               report.cache.disk.hits,
-               report.cache.disk.misses,
-               report.cache.remote.available,
-               report.cache.remote.hits,
-               report.cache.remote.misses);
+    std::print(
+        "\"tool\":{},\"drip\":{},\"by\":{},\"identity_verified\":{},\"at\":{},"
+        "\"detail\":{},\"schedule\":{},"
+        "\"cache\":{{\"disk_hits\":{},\"disk_misses\":{},"
+        "\"remote_available\":{},\"remote_hits\":{},\"remote_misses\":{}}}}}\n",
+        cause.tool.empty() ? "null" : json_string(cause.tool),
+        cause.changed_by ? json_string(liquid::to_string(cause.changed_by->drip)) : "null",
+        cause.changed_by
+            ? json_string(shown_signer(cause.changed_by->by, cause.changed_by->identity_verified))
+            : "null",
+        cause.changed_by ? (cause.changed_by->identity_verified ? "true" : "false") : "null",
+        cause.changed_by ? std::to_string(cause.changed_by->at.time_since_epoch().count()) : "null",
+        cause.detail.empty() ? "null" : json_string(cause.detail),
+        schedule_json(report.schedule),
+        report.cache.disk.hits,
+        report.cache.disk.misses,
+        report.cache.remote.available,
+        report.cache.remote.hits,
+        report.cache.remote.misses);
 }
 
 auto rate(std::uint64_t hits, std::uint64_t misses) -> double {

@@ -26,6 +26,13 @@ primitives (copying an object after everything it references), and publishes lea
 prefix that `repository_impl.cpp` computes. See
 [store.md](../../docs/library/store.md#whole-repository-transfer).
 
+`local_state.hpp` (liquid #420) names the checkout-local paths (`LIQUID_REPO`, `LIQUID_JOURNAL`,
+`.liquid/`, `.liquid-store/`, `.liquid-build/`, `.liquid-data/`, `.liquid-wrap-cache/`, capture
+cookies). Tree import never records them, whatever the caller's patterns, and the drive never
+writes them. Sync import starts from the local document and never changes its configuration or
+metadata other than identity chains; see
+[sync.md](../../docs/library/sync.md#trust-configuration-stays-with-the-checkout-that-set-it).
+
 Issue #86 validates caller-stated write bases before blob registration, content storage, or CRDT
 mutation. Persisted `config.agents` selects the TAAP actors that must supply a base. Version 2
 signed drip bodies carry the liquid-selected base, touched paths, optional `reasoned_from`, and an
@@ -173,3 +180,6 @@ snapshots and content identities to the three-tree reconciler, records selected 
 references without copying their bytes, merges pulled directory documents before reconciliation,
 records local and remote parents when they differ, and publishes files atomically. Drive state
 itself remains repository metadata, and its remote shadow repository borrows the same object store.
+Staging accepts a folder and relative source path, opens every component without following links,
+and keeps the resulting regular-file descriptor alive through every store read. It rejects unsafe
+paths even when called independently of the Drive walk.

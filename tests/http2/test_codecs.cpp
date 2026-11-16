@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MIT
+
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -307,6 +311,88 @@ TEST(GrpcFraming, RoundTripsMessagesAndTrailerStatus) {
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(status->code, 0U);
     EXPECT_EQ(status->message, "ok");
+}
+
+// liquid#451: the incremental reader a server uses instead of reading a request body whole.
+TEST(GrpcMessageReader, AssemblesMessagesSplitAcrossPartsAndSeveralInOnePart) {
+    auto first = liquid::http2::encode_grpc_message({false, bytes({0x01, 0x02, 0x03})});
+    auto second = liquid::http2::encode_grpc_message({false, bytes({0x04})});
+    ASSERT_TRUE(first && second);
+    auto reader = liquid::http2::grpc_message_reader{16};
+
+    // The first message arrives two bytes at a time.
+    for (auto offset = std::size_t{}; offset < first->size(); offset += 2) {
+        auto none = reader.next();
+        ASSERT_TRUE(none.has_value());
+        EXPECT_FALSE(none->has_value());
+        const auto count = std::min<std::size_t>(2, first->size() - offset);
+        ASSERT_TRUE(reader.append(std::span{*first}.subspan(offset, count)).has_value());
+    }
+    auto message = reader.next();
+    ASSERT_TRUE(message.has_value() && message->has_value());
+    EXPECT_EQ((*message)->bytes, bytes({0x01, 0x02, 0x03}));
+    EXPECT_EQ(reader.buffered(), 0U);
+
+    // Two messages in one part come out one at a time.
+    auto both = *second;
+    both.insert(both.end(), second->begin(), second->end());
+    ASSERT_TRUE(reader.append(both).has_value());
+    for (auto index = 0; index < 2; ++index) {
+        message = reader.next();
+        ASSERT_TRUE(message.has_value() && message->has_value());
+        EXPECT_EQ((*message)->bytes, bytes({0x04}));
+    }
+    message = reader.next();
+    ASSERT_TRUE(message.has_value());
+    EXPECT_FALSE(message->has_value());
+}
+
+TEST(GrpcMessageReader, RefusesAMessageOverTheLimitFromItsPrefixAlone) {
+    auto reader = liquid::http2::grpc_message_reader{16};
+    // The prefix declares 17 bytes; nothing of the body has arrived.
+    auto appended = reader.append(bytes({0x00, 0x00, 0x00, 0x00, 0x11}));
+    ASSERT_FALSE(appended.has_value());
+    EXPECT_TRUE(reader.exceeded());
+    EXPECT_LE(reader.buffered(), 5U);
+    EXPECT_FALSE(reader.append(bytes({0x00})).has_value());
+    EXPECT_FALSE(reader.next().has_value());
+
+    // At the limit is accepted.
+    auto at_limit = liquid::http2::grpc_message_reader{16};
+    auto exact = liquid::http2::encode_grpc_message({false, std::vector<std::byte>(16)});
+    ASSERT_TRUE(exact.has_value());
+    ASSERT_TRUE(at_limit.append(*exact).has_value());
+    auto message = at_limit.next();
+    ASSERT_TRUE(message.has_value() && message->has_value());
+    EXPECT_FALSE(at_limit.exceeded());
+}
+
+TEST(GrpcMessageReader, AnOversizeMessageBehindASmallOneIsRefusedWhenReached) {
+    auto reader = liquid::http2::grpc_message_reader{16};
+    auto small = liquid::http2::encode_grpc_message({false, bytes({0x07})});
+    ASSERT_TRUE(small.has_value());
+    auto part = *small;
+    const auto large = bytes({0x00, 0x00, 0x01, 0x00, 0x00});
+    part.insert(part.end(), large.begin(), large.end());
+    ASSERT_TRUE(reader.append(part).has_value());
+    auto message = reader.next();
+    ASSERT_TRUE(message.has_value() && message->has_value());
+    EXPECT_FALSE(reader.next().has_value());
+    EXPECT_TRUE(reader.exceeded());
+}
+
+TEST(GrpcMessageReader, HoldsAtMostOneUnfinishedMessageAndRejectsABadFlag) {
+    auto reader = liquid::http2::grpc_message_reader{16};
+    auto message = liquid::http2::encode_grpc_message({false, bytes({0x01})});
+    ASSERT_TRUE(message.has_value());
+    ASSERT_TRUE(reader.append(*message).has_value());
+    // A complete message must be taken before more bytes are added.
+    EXPECT_FALSE(reader.append(*message).has_value());
+    EXPECT_EQ(reader.buffered(), message->size());
+
+    auto flagged = liquid::http2::grpc_message_reader{16};
+    EXPECT_FALSE(flagged.append(bytes({0x02, 0x00, 0x00, 0x00, 0x00})).has_value());
+    EXPECT_FALSE(flagged.exceeded());
 }
 
 TEST(Http2Connection, ExchangesFlowControlledGrpcStyleStreamOverH2c) {

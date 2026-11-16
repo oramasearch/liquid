@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "http1/client.hpp"
 
 #include <algorithm>
@@ -5,6 +7,7 @@
 #include <charconv>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <limits>
 #include <string_view>
 #include <utility>
@@ -97,7 +100,22 @@ auto parse_url(std::string_view input) -> result<parsed_url> {
     return output;
 }
 
-auto header_value(std::string_view header, std::string_view name) -> std::string_view {
+auto equal_ignoring_case(std::string_view left, std::string_view right) -> bool {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (auto index = std::size_t{}; index < left.size(); ++index) {
+        const auto first = static_cast<unsigned char>(left[index]);
+        const auto second = static_cast<unsigned char>(right[index]);
+        if (std::tolower(first) != std::tolower(second)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+auto header_fields(std::string_view header) -> std::vector<std::pair<std::string, std::string>> {
+    auto output = std::vector<std::pair<std::string, std::string>>{};
     auto offset = header.find("\r\n") + 2;
     while (offset < header.size()) {
         const auto end = header.find("\r\n", offset);
@@ -106,24 +124,19 @@ auto header_value(std::string_view header, std::string_view name) -> std::string
         }
         const auto colon = header.find(':', offset);
         if (colon != std::string_view::npos && colon < end) {
-            auto field = header.substr(offset, colon - offset);
-            auto matches = field.size() == name.size();
-            for (auto index = std::size_t{}; matches && index < field.size(); ++index) {
-                const auto left = static_cast<unsigned char>(field[index]);
-                const auto right = static_cast<unsigned char>(name[index]);
-                matches = std::tolower(left) == std::tolower(right);
+            auto value = header.substr(colon + 1, end - colon - 1);
+            while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
+                value.remove_prefix(1);
             }
-            if (matches) {
-                auto value = header.substr(colon + 1, end - colon - 1);
-                while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
-                    value.remove_prefix(1);
-                }
-                return value;
+            while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) {
+                value.remove_suffix(1);
             }
+            output.emplace_back(std::string{header.substr(offset, colon - offset)},
+                                std::string{value});
         }
         offset = end + 2;
     }
-    return {};
+    return output;
 }
 
 auto decode_chunked(std::string_view input) -> result<std::vector<std::byte>> {
@@ -156,39 +169,6 @@ auto decode_chunked(std::string_view input) -> result<std::vector<std::byte>> {
         output.insert(output.end(), first, first + size);
         offset += static_cast<std::size_t>(size) + 2;
     }
-}
-
-auto parse_response(std::string wire) -> result<response> {
-    const auto header_end = wire.find("\r\n\r\n");
-    if (header_end == std::string::npos) {
-        return std::unexpected(client_error(errc::corrupt, "HTTP response header is truncated"));
-    }
-    const auto header_text = std::string_view{wire}.substr(0, header_end + 4);
-    auto header = boost::http::response{header_text};
-    const auto body = std::string_view{wire}.substr(header_end + 4);
-    auto output = response{.status = static_cast<unsigned>(header.status())};
-    const auto transfer_encoding = header_value(header_text, "transfer-encoding");
-    if (transfer_encoding == "chunked") {
-        auto decoded = decode_chunked(body);
-        if (!decoded) {
-            return std::unexpected(decoded.error());
-        }
-        output.body = std::move(*decoded);
-        return output;
-    }
-    const auto length_text = header_value(header_text, "content-length");
-    if (!length_text.empty()) {
-        auto length = std::uint64_t{};
-        const auto parsed =
-            std::from_chars(length_text.data(), length_text.data() + length_text.size(), length);
-        if (parsed.ec != std::errc{} || parsed.ptr != length_text.data() + length_text.size() ||
-            length != body.size()) {
-            return std::unexpected(client_error(errc::corrupt, "invalid HTTP content length"));
-        }
-    }
-    const auto* first = reinterpret_cast<const std::byte*>(body.data());
-    output.body.assign(first, first + body.size());
-    return output;
 }
 
 auto target(const parsed_url& url, std::string_view suffix) -> std::string {
@@ -247,10 +227,62 @@ auto exchange(Stream& stream, std::string wire) -> runtime::task<response> {
 
 } // namespace
 
+auto parse_response(std::string wire) -> result<response> {
+    const auto header_end = wire.find("\r\n\r\n");
+    if (header_end == std::string::npos) {
+        return std::unexpected(client_error(errc::corrupt, "HTTP response header is truncated"));
+    }
+    const auto header_text = std::string_view{wire}.substr(0, header_end + 4);
+    // Boost.HTTP throws on a malformed status line or field; a server's bytes are untrusted, so
+    // that is a corrupt response, not an exception out of a result-returning parser (liquid #407).
+    auto status = unsigned{};
+    try {
+        const auto header = boost::http::response{header_text};
+        status = static_cast<unsigned>(header.status());
+    } catch (const std::exception& exception) {
+        return std::unexpected(client_error(
+            errc::corrupt, "HTTP response header is malformed", std::string{exception.what()}));
+    }
+    const auto body = std::string_view{wire}.substr(header_end + 4);
+    auto output = response{.status = status, .headers = header_fields(header_text)};
+    const auto transfer_encoding = header_value(output.headers, "transfer-encoding");
+    if (transfer_encoding == "chunked") {
+        auto decoded = decode_chunked(body);
+        if (!decoded) {
+            return std::unexpected(decoded.error());
+        }
+        output.body = std::move(*decoded);
+        return output;
+    }
+    const auto length_text = header_value(output.headers, "content-length");
+    if (!length_text.empty()) {
+        auto length = std::uint64_t{};
+        const auto parsed =
+            std::from_chars(length_text.data(), length_text.data() + length_text.size(), length);
+        if (parsed.ec != std::errc{} || parsed.ptr != length_text.data() + length_text.size() ||
+            length != body.size()) {
+            return std::unexpected(client_error(errc::corrupt, "invalid HTTP content length"));
+        }
+    }
+    const auto* first = reinterpret_cast<const std::byte*>(body.data());
+    output.body.assign(first, first + body.size());
+    return output;
+}
+
 result<void> validate_url(std::string_view url) {
     auto parsed = parse_url(url);
     if (!parsed) {
         return std::unexpected(parsed.error());
+    }
+    return {};
+}
+
+auto header_value(std::span<const std::pair<std::string, std::string>> headers,
+                  std::string_view name) -> std::string_view {
+    for (const auto& [field, value] : headers) {
+        if (equal_ignoring_case(field, name)) {
+            return value;
+        }
     }
     return {};
 }

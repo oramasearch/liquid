@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #if defined(_WIN32)
 #define LIQUID_ABI_EXPORT __declspec(dllexport)
 #else

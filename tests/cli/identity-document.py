@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Check verbatim sign-up output through the built CLI and public wire codec."""
 
 import base64

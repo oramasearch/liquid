@@ -83,7 +83,7 @@ Node types:
 The chunk index must scale to **billions of entries**. It maps chunk hash →
 (pack, offset, length), plus reference metadata for garbage collection.
 
-Backed by **liquid's own index**, built from scratch (Steve, 2026-09-03): a fixed-width LSM that is
+Backed by **liquid's own index**, built from scratch (decided 2026-09-03): a fixed-width LSM that is
 always rebuildable from the packs. The RocksDB/LMDB benchmark
 (`../library/chunk-index-benchmark.md`) is the bar it must meet. It is explicitly **not** a directory of files —
 that is the design error that makes naive content-addressed stores unusable.

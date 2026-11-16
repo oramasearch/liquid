@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_KEYS_FIXTURE OR
    NOT DEFINED LIQUID_KEYS_ROOT)
   message(FATAL_ERROR "keys CLI test requires the CLI, fixture, and root")

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -225,6 +227,8 @@ TEST(BuildWhy, changed_text_input_names_digests_lines_and_drip) {
     EXPECT_EQ(report->cause.lines->new_line, 1U);
     ASSERT_TRUE(report->cause.changed_by);
     EXPECT_FALSE(report->cause.changed_by->by.taap_id.empty());
+    // The drip was signed by this home's own identity, whose chain verifies it (liquid#508).
+    EXPECT_TRUE(report->cause.changed_by->identity_verified);
 }
 
 TEST(BuildWhy, changed_command_reports_the_argv_diff) {

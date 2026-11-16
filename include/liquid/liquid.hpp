@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 // Umbrella header for libliquid. Everything under include/liquid/ is the public API.
 #include "liquid/abi.hpp"
@@ -28,6 +30,7 @@
 #include "liquid/identity.hpp"
 #include "liquid/install.hpp"
 #include "liquid/import.hpp"
+#include "liquid/listener.hpp"
 #include "liquid/node_store.hpp"
 #include "liquid/object.hpp"
 #include "liquid/projection.hpp"

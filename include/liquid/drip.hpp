@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include <chrono>
@@ -68,6 +70,10 @@ struct LIQUID_EXPORT drip {
     std::optional<digest> scan_attestation;
     std::optional<scan_block> block;
     bool redacted{};
+    // Set by `repository::drips` only when an identity chain binds the signing author to the
+    // drip's signature. Otherwise the drip was signed by an unverified key: show it as
+    // `unverified_signer_label`, never as `by` (liquid#429).
+    bool identity_verified{};
 };
 
 struct LIQUID_EXPORT scan_allow_rule {

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include <array>
@@ -150,6 +152,10 @@ struct LIQUID_EXPORT change {
     document_state document;
     std::vector<document_heads> heads;
     std::uint64_t record_version{1};
+    // Not part of the record. Set by `repository::log` only when an identity chain binds `author`
+    // to `sig`; otherwise the change was signed by an unverified key and is shown as
+    // `unverified_signer_label`, never as `author` (liquid#429).
+    bool identity_verified{};
 };
 
 } // namespace liquid

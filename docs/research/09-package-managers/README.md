@@ -2,9 +2,9 @@
 
 > Evidence: [`sources.md`](sources.md)
 >
-> **Steve's position:** Spack's dependency management and resolution are
-> exceptionally good and are the model to beat. Nix is reputed to be good but he
-> has not used it. This document takes that seriously: Spack's solver is treated
+> **The starting position:** Spack's dependency management and resolution are
+> exceptionally good and are the model to beat. Nix is reputed to be good but was
+> not used first-hand. This document takes that seriously: Spack's solver is treated
 > as the reference design, and Nix is assessed on what it actually provides.
 
 ## Spack: why the resolution model is the right one
@@ -93,7 +93,7 @@ MPICH and a vendor MPI.
    change to glibc changes its store path, which changes every dependent's inputs,
    which changes their paths — *even if every rebuilt artifact is byte-identical*.
    The entire package set rebuilds. `staging-next` exists purely to manage this.
-   **This is Steve's "build the world" complaint in its purest form.**
+   **This is the "build the world" complaint in its purest form.**
 4. **No incrementality inside a derivation.** A derivation is atomic: change one
    source file in a 2-hour build and you pay 2 hours again. Nix has excellent
    coarse-grained caching and *no* fine-grained incrementality.
@@ -150,7 +150,7 @@ attestations and reproducibility.
    equivalently expressive constraint solver, with variants, virtual providers,
    compilers-as-dependencies, and target microarchitecture as first-class
    dimensions. Optimise for "minimise rebuilds and maximise cache reuse," not just
-   satisfiability. Steve's judgement that Spack is exceptionally good here matches
+   satisfiability. The judgement that Spack is exceptionally good here matches
    the evidence; this is the least risky major design decision in the project.
 
 2. **Adopt Spack's spec syntax, or something very close.** It is compact, precise

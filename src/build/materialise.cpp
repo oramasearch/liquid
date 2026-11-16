@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: MIT
+
 #include "build/materialise.hpp"
 
-#include <fstream>
-
 #include "build/repository_access.hpp"
+#include "fs/contained.hpp"
+#include "objects/entry_name.hpp"
 #include "objects/records.hpp"
 
 namespace liquid::build_detail {
@@ -20,27 +22,6 @@ auto prepare_directory(const std::filesystem::path& path) -> result<void> {
     return {};
 }
 
-auto write_file(const std::filesystem::path& path,
-                std::span<const std::byte> contents,
-                std::uint32_t mode) -> result<void> {
-    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
-    if (!output)
-        return std::unexpected(filesystem_failure("cannot create toolchain file", path));
-    output.write(reinterpret_cast<const char*>(contents.data()),
-                 static_cast<std::streamsize>(contents.size()));
-    output.close();
-    if (!output)
-        return std::unexpected(filesystem_failure("cannot write toolchain file", path));
-    auto code = std::error_code{};
-    std::filesystem::permissions(path,
-                                 static_cast<std::filesystem::perms>(mode & 0777),
-                                 std::filesystem::perm_options::replace,
-                                 code);
-    if (code)
-        return std::unexpected(filesystem_failure(code.message(), path));
-    return {};
-}
-
 runtime::task<void>
 materialise_directory(repository& source, digest root, std::filesystem::path destination) {
     auto bytes = co_await repository_detail::build_access::get(source, root);
@@ -50,10 +31,14 @@ materialise_directory(repository& source, digest root, std::filesystem::path des
     if (!tree)
         co_return std::unexpected(tree.error());
     for (const auto& entry : tree->entries) {
+        // The name is checked again here, after decoding, and every entry is created exclusively
+        // without following a symbolic link (liquid #386).
+        if (auto valid = objects::validate_entry_name(entry.name, errc::corrupt); !valid)
+            co_return std::unexpected(valid.error());
         const auto target = destination / entry.name;
         if (entry.kind == node_kind::tree) {
-            auto created =
-                co_await runtime::offload([target] { return prepare_directory(target); });
+            auto created = co_await runtime::offload(
+                [target] { return fs_detail::make_new_directory(target); });
             if (!created)
                 co_return std::unexpected(created.error());
             if (!*created)
@@ -109,7 +94,7 @@ materialise_directory(repository& source, digest root, std::filesystem::path des
                 error{errc::corrupt, "toolchain blob size does not match chunks", entry.name});
         auto written =
             co_await runtime::offload([target, contents = std::move(contents), mode = entry.mode] {
-                return write_file(target, contents, mode);
+                return fs_detail::write_new_file(target, contents, mode & 0777);
             });
         if (!written)
             co_return std::unexpected(written.error());

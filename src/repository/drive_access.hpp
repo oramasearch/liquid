@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include <filesystem>
@@ -18,7 +20,8 @@ struct drive_access {
     [[nodiscard]] static auto objects(repository& source) -> store&;
     [[nodiscard]] static runtime::task<digest> snapshot(repository& source);
     [[nodiscard]] static runtime::task<staged_drive_file> stage(repository& destination,
-                                                                std::filesystem::path source,
+                                                                std::filesystem::path folder,
+                                                                std::filesystem::path relative,
                                                                 std::string name,
                                                                 std::uint32_t mode);
     [[nodiscard]] static runtime::task<digest> content(repository& source, tree_entry entry);

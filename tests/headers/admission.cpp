@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/admission.hpp"
 
 void use_admission_header() {

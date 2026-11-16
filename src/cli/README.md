@@ -40,11 +40,19 @@ to the checkout daemon and acquires or releases exclusive checkout through the p
 platforms without daemon transport use the public repository operations directly.
 
 `session.cpp` starts, publishes, and discards private replicas through the public session API.
+`session start <delegation> --as <agent>` acts as the delegated agent, which must be the
+delegation's subject (liquid #515), and every session command answers revocation from
+`$LIQUID_HOME/trust/delegation-revocations` (liquid #514).
 `attestation.cpp` renders delegation attributes, and `repo.cpp` renders their signed drip digest.
 `identity.cpp` exports the public signed document with `show --document`, using the public signer
-accessor and canonical codec, and selects software, FIDO2, or PIV rotation custody. `sign.cpp` signs a canonical digest
+accessor and canonical codec, and selects software, FIDO2, or PIV rotation custody. It also
+installs the terminal passphrase prompt (echo off, never an argument) that libliquid asks when an
+identity's wrapping key has passphrase custody, reports the wrapping-key custody in `show`, warns
+when only file permissions protect the key, and moves it with `custody --to` (liquid #402). `sign.cpp` signs a canonical digest
 with the active backend. `release.cpp` persists signed release policies and approvals and renders
-the distinct-signer threshold result.
+the distinct-signer threshold result; `verify` builds its trust root from
+`$LIQUID_HOME/trust/release-policy-issuers` and the current repository, never from the repository's
+own files.
 
 `data.cpp` implements branch, list, discard, and promote entirely through `liquid/data.hpp`. It
 prints live branch URLs but never prints configured base URLs. An omitted branch session is a new
@@ -108,6 +116,8 @@ the commit checksum plus text or stable JSON reports. It does not read format wr
 internals.
 `abi.cpp` resolves regular files, blob digests, output paths, and exact result/output pairs through
 the public ABI and repository APIs. It prints stable text or JSON descriptors and comparisons.
+Incomplete descriptors report truncation, and ABI/wrapper comparisons print an
+`inspection_truncated` change with an incompatible verdict.
 
 `policy.cpp` implements `policy check` and `policy explain` through public build APIs. It prints
 canonical rule configuration and per-input verified-identity counts without reading the store
@@ -149,6 +159,11 @@ and performs local break-glass unsealing through the public secret API. Private-
 `oramasearch/http` router. Its repeatable `--allow-ref` glob installs the public reference
 authorization callback and returns one verdict per update. Request handlers await library tasks on
 the listener executor and never include the private protocol codec.
+
+`signer.hpp` holds `shown_signer`, the one helper every command uses to print an author: the
+record's `taap_id` only when an identity chain verified it, otherwise `signed by an unverified key`
+(liquid#429, liquid#508). `log`, `ops`, `history`, `blame`, `why` and `wrap` use it, and their JSON
+also carries `"identity_verified"`.
 
 The CLI-internal metadata and validator live in `metadata.hpp` and `arguments.cpp`. Every command
 passes through the typed option allow-list before its handler interprets values. `docs.cpp` renders
@@ -209,7 +224,9 @@ the public symbol record without inspecting private repository storage.
 `log.cpp` retains the repository-history form of `log` and adds the transparency verification
 subcommands. It decodes only caller-supplied base64url attestation bytes, opens repository state
 through the public API, and uses the public transparency source and client; persistence remains
-inside libliquid.
+inside libliquid. Every verifying subcommand loads the log's pin with `load_log_trust` and refuses
+without one; `log trust` shows the log's claimed key and witnesses and pins them only with
+`--confirm <fingerprint>` (liquid #389). `verify.cpp` loads the same pin for `verify --log`.
 `symbols.cpp` detects the language from the public registry's extension table, uses the compiler
 frontend when it supports that language, falls back to the locked tree-sitter grammar, and presents
 the public symbol record without inspecting private repository storage. `version --json` includes
@@ -217,7 +234,8 @@ the canonical grammar-lock digest alongside the release version.
 
 `hot_update.cpp` classifies two recorded builds from public hot-update evidence and prints the
 tier, outcome, symbols, and evidence records. Its status view verifies every signed patch before
-showing the base artifact plus its patch composition.
+showing the base artifact plus its patch composition. `apply` and `status` accept a patch only from
+a signer listed in `$LIQUID_HOME/trust/hot-update-signers`, loaded with `load_trusted_identities`.
 
 `config lower --output-record <file|-> [--package <name>]` writes a selected canonical package
 record through the public encoder, with binary stdout and no summary. `resolve` diagnoses a

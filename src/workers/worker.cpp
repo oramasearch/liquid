@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/workers.hpp"
 
 #include <algorithm>
@@ -15,12 +17,14 @@
 #include "build/executor.hpp"
 #include "build/provenance.hpp"
 #include "build/repository_access.hpp"
+#include "identity/taap.hpp"
 #include "liquid/repository.hpp"
 #include "objects/records.hpp"
 #include "reapi/client.hpp"
 #include "reapi/conversion.hpp"
 #include "reapi/messages.hpp"
 #include "sandbox/environment.hpp"
+#include "workers/auth.hpp"
 #include "workers/control.hpp"
 #include "workers/protocol.hpp"
 
@@ -60,6 +64,31 @@ auto host_platform() -> platform {
     return {os, arch};
 }
 
+// Stamps a fresh nonce and the issue time on a worker request and signs it with the worker key.
+template <typename Request>
+runtime::task<Request> signed_request(signer& key, std::string_view purpose, Request request) {
+    auto nonce = workers::random_token();
+    if (!nonce) {
+        co_return std::unexpected(nonce.error());
+    }
+    request.nonce = std::move(*nonce);
+    request.issued_at_ms = workers::unix_milliseconds();
+    auto body = workers::signing_body(request);
+    if (!body) {
+        co_return std::unexpected(body.error());
+    }
+    auto signed_value = co_await key.sign(std::string{purpose}, std::move(*body));
+    if (!signed_value) {
+        co_return std::unexpected(signed_value.error());
+    }
+    auto signature = identity_detail::canonical_signature(*signed_value);
+    if (!signature) {
+        co_return std::unexpected(signature.error());
+    }
+    request.signature = std::move(*signature);
+    co_return request;
+}
+
 template <typename Request, typename Response>
 runtime::task<Response>
 worker_call(const remote_config& config, std::string_view method, const Request& request) {
@@ -77,6 +106,19 @@ worker_call(const remote_config& config, std::string_view method, const Request&
             worker_error(errc::corrupt, "worker RPC returned the wrong message count"));
     }
     co_return workers::decode<Response>(messages->front());
+}
+
+template <typename Request, typename Response>
+runtime::task<Response> signed_worker_call(const remote_config& config,
+                                           signer& key,
+                                           std::string_view purpose,
+                                           std::string_view method,
+                                           Request request) {
+    auto signed_value = co_await signed_request(key, purpose, std::move(request));
+    if (!signed_value) {
+        co_return std::unexpected(signed_value.error());
+    }
+    co_return co_await worker_call<Request, Response>(config, method, *signed_value);
 }
 
 runtime::task<std::vector<std::byte>>
@@ -304,9 +346,10 @@ upload_result(repository& source,
 }
 
 runtime::task<void> heartbeat_loop(remote_config config,
+                                   std::shared_ptr<signer> key,
                                    std::string operation,
                                    std::string worker,
-                                   std::uint64_t token,
+                                   std::string token,
                                    std::chrono::milliseconds interval,
                                    std::shared_ptr<std::atomic_bool> done) {
     while (!done->load()) {
@@ -314,10 +357,13 @@ runtime::task<void> heartbeat_loop(remote_config config,
         if (delay_error || done->load()) {
             co_return result<void>{};
         }
-        auto response = co_await worker_call<workers::heartbeat_request, workers::acknowledgement>(
-            config,
-            workers::heartbeat_method,
-            {.operation = operation, .worker = worker, .token = token});
+        auto response =
+            co_await signed_worker_call<workers::heartbeat_request, workers::acknowledgement>(
+                config,
+                *key,
+                workers::heartbeat_purpose,
+                workers::heartbeat_method,
+                {.operation = operation, .worker = worker, .token = token});
         if (!response || !response->accepted) {
             done->store(true);
             co_return response ? result<void>{} : result<void>{std::unexpected(response.error())};
@@ -327,16 +373,20 @@ runtime::task<void> heartbeat_loop(remote_config config,
 }
 
 runtime::task<void> report_failure(const worker_options& options,
+                                   signer& key,
                                    const workers::lease_response& lease,
                                    std::string worker,
                                    const error& failure) {
-    auto response = co_await worker_call<workers::complete_request, workers::acknowledgement>(
-        options.scheduler,
-        workers::complete_method,
-        {.operation = lease.operation,
-         .worker = std::move(worker),
-         .token = lease.token,
-         .failure = failure.message + (failure.context.empty() ? "" : ": " + failure.context)});
+    auto response =
+        co_await signed_worker_call<workers::complete_request, workers::acknowledgement>(
+            options.scheduler,
+            key,
+            workers::complete_purpose,
+            workers::complete_method,
+            {.operation = lease.operation,
+             .worker = std::move(worker),
+             .token = lease.token,
+             .failure = failure.message + (failure.context.empty() ? "" : ": " + failure.context)});
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -346,6 +396,7 @@ runtime::task<void> report_failure(const worker_options& options,
 runtime::task<void> execute_lease(repository& source,
                                   remote& scheduler,
                                   const worker_options& options,
+                                  signer& key,
                                   const std::string& worker,
                                   const workers::lease_response& lease) {
     auto action = reapi::decode_message<reapi::Action>(lease.action);
@@ -457,13 +508,16 @@ runtime::task<void> execute_lease(repository& source,
     if (!encoded) {
         co_return std::unexpected(encoded.error());
     }
-    auto accepted = co_await worker_call<workers::complete_request, workers::acknowledgement>(
-        options.scheduler,
-        workers::complete_method,
-        {.operation = lease.operation,
-         .worker = worker,
-         .token = lease.token,
-         .result = std::move(*encoded)});
+    auto accepted =
+        co_await signed_worker_call<workers::complete_request, workers::acknowledgement>(
+            options.scheduler,
+            key,
+            workers::complete_purpose,
+            workers::complete_method,
+            {.operation = lease.operation,
+             .worker = worker,
+             .token = lease.token,
+             .result = std::move(*encoded)});
     if (!accepted) {
         co_return std::unexpected(accepted.error());
     }
@@ -485,6 +539,16 @@ runtime::task<void> run_worker(worker_options options) {
         co_return std::unexpected(
             worker_error(errc::invalid_argument, "worker root directory is empty"));
     }
+    if (!options.trusted_scheduler) {
+        co_return std::unexpected(worker_error(
+            errc::invalid_argument,
+            "worker has no trusted scheduler",
+            "pass the scheduler's `liquid identity show --document` with --trust-scheduler"));
+    }
+    auto scheduler_key = workers::pinned_key(*options.trusted_scheduler);
+    if (!scheduler_key) {
+        co_return std::unexpected(scheduler_key.error());
+    }
     options.scheduler.backend = remote_backend::liquid_scheduler;
     auto code = std::error_code{};
     const auto marker = options.root_directory / "LIQUID_REPO";
@@ -503,6 +567,15 @@ runtime::task<void> run_worker(worker_options options) {
         co_return std::unexpected(identity.error());
     }
     const auto worker = identity->taap_id;
+    auto local_key = co_await identity_detail::local_signer();
+    if (!local_key) {
+        co_return std::unexpected(local_key.error());
+    }
+    auto key = std::make_shared<signer>(std::move(*local_key));
+    if (key->identity().taap_id != worker || key->identity().public_key != identity->public_key) {
+        co_return std::unexpected(worker_error(
+            errc::corrupt, "worker request key differs from its result signing key", worker));
+    }
     auto scheduler = co_await remote::connect(options.scheduler);
     if (!scheduler) {
         co_return std::unexpected(scheduler.error());
@@ -532,13 +605,26 @@ runtime::task<void> run_worker(worker_options options) {
                        }
                    });
     for (;;) {
+        auto request = co_await signed_request(
+            *key,
+            workers::lease_request_purpose,
+            workers::worker_request{.instance = options.scheduler.instance_name,
+                                    .worker = worker,
+                                    .platform = host_platform(),
+                                    .size_class = options.size_class});
+        if (!request) {
+            co_return std::unexpected(request.error());
+        }
         auto lease = co_await worker_call<workers::worker_request, workers::lease_response>(
-            options.scheduler,
-            workers::lease_method,
-            {.instance = options.scheduler.instance_name,
-             .worker = worker,
-             .platform = host_platform(),
-             .size_class = options.size_class});
+            options.scheduler, workers::lease_method, *request);
+        if (lease) {
+            // An unsigned or foreign lease is never executed: the worker stops, because it is
+            // either talking to the wrong scheduler or to something impersonating it.
+            auto authentic = workers::verify_lease(*lease, *scheduler_key, worker, request->nonce);
+            if (!authentic) {
+                co_return std::unexpected(authentic.error());
+            }
+        }
         if (!lease) {
             if (lease.error().code != errc::unavailable && lease.error().code != errc::io) {
                 co_return std::unexpected(lease.error());
@@ -568,18 +654,20 @@ runtime::task<void> run_worker(worker_options options) {
         auto done = std::make_shared<std::atomic_bool>();
         status->active.store(true);
         runtime::spawn(heartbeat_loop(options.scheduler,
+                                      key,
                                       lease->operation,
                                       worker,
                                       lease->token,
                                       options.poll_interval,
                                       done),
                        [](result<void>) {});
-        auto executed = co_await execute_lease(*source, connection, options, worker, *lease);
+        auto executed = co_await execute_lease(*source, connection, options, *key, worker, *lease);
         done->store(true);
         status->active.store(false);
         if (!executed) {
             ++status->failures;
-            auto reported = co_await report_failure(options, *lease, worker, executed.error());
+            auto reported =
+                co_await report_failure(options, *key, *lease, worker, executed.error());
             if (!reported) {
                 status->ready.store(false);
                 auto [delay_error] = co_await runtime::delay(options.poll_interval);

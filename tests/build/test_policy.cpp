@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: MIT
+
 #include <gtest/gtest.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -193,6 +196,25 @@ TEST(BuildPolicy, attestation_from_an_unapproved_builder_is_refused) {
     EXPECT_EQ(report->inputs.front().requirements.front().count, 0U);
 }
 
+// liquid#383: the policy names the builder, but a verifier without the builder's identity chain
+// cannot bind that name to the signing key, so the attestation does not count.
+TEST(BuildPolicy, attestation_from_a_builder_with_an_unknown_identity_chain_is_refused) {
+    policy_fixture fixture;
+    auto builder = signer_at(fixture.location.path() / "unknown-chain-builder");
+    ASSERT_TRUE(liquid::runtime::block_on(
+        fixture.repository.set_policy(path_policy({builder.identity().taap_id}, 1))));
+    store_attestation(fixture.repository, signed_reproducibility(fixture.input_blob, builder));
+    setenv("LIQUID_HOME", fixture.owner_home.path().c_str(), 1);
+    auto report = liquid::runtime::block_on(
+        liquid::build::check_policy(fixture.repository, fixture.action()));
+    ASSERT_TRUE(report) << report.error().message;
+    EXPECT_FALSE(report->allowed);
+    EXPECT_EQ(report->inputs.front().requirements.front().count, 0U);
+    EXPECT_NE(report->inputs.front().requirements.front().reason.find("unknown signer"),
+              std::string::npos)
+        << report->inputs.front().requirements.front().reason;
+}
+
 TEST(BuildPolicy, invalid_signature_never_satisfies_a_requirement) {
     policy_fixture fixture;
     auto builder = signer_at(fixture.location.path() / "invalid-signature-builder");
@@ -226,6 +248,10 @@ TEST(BuildPolicy, reproducibility_quorum_counts_distinct_verified_identities) {
     policy_fixture fixture;
     auto first = signer_at(fixture.location.path() / "first");
     auto second = signer_at(fixture.location.path() / "second");
+    // The check runs in `second`'s home, which must trust `first`'s identity chain (liquid#383).
+    const auto first_document = first.document();
+    ASSERT_TRUE(first_document) << first_document.error().message;
+    ASSERT_TRUE(liquid::trust_identity_chain(std::array{*first_document}));
     ASSERT_TRUE(liquid::runtime::block_on(fixture.repository.set_policy(
         path_policy({first.identity().taap_id, second.identity().taap_id}, 2))));
     store_attestation(fixture.repository, signed_reproducibility(fixture.input_blob, first));

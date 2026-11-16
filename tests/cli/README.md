@@ -3,6 +3,10 @@
 `split.cmake` verifies ordinary and nested splits in separate CLI processes after moving or
 deleting their sources, checks materialised bytes and prior history, and rejects failed output.
 
+`cut-daemon.cmake` proves `cut -m` and `cut --message` record only the message, refuses a
+message that starts with `-` without recording a change, and checks that `daemon stop` and
+`daemon --shutdown` with no daemon running say `no daemon is running` (liquid#528).
+
 `scenario.cmake` drives the built `liquid` executable through the Phase 1 command-line scenario
 without watcher capture: import files with `init`, inspect status, cut, move, nest a second
 repository, split a subtree, combine it, inspect JSON history, undo the move, reject a locked
@@ -18,10 +22,17 @@ outside the public `liquid/` header tree or the CLI's own metadata header. The `
 cache.
 
 `verify_log.cpp` uses the CLI verification handler with a completed signed reproducibility report
-and a loopback HTTP log fixture. It requires valid inclusion, rejects missing, tampered, and
-unavailable proofs, and confirms that omitting `--log` retains local-only verification.
+and a loopback HTTP log fixture. It refuses the log until it is pinned in
+`$LIQUID_HOME/trust/transparency/`, then requires valid inclusion, rejects a pin whose witness
+threshold the log cannot meet, rejects missing, tampered, and unavailable proofs, and confirms that
+omitting `--log` retains local-only verification (liquid #389).
 The target compiles the private attestation encoder and its canonical CBOR dependency directly so
 the same fixture works with hidden symbols in shared-library builds.
+`session.cmake` issues a delegation with `session_fixture.cpp` and checks that
+`liquid session start <delegation> --as <agent>` refuses a missing `--as` and any agent other than
+the delegation's subject, then that the agent's published line is attributed to it with
+`agent=true` (liquid #515). Like `verify_log.cpp`, the fixture compiles the private attestation
+encoder directly.
 `verify-log-guide.cmake` reads the transparency guide's all-actions invocation and requires the
 built command to accept it past argument parsing.
 
@@ -29,7 +40,21 @@ built command to accept it past argument parsing.
 which invokes the same macOS or Linux sandbox launcher used by build wrapping with networking
 denied. It first pins exit 69 and the exact diagnostic for push, pull, remote execution, and the
 remote cache; any unclassified network use then fails inside the sandbox. The outer test carries
-the `liquid-offline` label for local and hosted selection.
+the `liquid-offline` label for local and hosted selection. On Linux the runner first runs
+`unshare --user --map-root-user --mount --net /bin/true`; a host that refuses those namespaces (an
+unprivileged container) makes it print `liquid-offline-runner: skipped: <reason>` and exit 77, and
+`offline.cmake` and `log-url.cmake` report the test as skipped with that reason
+([#363](https://github.com/oramasearch/liquid/issues/363)). Where the namespaces are allowed the
+suite runs in full. An input link left by an earlier run is reused, and `log-url.cmake` starts from
+an empty sandbox directory.
+
+`require-fuse.cmake` runs `symbols-cli-build` and `symbols-cli`, whose `liquid wrap` mounts FUSE in
+a FUSE build. It asks `liquid-fuse-probe` (`tests/fuse_probe.cpp`) first and reports a skip with the
+probe's reason when `/dev/fuse` cannot be opened
+([#362](https://github.com/oramasearch/liquid/issues/362)). `script-policies.cmake`
+(`cmake-script-policies`) fails when a CMake script under `tests/` uses `IN_LIST` without setting
+its policies, which breaks `cmake -P` on CMake 3.x
+([#364](https://github.com/oramasearch/liquid/issues/364)).
 The help/documentation comparison also pins the `scheduler`, `worker`, `diff`, and `docs` command
 names.
 `install.cmake` installs two trees into isolated generations, lists them, rolls back, and verifies
@@ -38,6 +63,10 @@ that `current` exposes the first tree again.
 same document twice to pin idempotence.
 `locks.cmake` lowers a repository lock rule during initialization, then acquires with an explicit
 reason and releases through the checkout daemon.
+`serve-listen.cmake` requires `serve reapi`, `serve sync` and `scheduler` to refuse, before anything binds, a
+plaintext listener on a non-loopback IPv4 or IPv6 address, a token without TLS, TLS without
+authentication, and a group-readable token file; it also refuses a REAPI certificate without its key
+and a zero sync upload quota (liquid#415, liquid#403, liquid#520).
 The help/documentation comparison also pins the `scheduler` and `worker` command names.
 The scenario also pins `remote_bytes` in the status JSON contract.
 `conflict.cmake` creates a CRDT-suspicious conflict through a public-API fixture, verifies the
@@ -49,6 +78,10 @@ It lists history through that rename, restores the imported version as a new dri
 restoration without changing an earlier change.
 `blame.cmake` creates a two-line repository and verifies both the versioned JSON attribution object
 and the line-oriented text form through the daemon-backed command.
+`unverified-author.cmake` writes a repository under one `LIQUID_HOME` and reads it under another
+that holds no chain for its author (liquid#508). `log`, `history`, `ops` and `blame`, in text and
+JSON, must show that author as `signed by an unverified key` with `"identity_verified":false`; in
+the author's own home `ops --json` reports `true`.
 It also parses `search --explain` as JSON and pins the scan choice, literal classification,
 freshness input, and three-alternative shape for the small imported working set.
 
@@ -107,7 +140,11 @@ universe diagnostics in text/JSON modes, and an exact attributed contradiction n
 bytes, OCI/RPM/APK output, Debian source changes, and explicit unsupported-input errors. Its
 public-API fixture records results in a separate build repository to preserve result-ID and
 producing-install-tree behavior, including a checkout without ordinary repository state.
-`log-url.cmake` checks malformed schemes, missing hosts, and invalid ports through `log scan`,
-`log consistency`, and `log verify`, requiring exit 2 and specific HTTP/HTTPS diagnostics.
+`log-url.cmake` checks malformed schemes, missing hosts, invalid ports, and plain `http://` to a
+host that is not loopback through `log scan`, `log consistency`, `log verify`, and `log trust`,
+requiring exit 2 and specific HTTP/HTTPS diagnostics.
 It also runs the `HttpLogSource` API cases. The existing offline runner denies networking
 on macOS and Linux; no repository or server is required.
+`workers-trust.cmake` (liquid #416) requires `scheduler` and `worker` to refuse to start without
+`--trust-worker` or `--trust-scheduler`, to reject a file that is not an identity document, and to
+load a directory of documents written by `identity show --document`, skipping dot files.

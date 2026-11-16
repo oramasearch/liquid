@@ -1,17 +1,24 @@
+// SPDX-License-Identifier: MIT
+
 #include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <random>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "remote_blob_source.hpp"
 
+#include "../fuse_probe.hpp"
 #include "../temporary_directory.hpp"
 #include "build/cache.hpp"
 #include "build/content.hpp"
@@ -383,6 +390,7 @@ auto blob_contents(liquid::repository& repository, liquid::digest id)
 }
 
 TEST(BuildEvents, public_handle_reports_miss_then_hit) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     const auto input =
         fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
@@ -424,15 +432,20 @@ void write_build_configuration(const std::filesystem::path& repository,
     ASSERT_FALSE(code) << code.message();
     auto output = std::ofstream{directory / "configuration", std::ios::trunc};
     ASSERT_TRUE(output.is_open());
+    // Shaped like the wrap state: a version line and 64-hex-digit BLAKE3-256 process keys
+    // (liquid#449), which planning must accept.
+    output << "V\t2\n";
     for (auto index = std::size_t{}; index != results.size(); ++index) {
-        output << "A\t" << std::hex << index + 1 << '\t' << liquid::to_string(results[index].value)
-               << '\n';
+        auto key = std::ostringstream{};
+        key << std::hex << std::setfill('0') << std::setw(64) << index + 1;
+        output << "A\t" << key.str() << '\t' << liquid::to_string(results[index].value) << '\n';
     }
     output.close();
     ASSERT_TRUE(output);
 }
 
 TEST(BuildPlan, plans_dependencies_and_starts_the_repository_build) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto first = fixture.repository.build(
         fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"}));
@@ -493,6 +506,7 @@ TEST(BuildPlan, plans_dependencies_and_starts_the_repository_build) {
 }
 
 TEST(BuildEvents, failed_action_precedes_critical_path_and_summary) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto handle = fixture.repository.build(
         fixture.input({"fixture", "fail", "out/copy.txt"}, {"out/copy.txt"}));
@@ -515,6 +529,7 @@ TEST(BuildEvents, failed_action_precedes_critical_path_and_summary) {
 }
 
 TEST(BuildEvents, own_tree_one_function_edit_measurement) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto input_file =
         std::ifstream{std::filesystem::path{LIQUID_SOURCE_ROOT} / "src/store/faults.cpp"};
@@ -569,6 +584,7 @@ TEST(BuildEvents, own_tree_one_function_edit_measurement) {
 }
 
 TEST(BuildTests, filters_hits_and_reruns_changed_inputs) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     ASSERT_TRUE(liquid::runtime::block_on(
         fixture.repository.register_test({.name = "alpha",
@@ -669,6 +685,7 @@ TEST(BuildEvents, daemon_client_preserves_the_stream) {
 }
 
 TEST(BuildPlan, daemon_preserves_the_repository_plan_and_event_sequence) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto recorded = fixture.repository.build(
         fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"}));
@@ -706,6 +723,7 @@ TEST(BuildPlan, daemon_preserves_the_repository_plan_and_event_sequence) {
 #endif
 
 TEST(Build, copies_declared_output_and_records_only_read_input) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(liquid::build::execute(
         fixture.repository,
@@ -721,6 +739,7 @@ TEST(Build, copies_declared_output_and_records_only_read_input) {
 }
 
 TEST(Build, records_an_undeclared_input_read) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(liquid::build::execute(
         fixture.repository,
@@ -733,6 +752,7 @@ TEST(Build, records_an_undeclared_input_read) {
 }
 
 TEST(Build, direct_action_reads_a_named_upstream_tree) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto folded = liquid::runtime::block_on(liquid::build_detail::fold_dependency_inputs(
         fixture.repository,
@@ -756,6 +776,7 @@ TEST(Build, direct_action_reads_a_named_upstream_tree) {
 }
 
 TEST(Build, denies_reads_outside_the_mount) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(
         liquid::build::execute(fixture.repository, fixture.input({"fixture", "outside-read"}, {})));
@@ -768,6 +789,7 @@ TEST(Build, denies_reads_outside_the_mount) {
 
 #if defined(__linux__)
 TEST(Build, remote_eligible_action_reads_inputs_and_toolchain) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto input = fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
     input.remote_eligible = true;
@@ -779,6 +801,7 @@ TEST(Build, remote_eligible_action_reads_inputs_and_toolchain) {
 }
 
 TEST(Build, refuses_non_hermetic_read_for_remote_eligible_action) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto input = fixture.input({"fixture", "outside-read"}, {});
     input.remote_eligible = true;
@@ -791,6 +814,7 @@ TEST(Build, refuses_non_hermetic_read_for_remote_eligible_action) {
 #endif
 
 TEST(Build, rejects_writes_outside_declared_outputs) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(liquid::build::execute(
         fixture.repository, fixture.input({"fixture", "outside-write"}, {})));
@@ -799,7 +823,33 @@ TEST(Build, rejects_writes_outside_declared_outputs) {
     EXPECT_EQ(ran.error().message, "action wrote outside declared outputs");
 }
 
+#if defined(__linux__)
+TEST(Build, output_symlink_fails_before_its_host_target_is_read_or_rewritten) {
+    action_fixture fixture;
+    const auto sentinel = liquid::test::fixture_path("liquid-build-sentinel-" +
+                                                     fixture.location.path().filename().string());
+    constexpr auto sentinel_text = std::string_view{"host sentinel that no action may rewrite\n"};
+    {
+        auto output = std::ofstream{sentinel, std::ios::binary | std::ios::trunc};
+        output << sentinel_text;
+    }
+    auto ran = liquid::runtime::block_on(liquid::build::execute(
+        fixture.repository,
+        fixture.input({"fixture", "symlink", sentinel.string(), "out/payload.pyc"}, {"out/"})));
+    auto input = std::ifstream{sentinel, std::ios::binary};
+    const auto after =
+        std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    std::error_code code;
+    std::filesystem::remove(sentinel, code);
+    ASSERT_FALSE(ran);
+    EXPECT_EQ(ran.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(ran.error().message, "action output is a symbolic link");
+    EXPECT_EQ(after, sentinel_text);
+}
+#endif
+
 TEST(Build, has_fixed_environment) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(liquid::build::execute(
         fixture.repository, fixture.input({"fixture", "env", "out/env.txt"}, {"out/env.txt"})));
@@ -827,6 +877,7 @@ TEST(Build, has_fixed_environment) {
 }
 
 TEST(Build, preserves_pure_action_results_except_timing) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     const auto input =
         fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
@@ -852,6 +903,7 @@ TEST(Build, preserves_pure_action_results_except_timing) {
 }
 
 TEST(BuildCache, identical_second_execution_is_a_hit_without_a_spawn) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     const auto input =
         fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
@@ -883,6 +935,7 @@ TEST(BuildCache, identical_second_execution_is_a_hit_without_a_spawn) {
 }
 
 TEST(BuildCache, changing_an_undeclared_read_header_names_both_digests) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto input = fixture.input({"fixture", "copy", "other.txt", "out/copy.txt"}, {"out/copy.txt"});
     auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
@@ -914,6 +967,7 @@ TEST(BuildCache, changing_an_undeclared_read_header_names_both_digests) {
 }
 
 TEST(BuildCache, changing_an_unread_input_remains_a_hit) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto input = fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
     auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
@@ -929,6 +983,7 @@ TEST(BuildCache, changing_an_unread_input_remains_a_hit) {
 }
 
 TEST(BuildCache, collected_output_is_not_served) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture{true, 20, false};
     const auto input =
         fixture.input({"fixture", "copy-tagged", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
@@ -953,6 +1008,7 @@ TEST(BuildCache, collected_output_is_not_served) {
 }
 
 TEST(BuildCache, result_signature_verifies_against_the_device_identity) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(liquid::build::execute(
         fixture.repository,
@@ -973,6 +1029,7 @@ TEST(BuildCache, result_signature_verifies_against_the_device_identity) {
 }
 
 TEST(BuildVerification, pure_action_gets_a_signed_reproducibility_attestation) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(liquid::build::execute(
         fixture.repository,
@@ -995,6 +1052,7 @@ TEST(BuildVerification, pure_action_gets_a_signed_reproducibility_attestation) {
 }
 
 TEST(BuildReplay, recorded_failure_reproduces_outputs_and_exit_status) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(liquid::build::execute(
         fixture.repository, fixture.input({"fixture", "fail", "out/copy.txt"}, {"out/copy.txt"})));
@@ -1021,6 +1079,7 @@ TEST(BuildReplay, recorded_failure_reproduces_outputs_and_exit_status) {
 }
 
 TEST(BuildReplay, cached_hit_replays_by_action_and_records_only_when_requested) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     const auto input =
         fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
@@ -1047,6 +1106,7 @@ TEST(BuildReplay, cached_hit_replays_by_action_and_records_only_when_requested) 
 }
 
 TEST(BuildReplay, tampered_recorded_output_reports_the_first_differing_byte) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto ran = liquid::runtime::block_on(liquid::build::execute(
         fixture.repository,
@@ -1095,6 +1155,7 @@ TEST(BuildReplay, tampered_recorded_output_reports_the_first_differing_byte) {
 }
 
 TEST(BuildReplay, remote_input_is_fetched_through_the_blob_source) {
+    LIQUID_TEST_REQUIRE_FUSE();
     temporary_repository remote_location;
     auto remote_store = liquid::runtime::block_on(liquid::store::open(remote_location.path()));
     ASSERT_TRUE(remote_store) << remote_store.error().message;
@@ -1156,6 +1217,7 @@ TEST(BuildReplay, remote_input_is_fetched_through_the_blob_source) {
 }
 
 TEST(BuildVerification, nondeterminism_is_alerted_and_the_divergent_result_is_never_served) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     const auto input = fixture.input({"fixture", "random", "out/random.bin"}, {"out/random.bin"});
     auto first = liquid::runtime::block_on(liquid::build::execute(fixture.repository, input));
@@ -1206,6 +1268,7 @@ TEST(BuildVerification, nondeterminism_is_alerted_and_the_divergent_result_is_ne
 }
 
 TEST(BuildVerification, rate_one_samples_every_unverified_action) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture{true, 1};
     fixture.repository = {};
     auto reopened = liquid::runtime::block_on(liquid::repository::open(fixture.location.path()));
@@ -1227,6 +1290,7 @@ TEST(BuildVerification, rate_one_samples_every_unverified_action) {
 }
 
 TEST(BuildCache, unsigned_newest_candidate_is_never_served) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     const auto input =
         fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
@@ -1269,6 +1333,7 @@ TEST(BuildCache, unsigned_newest_candidate_is_never_served) {
 }
 
 TEST(BuildCache, action_index_hits_after_repository_reopen_and_index_rebuild) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     const auto input =
         fixture.input({"fixture", "copy", "input.txt", "out/copy.txt"}, {"out/copy.txt"});
@@ -1287,6 +1352,7 @@ TEST(BuildCache, action_index_hits_after_repository_reopen_and_index_rebuild) {
 }
 
 TEST(Build, terminates_the_process_group_on_timeout) {
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     auto input = fixture.input({"fixture", "sleep"}, {});
     input.timeout = std::chrono::seconds{1};

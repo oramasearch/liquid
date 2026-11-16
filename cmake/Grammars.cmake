@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 include_guard(GLOBAL)
 
 set(LIQUID_GRAMMARS "all" CACHE STRING
@@ -17,6 +19,37 @@ function(liquid_grammar_archive_url repository commit output)
     set(${output} "${mirror}/${repository_path}/archive/${commit}.tar.gz" PARENT_SCOPE)
   else()
     set(${output} "${repository}/archive/${commit}.tar.gz" PARENT_SCOPE)
+  endif()
+endfunction()
+
+# Applies one locked patch to a fetched grammar file (liquid#462): an exact replacement of `find`,
+# which must occur once, in a file whose SHA-256 is the upstream digest the lock records. A file that
+# already has the patched digest was patched on an earlier configure. Any other content is refused,
+# so a patch never lands on bytes nobody reviewed.
+function(liquid_apply_grammar_patch language file find replace upstream_sha256 patched_sha256)
+  file(SHA256 "${file}" actual)
+  if(actual STREQUAL patched_sha256)
+    return()
+  endif()
+  if(NOT actual STREQUAL upstream_sha256)
+    message(FATAL_ERROR
+      "grammar patch for ${language}: ${file} has sha256:${actual}, not the locked upstream "
+      "sha256:${upstream_sha256}")
+  endif()
+  file(READ "${file}" contents)
+  string(FIND "${contents}" "${find}" first)
+  string(FIND "${contents}" "${find}" last REVERSE)
+  if(first EQUAL -1 OR NOT first EQUAL last)
+    message(FATAL_ERROR
+      "grammar patch for ${language}: the text to replace must occur exactly once in ${file}")
+  endif()
+  string(REPLACE "${find}" "${replace}" contents "${contents}")
+  file(WRITE "${file}" "${contents}")
+  file(SHA256 "${file}" actual)
+  if(NOT actual STREQUAL patched_sha256)
+    message(FATAL_ERROR
+      "grammar patch for ${language}: patched ${file} has sha256:${actual}, not the locked "
+      "sha256:${patched_sha256}")
   endif()
 endfunction()
 
@@ -89,6 +122,20 @@ function(liquid_configure_grammars)
     FetchContent_MakeAvailable(${content_name})
     FetchContent_GetProperties(${content_name} SOURCE_DIR grammar_source_dir)
     set(grammar_source_dir_${index} "${grammar_source_dir}")
+    string(JSON patch_type ERROR_VARIABLE patch_error TYPE "${lock_json}" grammars ${index} patches)
+    if(NOT patch_error AND patch_type STREQUAL "ARRAY")
+      string(JSON patch_count LENGTH "${lock_json}" grammars ${index} patches)
+      if(patch_count GREATER 0)
+        math(EXPR patch_last "${patch_count} - 1")
+        foreach(patch_index RANGE ${patch_last})
+          foreach(field path find replace upstream_sha256 sha256)
+            string(JSON patch_${field} GET "${lock_json}" grammars ${index} patches ${patch_index} ${field})
+          endforeach()
+          liquid_apply_grammar_patch("${language}" "${grammar_source_dir}/${patch_path}"
+            "${patch_find}" "${patch_replace}" "${patch_upstream_sha256}" "${patch_sha256}")
+        endforeach()
+      endif()
+    endif()
     file(APPEND "${source_map}" "${language}|${grammar_source_dir}\n")
 
     string(JSON parser_path GET "${lock_json}" grammars ${index} parser path)

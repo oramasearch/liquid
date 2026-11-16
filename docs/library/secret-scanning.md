@@ -6,6 +6,10 @@ and line number. Every accepted scanned drip references a signed `scan_result/1`
 Repository redaction replaces a path and makes the replaced blob digest unreadable before it
 returns.
 
+**What a pass means.** A scan that finds nothing says only that no detector matched. It does not
+mean the content holds no secret: a secret in a format no detector knows, or split across chunks,
+passes (liquid#419).
+
 **Why.** Automatic capture records writes that a developer might delete before naming a change.
 Scanning after append would therefore be too late. Diagnostics and attestations deliberately omit
 matched values so the scanner cannot become a second disclosure channel.
@@ -23,13 +27,22 @@ not a third-party regular-expression engine.
 | `slack-token` | the `xox` Slack token families |
 | `google-api-key` | `AIza` followed by 35 base64url characters |
 | `private-key` | RSA, EC, OpenSSH, or PGP private-key PEM headers |
-| `jwt` | three bounded base64url components beginning with an encoded JSON object |
+| `jwt` | three base64url components of at least eight characters, with the first beginning `eyJ` |
 | `generic-assignment` | `password`, `secret`, or `token` assignments with at least 16 characters and at least 3.5 bits of Shannon entropy per character |
 | `dotenv-assignment` | uppercase `.env`-style keys with values of at least 20 characters and at least 4.0 bits of Shannon entropy per character |
 
 Each detector has matching and harmless cases under `tests/scan/`. Entropy is computed over byte
 frequencies in the value after surrounding quotes are removed. It is a supporting signal, not a
 claim that arbitrary high-entropy text is a credential.
+
+The JWT matcher walks maximal base64url runs once and searches each run once for its earliest
+`eyJ` prefix. Two flags record whether preceding dot-separated runs can supply a header and
+payload. Every suffix candidate in one run shares its following components, so its earliest
+prefix is sufficient: later prefixes only shorten the header. Each later run can still begin a
+new token. Work is linear in line length and auxiliary storage is constant, including on long
+invalid runs with repeated prefixes (liquid #440, LSR-130). Capture and direct detector callers
+use the same matcher; allow rules, line markers, and matches from other detectors do not change
+its work bound. Input is neither truncated nor refused by size.
 
 ## Capture decision and repository configuration
 
@@ -106,6 +119,9 @@ redaction. Removing lake's already replicated copy is Phase 6 work.
 
 `tests/scan/` covers every detector, both exception mechanisms, safe blocking details, attestation
 storage and signature verification, and verified redaction of the old blob and content digest.
+JWT tests require four long invalid component shapes to finish within a combined two-second
+budget, preserve valid candidates after malformed prefixes and valid components above 64 KiB,
+and find JWT and private-key shapes after a two-MiB prefix.
 `tests/crdt/test_journal.cpp` proves the physical journal grows while its logical reader marks the
 earlier drip redacted.
 

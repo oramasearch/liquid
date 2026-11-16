@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "sandbox/sandbox.hpp"
 
 #if defined(__APPLE__)
@@ -7,6 +9,8 @@
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
+#include <algorithm>
+#include <string_view>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <thread>
@@ -15,16 +19,34 @@
 namespace liquid::sandbox_detail {
 namespace {
 
+// An SBPL string literal (L-17, liquid#399): `\` and `"` are escaped, so a path cannot end the
+// string or change what follows. A path with a control character or NUL is refused before the
+// profile is written (sbpl_safe), so no literal needs to carry one.
 auto escaped(std::string value) -> std::string {
-    for (auto offset = std::size_t{}; (offset = value.find('"', offset)) != std::string::npos;) {
-        value.insert(offset, "\\");
-        offset += 2;
+    auto output = std::string{};
+    output.reserve(value.size());
+    for (const auto character : value) {
+        if (character == '\\' || character == '"') {
+            output += '\\';
+        }
+        output += character;
     }
-    return value;
+    return output;
+}
+
+auto sbpl_safe(std::string_view value) -> bool {
+    return std::ranges::none_of(value, [](unsigned char c) { return c < 0x20 || c == 0x7f; });
 }
 
 auto write_profile(const launch_request& request, const std::filesystem::path& path)
     -> result<void> {
+    for (const auto& value : {std::string{request.work_root}, std::string{request.toolchain_root},
+                              request.output_root.string(), std::string{request.temporary_root}}) {
+        if (!sbpl_safe(value)) {
+            return std::unexpected(error{errc::invalid_argument,
+                                         "a sandbox path holds a control character", value});
+        }
+    }
     auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
     if (!output)
         return std::unexpected(

@@ -1,6 +1,10 @@
 Third-party notices
 ===================
 
+liquid is licensed under the MIT License (see LICENSE and COPYRIGHT). The components below are
+built into its binaries; each keeps its own licence. THIRD_PARTY_LICENSES holds the complete list,
+including build-only, test-only and benchmark components, with every licence text.
+
 AppImage type 2 runtime
   Project: https://github.com/AppImage/type2-runtime
   Embedded upstream source reference: 75849dce7cc37e4319b633df1f116ca895c71a12
@@ -37,7 +41,7 @@ Boost.Capy
 
 Boost.Corosio
   Project: https://github.com/oramasearch/corosio
-  Revision: 1c1a6abf82c37ac2628d18cec2add502043c59c1
+  Revision: 887166b82a1b7acc0a10ce9f3c61224d45ae80e4
   Licence: Boost Software License 1.0
   The source is vendored as modules/corosio and linked privately by libliquid.
 
@@ -62,7 +66,13 @@ tree-sitter and C/C++ grammars
   modules; they are not linked into libliquid.
 
 automerge-cpp
-  Project: https://github.com/oramasearch/automerge-cpp
-  Revision: 4dd795513510ae2c58bacd384c3d8fd98f523123 (v0.6.0)
+  Project: https://github.com/homer6/automerge-cpp
+  Revision: 06408d32fa7dbefdd658f3b17d518c4a681dbf0b
   Licence: MIT
-  The source is a private git submodule under modules/automerge-cpp and is linked privately.
+  The source is a git submodule under modules/automerge-cpp and is linked privately.
+
+Zstandard
+  Project: https://github.com/facebook/zstd
+  Version: 1.5.7
+  Licence: BSD-3-Clause (dual-licensed BSD-3-Clause or GPL-2.0; used under BSD-3-Clause)
+  The source is fetched during configuration and compiled as a private static target.

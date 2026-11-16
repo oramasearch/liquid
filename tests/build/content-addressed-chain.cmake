@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 cmake_minimum_required(VERSION 3.28)
 
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_CONTENT_CHAIN_ROOT)

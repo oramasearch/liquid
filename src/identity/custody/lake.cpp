@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+
 #include "identity/custody/providers.hpp"
+
+#include "credential_token.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -66,10 +70,11 @@ private:
         if (!body) {
             co_return std::unexpected(body.error());
         }
-        auto token = environment("LIQUID_TOKEN");
-        if (!token) {
-            co_return std::unexpected(
-                custody_error(errc::unauthorized, token.error().message, reference(context)));
+        // LIQUID_TOKEN_FILE or LIQUID_TOKEN (liquid#410).
+        auto token = std::optional<std::string>{token_detail::lake_token()};
+        if (token->empty()) {
+            co_return std::unexpected(custody_error(
+                errc::unauthorized, "LIQUID_TOKEN_FILE or LIQUID_TOKEN is not set", reference(context)));
         }
         const auto url = base_ + "/v1/custody/" + key_name_ + "/" + operation;
         auto response = co_await perform_http(

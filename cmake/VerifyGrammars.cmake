@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_GRAMMAR_LOCK OR NOT DEFINED LIQUID_GRAMMAR_SOURCE_MAP)
   message(FATAL_ERROR "grammar digest verification requires the lock and source map")
 endif()
@@ -43,6 +45,23 @@ foreach(source_row IN LISTS source_rows)
         message(FATAL_ERROR "${language}: ${scanner_path} digest mismatch")
       endif()
     endforeach()
+  endif()
+
+  # A locked patch (liquid#462) must have left its file with the patched digest.
+  string(JSON patch_type ERROR_VARIABLE patch_error TYPE "${lock_json}" grammars ${lock_index} patches)
+  if(NOT patch_error AND patch_type STREQUAL "ARRAY")
+    string(JSON patch_count LENGTH "${lock_json}" grammars ${lock_index} patches)
+    if(patch_count GREATER 0)
+      math(EXPR patch_last "${patch_count} - 1")
+      foreach(patch_index RANGE ${patch_last})
+        string(JSON patch_path GET "${lock_json}" grammars ${lock_index} patches ${patch_index} path)
+        string(JSON patch_sha256 GET "${lock_json}" grammars ${lock_index} patches ${patch_index} sha256)
+        file(SHA256 "${source_dir}/${patch_path}" actual_patch_sha256)
+        if(NOT actual_patch_sha256 STREQUAL patch_sha256)
+          message(FATAL_ERROR "${language}: ${patch_path} does not carry its locked patch")
+        endif()
+      endforeach()
+    endif()
   endif()
 
   string(JSON tags_type TYPE "${lock_json}" grammars ${lock_index} tags)

@@ -1,9 +1,13 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
+
+#include "memory_backend.hpp"
 
 namespace liquid::sim {
 
@@ -23,9 +27,13 @@ struct simulation_result {
     std::optional<simulation_failure> failure;
 };
 
+// `durability` is what the crash keeps of the writes since the last barrier (liquid #344). Anything
+// but `everything` needs a memory backend kind: the backend freezes at the crash point and then
+// keeps the part of its unbarriered log that the mode and the seed choose.
 [[nodiscard]] simulation_result
 run_store_simulation(std::uint64_t seed,
                      const std::filesystem::path& workspace,
-                     simulation_backend backend = simulation_backend::disk);
+                     simulation_backend backend = simulation_backend::disk,
+                     crash_durability durability = crash_durability::everything);
 
 } // namespace liquid::sim

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <string>
 #include <utility>
 
@@ -36,6 +38,11 @@ constexpr invalid_url invalid_urls[] = {
     {"http://127.0.0.1:-1", "port"},
     {"http://127.0.0.1:+80", "port"},
     {"http://127.0.0.1:999999999999999999999999", "port"},
+    // Plain HTTP only to this machine (liquid#389).
+    {"http://lake.example.invalid", "loopback"},
+    {"http://10.0.0.1:8080/log", "loopback"},
+    {"http://127.0.0.1.example.invalid", "loopback"},
+    {"http://[::2]:80/log", "loopback"},
 };
 
 template <class T> void expect_invalid(const liquid::result<T>& value, const invalid_url& input) {
@@ -79,7 +86,9 @@ TEST(HttpLogSource, FactoryAcceptsValidUrlsWithoutConnecting) {
                             "https://example.invalid/log/",
                             "http://127.0.0.1:1",
                             "https://127.0.0.1:65535/log",
-                            "http://[::1]:8080/log"}) {
+                            "http://[::1]:8080/log",
+                            "http://localhost:8080",
+                            "http://127.1.2.3/log"}) {
         SCOPED_TRACE(url);
         auto source = http_log_source::create(url);
         ASSERT_TRUE(source) << source.error().message;

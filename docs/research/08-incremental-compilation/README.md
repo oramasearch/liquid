@@ -145,7 +145,7 @@ layered on top; it is what you get for free when you unify them.
    property that kills "build the world"
    ([09](../09-package-managers/)).
 
-3. **Durability tiers.** Steve's edits are low durability; his project's
+3. **Durability tiers.** A developer's edits are low durability; their project's
    dependencies are medium; the toolchain and stdlib are high. Most of the graph
    should never be visited on a keystroke. Without this, per-keystroke rebuilds do
    not stay sub-second on a large codebase.

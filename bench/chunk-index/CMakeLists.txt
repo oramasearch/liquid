@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 include(FetchContent)
 enable_language(C)
 

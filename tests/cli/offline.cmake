@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_OFFLINE_CHILD)
   foreach(required IN ITEMS
       LIQUID_OFFLINE_RUNNER
@@ -25,6 +27,13 @@ if(NOT DEFINED LIQUID_OFFLINE_CHILD)
     RESULT_VARIABLE sandbox_result
     OUTPUT_VARIABLE sandbox_output
     ERROR_VARIABLE sandbox_error)
+  if(sandbox_result EQUAL 77)
+    # The runner could not create its namespaces here (liquid#363): ctest reports a skip
+    # through the test's SKIP_REGULAR_EXPRESSION, with the runner's reason.
+    string(STRIP "${sandbox_output}${sandbox_error}" skip_reason)
+    message(STATUS "cli-offline skipped: ${skip_reason}")
+    return()
+  endif()
   if(NOT sandbox_result EQUAL 0)
     message(FATAL_ERROR
       "offline CLI suite failed with ${sandbox_result}:\n${sandbox_output}${sandbox_error}")

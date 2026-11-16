@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "build/content.hpp"
 
 #include <algorithm>

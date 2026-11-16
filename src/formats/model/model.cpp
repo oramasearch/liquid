@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/builtin.hpp"
 
 #include <algorithm>
@@ -164,9 +166,15 @@ public:
         auto output = format_tree{.codec = "safetensors",
                                   .tier = format_tier::semantic_verbatim,
                                   .original = {blob.begin(), blob.end()}};
+        auto remaining = limits.byte_budget;
         for (const auto& [name, value] : *root) {
             if (name == "__metadata__") {
                 continue;
+            }
+            if (output.entries.size() >= limits.maximum_entries) {
+                output.truncated = true;
+                output.limits.push_back("entry limit reached at tensor " + name);
+                break;
             }
             const auto* tensor = std::get_if<json::value::object>(&value.data);
             const auto* offsets_value = tensor ? object_field(*tensor, "data_offsets") : nullptr;
@@ -192,6 +200,13 @@ public:
                 return std::unexpected(
                     error{errc::corrupt, "invalid safetensors tensor range", name});
             }
+            // Overlapping ranges still allocate separate copies, so charge every tensor.
+            if (end - begin > remaining) {
+                output.truncated = true;
+                output.limits.push_back("byte budget reached at tensor " + name);
+                break;
+            }
+            remaining -= end - begin;
             const auto* shape = object_field(*tensor, "shape");
             auto shape_text = shape ? json::write(*shape) : result<std::string>{std::string{"[]"}};
             if (!shape_text) {

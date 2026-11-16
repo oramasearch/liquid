@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "reapi/client.hpp"
 
 #include <algorithm>
@@ -100,6 +102,7 @@ auto status_code(std::span<const http2::header_field> headers) -> result<std::ui
     }
     const auto code = parsed->code == 5    ? errc::not_found
                       : parsed->code == 7  ? errc::unauthorized
+                      : parsed->code == 16 ? errc::unauthorized
                       : parsed->code == 12 ? errc::unsupported
                                            : errc::unavailable;
     return std::unexpected(rpc_error(
@@ -141,11 +144,12 @@ auto configure_tls(boost::corosio::tls_context& context,
     return {};
 }
 
-runtime::task<std::vector<std::vector<std::byte>>> exchange(boost::capy::any_stream& stream,
-                                                            const remote_config& config,
-                                                            const parsed_endpoint& endpoint,
-                                                            std::string_view method,
-                                                            std::span<const std::byte> request) {
+runtime::task<std::vector<std::vector<std::byte>>>
+exchange(boost::capy::any_stream& stream,
+         const remote_config& config,
+         const parsed_endpoint& endpoint,
+         std::string_view method,
+         std::span<const std::vector<std::byte>> requests) {
     auto connection = http2::connection{stream, http2::endpoint_role::client};
     auto started = co_await connection.start();
     if (!started) {
@@ -173,12 +177,15 @@ runtime::task<std::vector<std::vector<std::byte>>> exchange(boost::capy::any_str
     if (!stream_id) {
         co_return std::unexpected(stream_id.error());
     }
-    auto envelope =
-        http2::encode_grpc_message({false, std::vector<std::byte>{request.begin(), request.end()}});
-    if (!envelope) {
-        co_return std::unexpected(envelope.error());
+    auto body = std::vector<std::byte>{};
+    for (const auto& request : requests) {
+        auto envelope = http2::encode_grpc_message({false, request});
+        if (!envelope) {
+            co_return std::unexpected(envelope.error());
+        }
+        body.insert(body.end(), envelope->begin(), envelope->end());
     }
-    auto sent = co_await connection.send_data(*stream_id, std::move(*envelope), true);
+    auto sent = co_await connection.send_data(*stream_id, std::move(body), true);
     if (!sent) {
         co_return std::unexpected(sent.error());
     }
@@ -201,11 +208,11 @@ runtime::task<std::vector<std::vector<std::byte>>> exchange(boost::capy::any_str
         }
         co_return std::vector<std::vector<std::byte>>{};
     }
-    auto body = co_await connection.receive_data(*stream_id);
-    if (!body) {
-        co_return std::unexpected(body.error());
+    auto response_body = co_await connection.receive_data(*stream_id);
+    if (!response_body) {
+        co_return std::unexpected(response_body.error());
     }
-    auto messages = http2::decode_grpc_messages(*body);
+    auto messages = http2::decode_grpc_messages(*response_body);
     if (!messages) {
         co_return std::unexpected(messages.error());
     }
@@ -235,9 +242,15 @@ grpc_client::grpc_client(remote_config config) : config_(std::move(config)) {}
 
 runtime::task<std::vector<std::vector<std::byte>>>
 grpc_client::call(std::string_view method, std::span<const std::byte> request, bool) {
-    auto owned_request = std::vector<std::byte>{request.begin(), request.end()};
+    auto requests = std::vector<std::vector<std::byte>>{};
+    requests.emplace_back(request.begin(), request.end());
+    co_return co_await call_messages(method, std::move(requests));
+}
+
+runtime::task<std::vector<std::vector<std::byte>>>
+grpc_client::call_messages(std::string_view method, std::vector<std::vector<std::byte>> requests) {
     auto [deadline_error, outcome] = co_await runtime::timeout(
-        runtime::as_io(call_unbounded(std::string{method}, std::move(owned_request))),
+        runtime::as_io(call_unbounded(std::string{method}, std::move(requests))),
         config_.deadline);
     if (deadline_error) {
         co_return std::unexpected(rpc_error(errc::unavailable,
@@ -248,7 +261,7 @@ grpc_client::call(std::string_view method, std::span<const std::byte> request, b
 }
 
 runtime::task<std::vector<std::vector<std::byte>>>
-grpc_client::call_unbounded(std::string method, std::vector<std::byte> request) {
+grpc_client::call_unbounded(std::string method, std::vector<std::vector<std::byte>> requests) {
     auto endpoint = parse_endpoint(config_);
     if (!endpoint) {
         co_return std::unexpected(endpoint.error());
@@ -268,7 +281,7 @@ grpc_client::call_unbounded(std::string method, std::vector<std::byte> request) 
     }
     if (!endpoint->tls) {
         auto stream = boost::capy::any_stream{&socket};
-        co_return co_await exchange(stream, config_, *endpoint, method, request);
+        co_return co_await exchange(stream, config_, *endpoint, method, requests);
     }
 #if defined(BOOST_COROSIO_HAS_OPENSSL)
     auto context = boost::corosio::tls_context{};
@@ -287,7 +300,7 @@ grpc_client::call_unbounded(std::string method, std::vector<std::byte> request) 
         co_return std::unexpected(valid_protocol.error());
     }
     auto stream = boost::capy::any_stream{&secure};
-    co_return co_await exchange(stream, config_, *endpoint, method, request);
+    co_return co_await exchange(stream, config_, *endpoint, method, requests);
 #else
     co_return std::unexpected(rpc_error(
         errc::unsupported, "TLS support is unavailable in this build", endpoint->authority));

@@ -73,8 +73,7 @@ key correctly, so do not require them to.
 **threshold signing** for organisations that need multi-party release approval.
 
 liquid owns the bounded CTAP2 and PIV command layers over operating-system HID and PC/SC
-transports. It does not link libfido2 or OpenSC. This is liquid-bridge decision 21, decided by Steve
-on 2026-09-05. The same transport interfaces accept protocol-level software doubles for CI.
+transports. It does not link libfido2 or OpenSC (decided 2026-09-05). The same transport interfaces accept protocol-level software doubles for CI.
 
 Signed: changes, artifacts, cache entries, images, attestations and deployments —
 by one signing layer, not five.

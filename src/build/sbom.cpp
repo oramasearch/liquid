@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/build.hpp"
 
 #include <algorithm>
@@ -886,6 +888,9 @@ auto analyse_binary(const std::filesystem::path& artifact) -> result<sbom_model>
                                      .kind = "binary/" + format,
                                      .content = *subject,
                                      .inferred = true});
+    if (inspected && inspected->truncated) {
+        model.evidence.push_back("linked-binary-symbols:truncated");
+    }
     const auto strings = printable_strings(bytes);
     struct signature_entry {
         std::string_view name;

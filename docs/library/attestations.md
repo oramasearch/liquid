@@ -16,14 +16,19 @@ profile is invalid, including when its signature is otherwise valid.
 
 `verify_attestation` first reconstructs and verifies the TAAP signature, then verifies the
 registered profile, subject kind, schema, freshness, status evidence, and supplied attribute
-disclosures. Its result is `{ verified, reason }`; `verify(attestation)` remains the compact
-boolean form. Encode also validates the profile schema so invalid records cannot be emitted by
+disclosures. Its result is `{ verified, reason, unknown_signer }`; `verify(attestation)` remains
+the compact boolean form. The signature is checked only through the issuer's identity chain, so
+`verified` means the issuer's identity was verified, not only its signature: an attestation signed
+by the key it carries, with no chain for the issuer it names, sets `unknown_signer` and never
+`verified`. Every caller that trusts `issuer.taap_id` (approved issuers and builders, admission,
+release signers, provenance) relies on that (Steve, 2026-11-14; liquid#429;
+[identity.md](identity.md#every-decision-that-trusts-an-identity-requires-a-verified-chain)). Encode also validates the profile schema so invalid records cannot be emitted by
 the public encoder.
 
 | Profile | Subject kind | Required attributes | Optional attributes | Status policy |
 |---|---|---|---|---|
 | `org_membership/1` | actor | `organization:text`, `role:text` | `display_name:text` | revocable; fresh status evidence no older than 24 hours |
-| `delegation/1` | actor | `scopes:text_list`, `may_publish:boolean`, `may_lease:boolean`, `depth_remaining:unsigned_integer`, `dispatcher:text` | `model:text` | revocable; fresh status evidence no older than 1 hour |
+| `delegation/1` | actor | `scopes:text_list`, `may_publish:boolean`, `may_lease:boolean`, `depth_remaining:unsigned_integer`, `dispatcher:text`, `not_after:unsigned_integer`, `repository:text` | `model:text` | revocable; fresh status evidence no older than 1 hour; valid from `at` to `not_after`, at most 30 days |
 | `authorship/1` | drip | `author:text` | none | none |
 | `review_approval/1` | change | `reviewer:text`, `approved:boolean` | `comment:text*` | none |
 | `slsa_provenance/1` | artifact | typed `buildDefinition` and `runDetails` SLSA v1 predicate | none | none |
@@ -48,12 +53,39 @@ plaintext value. A required field is satisfied by its committed value when the p
 `delegation/1` is the authority carried by an agent session. The issuer is the principal and the
 subject is the agent actor. `scopes` contains repository-relative path globs; `may_publish` and
 `may_lease` are independent capabilities; `depth_remaining` limits further delegation; `model`
-records the optional model label; and `dispatcher` names who launched the agent.
+records the optional model label; `dispatcher` names who launched the agent; and `not_after` is the
+end of its validity, in seconds since the Unix epoch; and `repository` is the hex id of the one
+repository it may be used in.
 
-`validate_delegation(child, parent)` enforces attenuation. Every child scope must be contained by
-a parent scope, a denied capability cannot become allowed, and remaining depth must decrease.
-Session creation also verifies the signature, current revocation evidence, and that the local
-principal issued the delegation. Private writes need no publish capability. Scope and capability
+A delegation is bound to the agent, the dispatcher and the repository (liquid #515). Its subject is
+`delegation_subject(agent)`, the BLAKE3 digest of the agent's TAAP id, and `fork_session` refuses
+it for any other acting agent; `dispatcher` must be its own issuer; and `repository` must be the id
+of the repository the session forks. All three refusals are `errc::unauthorized`.
+
+`check_delegation_window(value, now)` refuses a delegation that has expired (`now` is at or past
+`not_after`) or was issued more than `delegation_clock_skew` (5 minutes) in the future, with
+`errc::unauthorized`, and one without `not_after` or valid for longer than
+`delegation_maximum_lifetime` (30 days), with `errc::invalid_argument` (liquid #514). Revocation is
+answered by a `delegation_status_resolver`, given the delegation and its digest. There is no
+default: a session without a resolver, or whose resolver fails, is refused.
+`local_delegation_status()` reads this machine's list, `$LIQUID_HOME/trust/delegation-revocations`
+(one delegation digest per line, `#` comments), on every call; a missing file revokes nothing and a
+malformed one refuses every delegation.
+
+`validate_delegation(child, parent)` enforces attenuation and links the two (liquid #517). Every
+child scope must equal a parent scope or lie under a parent `P/**` (or `**`) scope; containment is
+decided conservatively, so `src/*.cpp` admits only `src/*.cpp` itself. A denied capability cannot
+become allowed, remaining depth must decrease, the child must be issued by the parent's subject,
+name the same repository, and be issued no earlier and end no later than its parent. A session
+acting under a chain passes the links above its delegation, root first, in
+`session_options::chain`; `fork_session` validates every link against the one before it, binds and
+verifies each, and requires the root to be the principal's. An intermediate link's issuer must have
+its identity chain in this machine's identity store.
+Session creation verifies the window, the signature, the status the caller's resolver returns, and
+that the local principal issued the delegation; every lease and publish checks the window and the
+status again, so a revoked or expired delegation stops a running session. `open_session` runs the
+same checks on the authority stored with the session and refuses one whose digests differ from
+those recorded at fork (liquid #516). Private writes need no publish capability. Scope and capability
 checks happen before lease or base validation, and version-3 signed drips record the delegation
 digest and agent actor. Versions 1 and 2 remain readable.
 
@@ -107,7 +139,7 @@ The policy binds a repository role, threshold, allowed TAAP identities, and expi
 binds one artifact to the complete signed policy. Distinct counting, compromise-time rejection,
 and TUF alignment are specified in [release-approval.md](release-approval.md).
 
-For `max_age`, the verifier rejects a future or old attestation. For `revocable`, the caller
+For `max_age`, the verifier rejects a future or old attestation. Its clock never runs behind the newest signed time the process has accepted that was already past (L-35, liquid#417), so a clock rolled back cannot revive an attestation that has expired. A caller-supplied `now` is used as given. For `revocable`, the caller
 must provide an `attestation_status` that is not revoked and is no older than the profile's
 maximum status age. Status retrieval belongs to the caller, so this library remains usable
 offline and does not choose a network authority.

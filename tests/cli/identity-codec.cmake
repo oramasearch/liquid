@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_IDENTITY_CODEC OR
    NOT DEFINED LIQUID_IDENTITY_HOME)
   message(FATAL_ERROR "cli identity codec test requires its executables and identity home")

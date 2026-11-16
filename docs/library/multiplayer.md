@@ -22,6 +22,7 @@ libliquid, across the local daemon wire, and through `liquid blame`.
 | `session` | The 16-byte session that wrote the line. |
 | `change` | The change that introduced the current line contents. |
 | `agent` | `true` when the operation was published under scoped delegation. |
+| `identity_verified` | `true` only when an identity chain verifies `by`: from the operation that wrote the line, or from the change when no operation is recorded. Otherwise show `unverified_signer_label`, never `by` ([identity](identity.md#every-decision-that-trusts-an-identity-requires-a-verified-chain), liquid#508). |
 
 `repository::attribution(path, change)` returns these records in line order. The path is resolved
 in the requested historical tree. Attribution then follows that file's stable `node_id` through
@@ -43,7 +44,8 @@ diff cannot produce UTF-8 line hunks. An empty file returns an empty vector.
 `daemon::attribution(path, change)` carries the same records over the checkout daemon's
 length-prefixed canonical-CBOR request protocol. The version-1 request names `attribution`, `path`,
 and `change`; the success value contains a `lines` array with all public record fields. Malformed
-or incomplete responses are refused before any result reaches the caller.
+or incomplete responses are refused before any result reaches the caller. A line without
+`identity_verified` (an older daemon) decodes as unverified.
 
 `liquid blame <path>` resolves the current head, starts or attaches to the checkout daemon, and
 prints one line as:
@@ -53,7 +55,10 @@ prints one line as:
 ```
 
 `--json` emits one versioned object with `v`, `path`, `change`, and a `lines` array. Each line has
-`line`, `change`, `session`, `actor`, `agent`, and `text`. This is the stable editor-facing form.
+`line`, `change`, `session`, `actor`, `identity_verified`, `agent`, and `text`. This is the stable
+editor-facing form. An author no identity chain verifies is printed as `actor=signed by an
+unverified key` (JSON `"actor":"signed by an unverified key","identity_verified":false`), never
+as the `taap_id` the record claims (liquid#508).
 
 ## Plugin delivery
 
@@ -84,8 +89,36 @@ build-static/tests/liquid-attribution-measure build-static/attribution-measure-r
 
 These local measurements are context rather than a cross-host benchmark.
 
+## Threat model
+
+Delegated sessions are their own trust boundary. The threat model in
+[`../security/delegation-threat-model.md`](../security/delegation-threat-model.md) (liquid #418)
+lists every must-never for delegation acceptance, session authority, and session join and leave,
+where each is enforced, and the test that proves it. Every must-never holds:
+
+- Only a complete `delegation/1` signed by this repository's own principal starts a session, and
+  publish and lease are refused outside the delegation's scopes and capabilities, at both ends of a
+  move.
+- A delegation has a bounded validity window (`not_after`, at most 30 days), and its revocation
+  status is asked through the caller's `delegation_status_resolver` when the session is forked and
+  before every lease and publish, so a revoked or expired delegation neither starts nor continues a
+  session ([#514](https://github.com/oramasearch/liquid/issues/514)). The CLI uses this machine's
+  revocation list, `$LIQUID_HOME/trust/delegation-revocations`.
+- A delegation is bound to the agent it names, its dispatcher must be its issuer, and it names the
+  one repository it may be used in, so `drip.by` and `liquid blame` name the delegated agent
+  ([#515](https://github.com/oramasearch/liquid/issues/515)). `liquid session start <delegation>
+  --as <agent>` starts a session as that agent.
+- `open_session` verifies stored session authority again exactly as `fork_session` does, with a
+  required `session_open_options::status`, and refuses a stored delegation that differs from the
+  one the session was forked with ([#516](https://github.com/oramasearch/liquid/issues/516)).
+- Sub-delegation containment is conservative, and every link of a chain
+  (`session_options::chain`) is linked, validated and verified when a session acts
+  ([#517](https://github.com/oramasearch/liquid/issues/517)).
+
 ## How to verify
 
+The delegated-session must-nevers are proved by the `Collaboration` and `AttestationRegistry` tests
+named in the [threat model](../security/delegation-threat-model.md#must-nevers).
 `Collaboration.line_attribution_follows_changes_sessions_agents_and_moves` checks human and agent
 line ownership plus rename preservation. `Daemon.attribution_query_crosses_the_wire` compares the
 daemon result with the direct repository query. `cli-blame` checks the text and JSON contracts.

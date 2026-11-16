@@ -1,16 +1,23 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/transparency.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <limits>
 #include <optional>
 #include <span>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 #include <boost/capy/buffers.hpp>
@@ -29,6 +36,13 @@
 
 #include "encoding/cbor.hpp"
 #include "monocypher-ed25519.h"
+
+namespace liquid {
+
+// Defined in src/identity.cpp: `$LIQUID_HOME`, else `$HOME/.liquid`.
+auto liquid_home() -> std::filesystem::path;
+
+} // namespace liquid
 
 namespace liquid::transparency {
 namespace {
@@ -468,6 +482,44 @@ auto parse_consistency(const json& value) -> result<consistency_proof> {
         *old_size, *new_size, *old_root, *new_root, std::move(*path), std::move(*checkpoint)};
 }
 
+auto ascii_lower(std::string_view value) -> std::string {
+    auto output = std::string{value};
+    for (auto& character : output) {
+        character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+    }
+    return output;
+}
+
+// `localhost`, `::1`, or a dotted-quad IPv4 address in 127.0.0.0/8.
+auto loopback_host(std::string_view host) -> bool {
+    const auto lowered = ascii_lower(host);
+    if (lowered == "localhost" || lowered == "::1") {
+        return true;
+    }
+    auto octets = std::array<unsigned, 4>{};
+    auto remaining = std::string_view{lowered};
+    for (auto index = std::size_t{}; index < octets.size(); ++index) {
+        const auto dot = remaining.find('.');
+        const auto part = remaining.substr(0, dot);
+        if (part.empty() || part.size() > 3) {
+            return false;
+        }
+        const auto* end = part.data() + part.size();
+        const auto parsed = std::from_chars(part.data(), end, octets[index]);
+        if (parsed.ec != std::errc{} || parsed.ptr != end || octets[index] > 255) {
+            return false;
+        }
+        const auto last = index + 1 == octets.size();
+        if (last != (dot == std::string_view::npos)) {
+            return false;
+        }
+        if (!last) {
+            remaining.remove_prefix(dot + 1);
+        }
+    }
+    return octets[0] == 127;
+}
+
 auto parse_url(std::string_view input) -> result<parsed_url> {
     auto output = parsed_url{};
     if (input.starts_with("https://")) {
@@ -516,6 +568,13 @@ auto parse_url(std::string_view input) -> result<parsed_url> {
     if (output.host.empty()) {
         return std::unexpected(
             failure(errc::invalid_argument, "HTTP/HTTPS log URL must include a host"));
+    }
+    if (!output.tls && !loopback_host(output.host)) {
+        // Plain HTTP lets anyone on the path forge every response, so it is allowed only to this
+        // machine (liquid#389).
+        return std::unexpected(failure(errc::invalid_argument,
+                                       "HTTP log URL must use https:// unless its host is loopback "
+                                       "(localhost, 127.0.0.0/8 or ::1)"));
     }
     auto port = unsigned{};
     const auto* end = output.port.data() + output.port.size();
@@ -971,9 +1030,16 @@ result<std::vector<hash>> tile::hashes() const {
 
 result<void> checkpoint::verify(const log_trust& trust) const {
     if (entry_tile_width != tile_width || hash_tile_width != tile_width || canonical_body.empty() ||
-        signature.bytes.size() != 64 || signature.signer != trust.identity.taap_id ||
-        trust.identity.algorithm != "ed25519" || trust.identity.public_key.size() != 32) {
+        signature.bytes.size() != 64 || trust.identity.algorithm != "ed25519" ||
+        trust.identity.public_key.size() != 32) {
         return std::unexpected(failure(errc::unauthorized, "invalid checkpoint trust binding"));
+    }
+    if (signature.signer != trust.identity.taap_id) {
+        // A log that presents a key other than the pinned one is refused, never re-pinned
+        // (liquid#389).
+        return std::unexpected(failure(errc::unauthorized,
+                                       "checkpoint is not signed by the pinned log key",
+                                       signature.signer));
     }
     auto calculated_hash = sha256(canonical_body);
     if (!calculated_hash || *calculated_hash != checkpoint_hash) {
@@ -1312,6 +1378,378 @@ runtime::task<checkpoint_trust> trust_checkpoint(repository& destination,
     co_return checkpoint_trust{std::move(value), policy == bootstrap_policy::accept_with_warning};
 }
 
+namespace {
+
+constexpr std::string_view pin_version = "liquid_log_pin/1";
+constexpr std::string_view ed25519_prefix = "taap:1:ed25519:";
+constexpr std::size_t pin_file_limit = 64 * 1024;
+constexpr std::size_t pin_name_limit = 160;
+
+auto key_hex(std::span<const std::byte> value) -> std::string {
+    constexpr std::string_view digits = "0123456789abcdef";
+    auto output = std::string{};
+    output.reserve(value.size() * 2);
+    for (const auto byte : value) {
+        const auto number = std::to_integer<unsigned char>(byte);
+        output.push_back(digits[number >> 4U]);
+        output.push_back(digits[number & 0x0fU]);
+    }
+    return output;
+}
+
+// A pin value is one token of the line format: printable, without spaces.
+auto pin_token(std::string_view value) -> bool {
+    if (value.empty()) {
+        return false;
+    }
+    return std::ranges::all_of(value, [](char character) {
+        const auto code = static_cast<unsigned char>(character);
+        return code > 0x20U && code != 0x7fU;
+    });
+}
+
+auto canonical_log_url(std::string_view log_url) -> result<std::string> {
+    auto parsed = parse_url(log_url);
+    if (!parsed) {
+        return std::unexpected(parsed.error());
+    }
+    auto output = std::string{log_url};
+    while (output.ends_with('/')) {
+        output.pop_back();
+    }
+    return output;
+}
+
+auto pin_failure(std::size_t line, std::string message) -> error {
+    return failure(
+        errc::corrupt, std::move(message), "transparency pin line " + std::to_string(line));
+}
+
+auto split_tokens(std::string_view line) -> std::vector<std::string_view> {
+    auto output = std::vector<std::string_view>{};
+    auto offset = std::size_t{};
+    while (offset < line.size()) {
+        const auto start = line.find_first_not_of(" \t", offset);
+        if (start == std::string_view::npos) {
+            break;
+        }
+        auto end = line.find_first_of(" \t", start);
+        if (end == std::string_view::npos) {
+            end = line.size();
+        }
+        output.push_back(line.substr(start, end - start));
+        offset = end;
+    }
+    return output;
+}
+
+} // namespace
+
+result<void> validate_log_trust(const log_trust& trust) {
+    const auto& identity = trust.identity;
+    if (identity.algorithm != "ed25519" || identity.public_key.size() != 32 ||
+        !identity.taap_id.starts_with(ed25519_prefix) ||
+        identity.taap_id.size() == ed25519_prefix.size() || !pin_token(identity.taap_id)) {
+        return std::unexpected(failure(errc::invalid_argument,
+                                       "pinned log key must be a 32-byte Ed25519 key named by a "
+                                       "taap:1:ed25519: identifier"));
+    }
+    const auto& witnesses = trust.configuration.witnesses;
+    for (auto index = std::size_t{}; index < witnesses.size(); ++index) {
+        if (!pin_token(witnesses[index].endpoint)) {
+            return std::unexpected(failure(errc::invalid_argument,
+                                           "pinned witness endpoint must be one token without "
+                                           "spaces",
+                                           witnesses[index].endpoint));
+        }
+        for (auto other = std::size_t{}; other < index; ++other) {
+            if (witnesses[other].public_key == witnesses[index].public_key) {
+                return std::unexpected(failure(errc::invalid_argument,
+                                               "pinned witness key appears twice",
+                                               witnesses[index].endpoint));
+            }
+        }
+    }
+    if (trust.configuration.witness_threshold > witnesses.size()) {
+        return std::unexpected(
+            failure(errc::invalid_argument,
+                    "pinned witness threshold is larger than the number of pinned witnesses",
+                    std::to_string(trust.configuration.witness_threshold) + "/" +
+                        std::to_string(witnesses.size())));
+    }
+    return {};
+}
+
+result<std::string> log_trust_file_name(std::string_view log_url) {
+    auto url = canonical_log_url(log_url);
+    if (!url) {
+        return std::unexpected(url.error());
+    }
+    auto rest = std::string_view{*url};
+    const auto tls = rest.starts_with("https://");
+    rest.remove_prefix(tls ? 8 : 7);
+    auto name = std::string{tls ? "" : "http-"};
+    for (const auto character : rest) {
+        const auto code = static_cast<unsigned char>(character);
+        const auto kept = std::isalnum(code) != 0 || character == '.' || character == '-';
+        name.push_back(kept ? character : '_');
+    }
+    if (name.front() == '.') {
+        name.front() = '_';
+    }
+    if (name.size() > pin_name_limit) {
+        // Long URLs keep a readable prefix plus a digest of the whole URL, so the name stays
+        // within file-system limits and stays distinct. The pin's `log` line still names the URL.
+        auto digest = sha256(to_bytes(*url));
+        if (!digest) {
+            return std::unexpected(digest.error());
+        }
+        name.resize(pin_name_limit);
+        name += '-';
+        name += hex(*digest).substr(0, 16);
+    }
+    return name;
+}
+
+result<std::filesystem::path> log_trust_path(std::string_view log_url) {
+    auto name = log_trust_file_name(log_url);
+    if (!name) {
+        return std::unexpected(name.error());
+    }
+    return liquid_home() / "trust" / "transparency" / *name;
+}
+
+result<std::string> format_log_trust(std::string_view log_url, const log_trust& trust) {
+    auto url = canonical_log_url(log_url);
+    if (!url) {
+        return std::unexpected(url.error());
+    }
+    auto usable = validate_log_trust(trust);
+    if (!usable) {
+        return std::unexpected(usable.error());
+    }
+    auto output = std::string{"# liquid transparency-log pin (liquid#389). Local configuration "
+                              "only: never copied from a\n# repository, a clone, a sync peer or "
+                              "the log itself.\n"};
+    output += "version ";
+    output += pin_version;
+    output += "\nlog ";
+    output += *url;
+    output += "\nkey ";
+    output += trust.identity.taap_id;
+    output += ' ';
+    output += key_hex(trust.identity.public_key);
+    output += '\n';
+    for (const auto& pinned : trust.configuration.witnesses) {
+        output += "witness ";
+        output += pinned.endpoint;
+        output += ' ';
+        output += key_hex(pinned.public_key);
+        output += '\n';
+    }
+    output += "threshold ";
+    output += std::to_string(trust.configuration.witness_threshold);
+    output += '\n';
+    return output;
+}
+
+result<log_trust> parse_log_trust(std::string_view log_url, std::string_view text) {
+    auto url = canonical_log_url(log_url);
+    if (!url) {
+        return std::unexpected(url.error());
+    }
+    if (text.size() > pin_file_limit) {
+        return std::unexpected(failure(errc::corrupt, "transparency pin file is too large"));
+    }
+    auto output = log_trust{};
+    output.identity.algorithm = "ed25519";
+    auto seen_version = false;
+    auto seen_log = false;
+    auto seen_key = false;
+    auto seen_threshold = false;
+    auto number = std::size_t{};
+    auto offset = std::size_t{};
+    while (offset <= text.size()) {
+        auto end = text.find('\n', offset);
+        if (end == std::string_view::npos) {
+            end = text.size();
+        }
+        auto line = text.substr(offset, end - offset);
+        offset = end + 1;
+        ++number;
+        if (line.ends_with('\r')) {
+            line.remove_suffix(1);
+        }
+        const auto tokens = split_tokens(line);
+        if (tokens.empty() || tokens.front().starts_with('#')) {
+            continue;
+        }
+        const auto directive = tokens.front();
+        if (directive == "version") {
+            if (seen_version || tokens.size() != 2 || tokens[1] != pin_version) {
+                return std::unexpected(
+                    pin_failure(number, "expected one line `version liquid_log_pin/1`"));
+            }
+            seen_version = true;
+        } else if (directive == "log") {
+            if (seen_log || tokens.size() != 2) {
+                return std::unexpected(pin_failure(number, "expected one line `log <url>`"));
+            }
+            auto named = canonical_log_url(tokens[1]);
+            if (!named || *named != *url) {
+                return std::unexpected(pin_failure(
+                    number, "pin names log " + std::string{tokens[1]} + ", not " + *url));
+            }
+            seen_log = true;
+        } else if (directive == "key") {
+            if (seen_key || tokens.size() != 3) {
+                return std::unexpected(
+                    pin_failure(number, "expected one line `key <taap-id> <public-key-hex>`"));
+            }
+            auto decoded = decode_hex(tokens[2]);
+            if (!decoded) {
+                return std::unexpected(
+                    pin_failure(number, "log key must be 64 lowercase hex characters"));
+            }
+            output.identity.taap_id = std::string{tokens[1]};
+            output.identity.public_key.assign(decoded->begin(), decoded->end());
+            seen_key = true;
+        } else if (directive == "witness") {
+            if (tokens.size() != 3) {
+                return std::unexpected(
+                    pin_failure(number, "expected `witness <endpoint> <public-key-hex>`"));
+            }
+            auto decoded = decode_hex(tokens[2]);
+            if (!decoded) {
+                return std::unexpected(
+                    pin_failure(number, "witness key must be 64 lowercase hex characters"));
+            }
+            output.configuration.witnesses.push_back({std::string{tokens[1]}, *decoded});
+        } else if (directive == "threshold") {
+            if (seen_threshold || tokens.size() != 2) {
+                return std::unexpected(
+                    pin_failure(number, "expected one line `threshold <decimal count>`"));
+            }
+            auto value = std::uint64_t{};
+            const auto* first = tokens[1].data();
+            const auto* last = first + tokens[1].size();
+            const auto parsed = std::from_chars(first, last, value);
+            if (parsed.ec != std::errc{} || parsed.ptr != last) {
+                return std::unexpected(
+                    pin_failure(number, "expected one line `threshold <decimal count>`"));
+            }
+            output.configuration.witness_threshold = value;
+            seen_threshold = true;
+        } else {
+            return std::unexpected(
+                pin_failure(number, "unknown directive " + std::string{directive}));
+        }
+    }
+    if (!seen_version || !seen_log || !seen_key || !seen_threshold) {
+        return std::unexpected(failure(errc::corrupt,
+                                       "transparency pin needs version, log, key and threshold "
+                                       "lines"));
+    }
+    auto usable = validate_log_trust(output);
+    if (!usable) {
+        return std::unexpected(usable.error());
+    }
+    return output;
+}
+
+runtime::task<log_trust> load_log_trust(std::string log_url) {
+    auto path = log_trust_path(log_url);
+    if (!path) {
+        co_return std::unexpected(path.error());
+    }
+    auto text = co_await runtime::offload([file = *path]() -> std::optional<std::string> {
+        auto code = std::error_code{};
+        const auto present = std::filesystem::exists(file, code);
+        if (code) {
+            throw std::filesystem::filesystem_error("cannot read transparency pin", file, code);
+        }
+        if (!present) {
+            return std::nullopt;
+        }
+        auto stream = std::ifstream{file, std::ios::binary};
+        if (!stream) {
+            throw std::filesystem::filesystem_error(
+                "cannot open transparency pin", file, std::make_error_code(std::errc::io_error));
+        }
+        auto output = std::string{};
+        auto buffer = std::array<char, 4096>{};
+        while (stream && output.size() <= pin_file_limit) {
+            stream.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+            output.append(buffer.data(), static_cast<std::size_t>(stream.gcount()));
+        }
+        if (stream.bad()) {
+            throw std::filesystem::filesystem_error(
+                "cannot read transparency pin", file, std::make_error_code(std::errc::io_error));
+        }
+        return output;
+    });
+    if (!text) {
+        co_return std::unexpected(text.error());
+    }
+    if (!*text) {
+        // Fail closed: without a pin there is nothing to check the log's key or witnesses against.
+        co_return std::unexpected(failure(errc::not_configured,
+                                          "no transparency-log pin for " + log_url + "; create " +
+                                              path->string() + " (`liquid log trust " + log_url +
+                                              "` shows the log's key and witnesses to confirm)",
+                                          path->string()));
+    }
+    auto parsed = parse_log_trust(log_url, **text);
+    if (!parsed) {
+        auto cause = parsed.error();
+        cause.context = path->string() + ": " + cause.context;
+        co_return std::unexpected(std::move(cause));
+    }
+    co_return std::move(*parsed);
+}
+
+runtime::task<void> save_log_trust(std::string log_url, log_trust trust) {
+    auto path = log_trust_path(log_url);
+    if (!path) {
+        co_return std::unexpected(path.error());
+    }
+    auto text = format_log_trust(log_url, trust);
+    if (!text) {
+        co_return std::unexpected(text.error());
+    }
+    auto created = co_await runtime::offload([file = *path, body = std::move(*text)]() -> bool {
+        std::filesystem::create_directories(file.parent_path());
+        // "x" refuses an existing file, so a pin is never replaced behind the operator's back.
+        auto* handle = std::fopen(file.string().c_str(), "wbx");
+        if (handle == nullptr) {
+            if (errno == EEXIST) {
+                return false;
+            }
+            throw std::filesystem::filesystem_error(
+                "cannot create transparency pin",
+                file,
+                std::error_code{errno, std::generic_category()});
+        }
+        const auto written = std::fwrite(body.data(), 1, body.size(), handle);
+        const auto closed = std::fclose(handle);
+        if (written != body.size() || closed != 0) {
+            throw std::filesystem::filesystem_error(
+                "cannot write transparency pin", file, std::make_error_code(std::errc::io_error));
+        }
+        return true;
+    });
+    if (!created) {
+        co_return std::unexpected(created.error());
+    }
+    if (!*created) {
+        co_return std::unexpected(failure(errc::already_exists,
+                                          "a transparency-log pin already exists for " + log_url +
+                                              "; remove " + path->string() + " to pin it again",
+                                          path->string()));
+    }
+    co_return result<void>{};
+}
+
 struct log_client::impl {
     log_source* source{};
     std::vector<tile> tile_cache;
@@ -1322,16 +1760,11 @@ log_client::~log_client() = default;
 log_client::log_client(log_client&&) noexcept = default;
 log_client& log_client::operator=(log_client&&) noexcept = default;
 
-runtime::task<checkpoint> log_client::current_checkpoint() {
-    auto identity = co_await impl_->source->identity();
-    auto configuration = co_await impl_->source->configuration();
-    if (!identity || !configuration) {
-        co_return std::unexpected(!identity ? identity.error() : configuration.error());
-    }
-    co_return co_await current_checkpoint({*identity, *configuration});
-}
-
 runtime::task<checkpoint> log_client::current_checkpoint(const log_trust& trust) {
+    auto usable = validate_log_trust(trust);
+    if (!usable) {
+        co_return std::unexpected(usable.error());
+    }
     auto value = co_await impl_->source->current_checkpoint();
     if (!value) {
         co_return std::unexpected(value.error());
@@ -1495,18 +1928,13 @@ runtime::task<checkpoint> log_client::verify_inclusion(std::vector<std::byte> at
 
 runtime::task<checkpoint_trust> log_client::verify_inclusion(repository& destination,
                                                              std::vector<std::byte> attestation,
+                                                             const log_trust& trust,
                                                              bootstrap_policy policy) {
     auto canonical = verify_canonical_attestation(attestation);
     if (!canonical) {
         co_return std::unexpected(canonical.error());
     }
-    auto identity = co_await impl_->source->identity();
-    auto configuration = co_await impl_->source->configuration();
-    if (!identity || !configuration) {
-        co_return std::unexpected(!identity ? identity.error() : configuration.error());
-    }
-    auto selected = co_await verify_inclusion(
-        std::move(attestation), log_trust{std::move(*identity), std::move(*configuration)});
+    auto selected = co_await verify_inclusion(std::move(attestation), trust);
     if (!selected) {
         co_return std::unexpected(selected.error());
     }
@@ -1515,8 +1943,9 @@ runtime::task<checkpoint_trust> log_client::verify_inclusion(repository& destina
 }
 
 runtime::task<checkpoint_trust> log_client::verify_consistency(repository& destination,
+                                                               const log_trust& trust,
                                                                bootstrap_policy policy) {
-    auto selected = co_await current_checkpoint();
+    auto selected = co_await current_checkpoint(trust);
     if (!selected) {
         co_return std::unexpected(selected.error());
     }
@@ -1552,8 +1981,8 @@ runtime::task<checkpoint_trust> log_client::verify_consistency(repository& desti
     co_return checkpoint_trust{std::move(*selected), false};
 }
 
-runtime::task<identity_scan> log_client::scan(std::string identity) {
-    auto selected = co_await current_checkpoint();
+runtime::task<identity_scan> log_client::scan(std::string identity, const log_trust& trust) {
+    auto selected = co_await current_checkpoint(trust);
     if (!selected) {
         co_return std::unexpected(selected.error());
     }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "subject_index.hpp"
 
 #include <algorithm>

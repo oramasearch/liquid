@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/binary/elf.hpp"
 
 #include <algorithm>
@@ -39,22 +41,61 @@ auto integer(std::span<const std::byte> bytes, std::uint64_t offset, bool little
     return output;
 }
 
-auto text(std::span<const std::byte> bytes, std::uint64_t offset, std::uint64_t limit)
-    -> std::optional<std::string> {
+// A local limit signal unwinds nested version/DWARF parsing to the one inspector boundary.
+// Charges are cumulative, including temporary and repeated copies, and are never refunded.
+struct name_limit {};
+
+struct name_budget {
+    image& output;
+    std::uint64_t remaining;
+    static constexpr auto maximum_length = std::size_t{64} * 1024;
+
+    auto charge(std::uint64_t bytes) -> void {
+        if (bytes > remaining) {
+            throw name_limit{};
+        }
+        remaining -= bytes;
+        output.symbol_bytes += bytes;
+    }
+
+    auto copy(std::string_view value) -> std::string {
+        if (value.size() > maximum_length) {
+            throw name_limit{};
+        }
+        charge(sizeof(std::string) + value.size());
+        return std::string{value};
+    }
+
+    auto append(std::string& target, std::string_view value) -> void {
+        if (value.size() > maximum_length - target.size()) {
+            throw name_limit{};
+        }
+        charge(value.size());
+        target.append(value);
+    }
+};
+
+auto text(std::span<const std::byte> bytes,
+          std::uint64_t offset,
+          std::uint64_t limit,
+          name_budget& budget) -> std::optional<std::string> {
     if (offset >= bytes.size()) {
         return std::nullopt;
     }
     const auto available = std::min<std::uint64_t>(limit, bytes.size() - offset);
-    auto output = std::string{};
-    for (auto index = std::uint64_t{}; index < available; ++index) {
-        const auto value =
-            std::to_integer<unsigned char>(bytes[static_cast<std::size_t>(offset + index)]);
-        if (value == 0) {
-            return output;
+    // Scan only what could be retained, plus one byte for an exact-limit terminator.
+    const auto maximum = std::min<std::uint64_t>(name_budget::maximum_length, budget.remaining);
+    const auto input = bytes.subspan(static_cast<std::size_t>(offset),
+                                     static_cast<std::size_t>(std::min(available, maximum + 1)));
+    const auto end = std::ranges::find(input, std::byte{});
+    if (end == input.end()) {
+        if (available > maximum) {
+            throw name_limit{};
         }
-        output.push_back(static_cast<char>(value));
+        return std::nullopt;
     }
-    return std::nullopt;
+    return budget.copy({reinterpret_cast<const char*>(input.data()),
+                        static_cast<std::size_t>(end - input.begin())});
 }
 
 auto slice(std::span<const std::byte> bytes, std::uint64_t offset, std::uint64_t size)
@@ -135,7 +176,8 @@ auto section_bytes(std::span<const std::byte> bytes, const elf_section* value)
 
 auto version_names(std::span<const std::byte> bytes,
                    std::span<const elf_section> sections,
-                   bool little) -> std::map<std::uint16_t, std::string> {
+                   bool little,
+                   name_budget& budget) -> std::map<std::uint16_t, std::string> {
     auto output = std::map<std::uint16_t, std::string>{};
     const auto* dynstr_section = named_section(sections, ".dynstr");
     const auto dynstr = section_bytes(bytes, dynstr_section);
@@ -155,7 +197,8 @@ auto version_names(std::span<const std::byte> bytes,
         const auto name_offset =
             integer<std::uint32_t>(definition_bytes, offset + *auxiliary, little);
         if (name_offset) {
-            if (auto name = text(dynstr, *name_offset, dynstr.size() - *name_offset)) {
+            if (auto name = text(dynstr, *name_offset, dynstr.size(), budget)) {
+                budget.charge(sizeof(decltype(output)::value_type) + 4 * sizeof(void*));
                 output[*index & 0x7fffU] = std::move(*name);
             }
         }
@@ -183,7 +226,8 @@ auto version_names(std::span<const std::byte> bytes,
             if (!version_index || !name_offset || !entry_next) {
                 break;
             }
-            if (auto name = text(dynstr, *name_offset, dynstr.size() - *name_offset)) {
+            if (auto name = text(dynstr, *name_offset, dynstr.size(), budget)) {
+                budget.charge(sizeof(decltype(output)::value_type) + 4 * sizeof(void*));
                 output[*version_index & 0x7fffU] = std::move(*name);
             }
             if (*entry_next == 0) {
@@ -260,8 +304,10 @@ struct dwarf_abbreviation {
 
 using abbreviation_table = std::map<std::uint64_t, dwarf_abbreviation>;
 
-auto abbreviations(std::span<const std::byte> bytes, std::uint64_t start, bool little)
-    -> abbreviation_table {
+auto abbreviations(std::span<const std::byte> bytes,
+                   std::uint64_t start,
+                   bool little,
+                   name_budget& budget) -> abbreviation_table {
     auto cursor = dwarf_cursor{bytes, start, little};
     auto output = abbreviation_table{};
     while (cursor.offset < bytes.size()) {
@@ -292,8 +338,10 @@ auto abbreviations(std::span<const std::byte> bytes, std::uint64_t start, bool l
                 }
                 implicit = *parsed;
             }
+            budget.charge(sizeof(dwarf_attribute));
             value.attributes.push_back({*name, *form, implicit});
         }
+        budget.charge(sizeof(abbreviation_table::value_type) + 4 * sizeof(void*));
         output.emplace(*code, std::move(value));
     }
     return output;
@@ -304,9 +352,9 @@ struct dwarf_value {
     std::optional<std::string> string;
 };
 
-auto dwarf_string(std::span<const std::byte> section, std::uint64_t offset)
+auto dwarf_string(std::span<const std::byte> section, std::uint64_t offset, name_budget& budget)
     -> std::optional<std::string> {
-    return text(section, offset, section.size() - std::min<std::uint64_t>(offset, section.size()));
+    return text(section, offset, section.size(), budget);
 }
 
 auto form_value(dwarf_cursor& cursor,
@@ -318,7 +366,8 @@ auto form_value(dwarf_cursor& cursor,
                 std::span<const std::byte> line_str,
                 std::span<const std::byte> str_offsets,
                 std::uint64_t str_offsets_base,
-                std::int64_t implicit) -> std::optional<dwarf_value> {
+                std::int64_t implicit,
+                name_budget& budget) -> std::optional<dwarf_value> {
     if (form == 0x16) {
         const auto actual = cursor.uleb();
         return actual ? form_value(cursor,
@@ -330,7 +379,8 @@ auto form_value(dwarf_cursor& cursor,
                                    line_str,
                                    str_offsets,
                                    str_offsets_base,
-                                   implicit)
+                                   implicit,
+                                   budget)
                       : std::nullopt;
     }
     auto fixed = [&](std::uint8_t size) -> std::optional<std::uint64_t> {
@@ -348,7 +398,7 @@ auto form_value(dwarf_cursor& cursor,
         }
     };
     if (form == 0x08) {
-        auto value = text(cursor.bytes, cursor.offset, cursor.bytes.size() - cursor.offset);
+        auto value = text(cursor.bytes, cursor.offset, cursor.bytes.size() - cursor.offset, budget);
         if (!value) {
             return std::nullopt;
         }
@@ -357,8 +407,8 @@ auto form_value(dwarf_cursor& cursor,
     }
     if (form == 0x0e || form == 0x1f) {
         const auto offset = fixed(offset_size);
-        const auto value =
-            offset ? dwarf_string(form == 0x0e ? debug_str : line_str, *offset) : std::nullopt;
+        auto value = offset ? dwarf_string(form == 0x0e ? debug_str : line_str, *offset, budget)
+                            : std::nullopt;
         return value ? std::optional<dwarf_value>{dwarf_value{{}, std::move(*value)}}
                      : std::nullopt;
     }
@@ -371,7 +421,7 @@ auto form_value(dwarf_cursor& cursor,
                                       : std::optional<std::uint64_t>{integer<std::uint32_t>(
                                             str_offsets, at, cursor.little)})
                   : std::nullopt;
-        const auto value = string_offset ? dwarf_string(debug_str, *string_offset) : std::nullopt;
+        auto value = string_offset ? dwarf_string(debug_str, *string_offset, budget) : std::nullopt;
         return value ? std::optional<dwarf_value>{dwarf_value{{}, std::move(*value)}}
                      : std::nullopt;
     }
@@ -459,41 +509,56 @@ struct dwarf_node {
 
 auto type_name(std::uint64_t id,
                const std::unordered_map<std::uint64_t, dwarf_node>& nodes,
+               name_budget& budget,
                std::size_t depth = 0) -> std::string {
     if (depth > 16) {
-        return "?";
+        return budget.copy("?");
     }
     const auto found = nodes.find(id);
     if (found == nodes.end()) {
-        return "?";
+        return budget.copy("?");
     }
     const auto& node = found->second;
-    const auto nested = node.type ? type_name(*node.type, nodes, depth + 1) : std::string{"void"};
+    auto nested = node.type ? type_name(*node.type, nodes, budget, depth + 1) : budget.copy("void");
     switch (node.tag) {
     case 0x0f:
-        return nested + "*";
+        budget.append(nested, "*");
+        return nested;
     case 0x10:
-        return nested + "&";
+        budget.append(nested, "&");
+        return nested;
     case 0x26:
-        return "const " + nested;
-    case 0x35:
-        return "volatile " + nested;
+    case 0x35: {
+        auto output = budget.copy(node.tag == 0x26 ? "const " : "volatile ");
+        budget.append(output, nested);
+        return output;
+    }
     case 0x16:
-        return node.name ? *node.name + "=" + nested : nested;
+        if (node.name) {
+            auto output = budget.copy(*node.name);
+            budget.append(output, "=");
+            budget.append(output, nested);
+            return output;
+        }
+        return nested;
     case 0x13:
-        return "struct " + node.name.value_or("<anonymous>") +
-               (node.byte_size ? "[" + std::to_string(*node.byte_size) + "]" : "");
     case 0x02:
-        return "class " + node.name.value_or("<anonymous>") +
-               (node.byte_size ? "[" + std::to_string(*node.byte_size) + "]" : "");
     case 0x17:
-        return "union " + node.name.value_or("<anonymous>") +
-               (node.byte_size ? "[" + std::to_string(*node.byte_size) + "]" : "");
-    case 0x04:
-        return "enum " + node.name.value_or("<anonymous>") +
-               (node.byte_size ? "[" + std::to_string(*node.byte_size) + "]" : "");
+    case 0x04: {
+        auto output = budget.copy(node.tag == 0x13   ? "struct "
+                                  : node.tag == 0x02 ? "class "
+                                  : node.tag == 0x17 ? "union "
+                                                     : "enum ");
+        budget.append(output, node.name ? std::string_view{*node.name} : "<anonymous>");
+        if (node.byte_size) {
+            budget.append(output, "[");
+            budget.append(output, std::to_string(*node.byte_size));
+            budget.append(output, "]");
+        }
+        return output;
+    }
     default:
-        return node.name.value_or(nested);
+        return node.name ? budget.copy(*node.name) : std::move(nested);
     }
 }
 
@@ -520,7 +585,8 @@ struct dwarf_metadata {
 
 auto dwarf_records(std::span<const std::byte> bytes,
                    std::span<const elf_section> sections,
-                   bool little) -> dwarf_metadata {
+                   bool little,
+                   name_budget& budget) -> dwarf_metadata {
     const auto info = section_bytes(bytes, named_section(sections, ".debug_info"));
     const auto abbrev = section_bytes(bytes, named_section(sections, ".debug_abbrev"));
     const auto debug_str = section_bytes(bytes, named_section(sections, ".debug_str"));
@@ -572,7 +638,7 @@ auto dwarf_records(std::span<const std::byte> bytes,
         if (!abbrev_offset) {
             break;
         }
-        const auto table = abbreviations(abbrev, *abbrev_offset, little);
+        const auto table = abbreviations(abbrev, *abbrev_offset, little, budget);
         auto parents = std::vector<std::uint64_t>{};
         auto str_offsets_base = str_offsets.size() >= 8 ? std::uint64_t{8} : std::uint64_t{};
         while (cursor.offset < unit_end) {
@@ -604,7 +670,8 @@ auto dwarf_records(std::span<const std::byte> bytes,
                                         line_str,
                                         str_offsets,
                                         str_offsets_base,
-                                        attribute.implicit);
+                                        attribute.implicit,
+                                        budget);
                 if (!value) {
                     valid = false;
                     break;
@@ -625,16 +692,21 @@ auto dwarf_records(std::span<const std::byte> bytes,
                 cursor.offset = unit_end;
                 break;
             }
+            budget.charge(sizeof(decltype(nodes)::value_type) + 4 * sizeof(void*));
             if (!parents.empty()) {
+                budget.charge(sizeof(std::uint64_t));
                 nodes[parents.back()].children.push_back(node_offset);
             }
             if (node.tag == 0x2e) {
+                budget.charge(sizeof(std::uint64_t));
                 functions.push_back(node_offset);
             } else if (node.tag == 0x34) {
+                budget.charge(sizeof(std::uint64_t));
                 objects.push_back(node_offset);
             }
             nodes[node_offset] = std::move(node);
             if (definition->second.children) {
+                budget.charge(sizeof(std::uint64_t));
                 parents.push_back(node_offset);
             }
         }
@@ -643,12 +715,12 @@ auto dwarf_records(std::span<const std::byte> bytes,
     auto output = dwarf_metadata{};
     for (const auto id : functions) {
         const auto& node = nodes[id];
-        const auto name = node.linkage_name ? node.linkage_name : node.name;
+        const auto& name = node.linkage_name ? node.linkage_name : node.name;
         if (!name) {
             continue;
         }
-        auto signature = node.type ? type_name(*node.type, nodes) : std::string{"void"};
-        signature += " (";
+        auto signature = node.type ? type_name(*node.type, nodes, budget) : budget.copy("void");
+        budget.append(signature, " (");
         auto first = true;
         for (const auto child_id : node.children) {
             const auto& child = nodes[child_id];
@@ -656,29 +728,33 @@ auto dwarf_records(std::span<const std::byte> bytes,
                 continue;
             }
             if (!first) {
-                signature += ", ";
+                budget.append(signature, ", ");
             }
-            signature +=
-                child.tag == 0x18 ? "..." : (child.type ? type_name(*child.type, nodes) : "?");
+            if (child.tag == 0x18 || !child.type) {
+                budget.append(signature, child.tag == 0x18 ? "..." : "?");
+            } else {
+                budget.append(signature, type_name(*child.type, nodes, budget));
+            }
             first = false;
         }
-        signature += ")";
-        output.signatures[*name] = std::move(signature);
+        budget.append(signature, ")");
+        budget.charge(sizeof(decltype(output.signatures)::value_type) + 4 * sizeof(void*));
+        output.signatures[budget.copy(*name)] = std::move(signature);
     }
     for (const auto id : objects) {
         const auto& node = nodes[id];
-        const auto name = node.linkage_name ? node.linkage_name : node.name;
+        const auto& name = node.linkage_name ? node.linkage_name : node.name;
         const auto size = node.type ? type_size(*node.type, nodes) : std::nullopt;
         if (name && size) {
-            output.object_sizes[*name] = *size;
+            budget.charge(sizeof(decltype(output.object_sizes)::value_type) + 4 * sizeof(void*));
+            output.object_sizes[budget.copy(*name)] = *size;
         }
     }
     return output;
 }
 
-} // namespace
-
-auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
+auto inspect_elf_impl(std::span<const std::byte> bytes, image& output, name_budget& budget)
+    -> result<void> {
     if (bytes.size() < 52 || bytes[0] != std::byte{0x7f} || bytes[1] != std::byte{'E'} ||
         bytes[2] != std::byte{'L'} || bytes[3] != std::byte{'F'}) {
         return std::unexpected(malformed("invalid ELF header"));
@@ -717,7 +793,10 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
     if (!names) {
         return std::unexpected(malformed("invalid ELF section-name table"));
     }
+    output.architecture = architecture(*machine);
+    output.shared_library = *type == 3;
     auto sections = std::vector<elf_section>{};
+    budget.charge(sizeof(elf_section) * *count);
     sections.reserve(*count);
     for (auto index = std::uint16_t{}; index < *count; ++index) {
         const auto at = *section_offset + static_cast<std::uint64_t>(*entry_size) * index;
@@ -743,7 +822,7 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
             !entry || *name_offset >= names->size()) {
             return std::unexpected(malformed("invalid ELF section header"));
         }
-        auto name = text(*names, *name_offset, names->size() - *name_offset);
+        auto name = text(*names, *name_offset, names->size() - *name_offset, budget);
         if (!name || (*section_type != 8 && !slice(bytes, *offset, *size))) {
             return std::unexpected(malformed("ELF section lies outside the file"));
         }
@@ -752,10 +831,8 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
              *link,
              *entry});
     }
-    auto output = image{.kind = image_kind::elf,
-                        .architecture = architecture(*machine),
-                        .shared_library = *type == 3};
     for (const auto& value : sections) {
+        budget.charge(sizeof(section) + value.name.size());
         output.sections.push_back(static_cast<const section&>(value));
     }
     auto printable = std::string{};
@@ -763,6 +840,7 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
         if (printable.size() >= 4 && output.symbol_names.size() < 256 &&
             (printable.starts_with('_') || printable.find("::") != std::string::npos ||
              printable.starts_with("GLIBC"))) {
+            budget.charge(sizeof(std::string) + printable.size());
             output.symbol_names.push_back(printable);
         }
         printable.clear();
@@ -778,9 +856,9 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
         }
     }
     finish_printable();
-    const auto versions = version_names(bytes, sections, little);
+    const auto versions = version_names(bytes, sections, little, budget);
     const auto version_table = section_bytes(bytes, named_section(sections, ".gnu.version"));
-    const auto dwarf = dwarf_records(bytes, sections, little);
+    const auto dwarf = dwarf_records(bytes, sections, little, budget);
     const auto dynamic_symbols = std::ranges::find(sections, sht_dynsym, &elf_section::type);
     if (dynamic_symbols != sections.end() && dynamic_symbols->link < sections.size()) {
         const auto symbols = section_bytes(bytes, &*dynamic_symbols);
@@ -809,9 +887,7 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
                 (binding != 1 && binding != 2 && binding != 10) || (*other & 3U) == 2) {
                 continue;
             }
-            auto name = text(strings,
-                             *name_offset,
-                             strings.size() - std::min<std::size_t>(*name_offset, strings.size()));
+            auto name = text(strings, *name_offset, strings.size(), budget);
             if (!name || name->empty()) {
                 continue;
             }
@@ -821,13 +897,13 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
                 if (version_index) {
                     const auto found = versions.find(*version_index & 0x7fffU);
                     if (found != versions.end()) {
-                        version = found->second;
+                        version = budget.copy(found->second);
                     }
                 }
             }
             auto signature = std::optional<std::string>{};
             if (const auto found = dwarf.signatures.find(*name); found != dwarf.signatures.end()) {
-                signature = found->second;
+                signature = budget.copy(found->second);
             }
             auto symbol_size = *size;
             if (symbol_type == 1 && symbol_size == 0) {
@@ -836,6 +912,7 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
                     symbol_size = found->second;
                 }
             }
+            budget.charge(sizeof(symbol) + 32);
             output.exported_symbols.push_back(
                 {std::move(*name),
                  std::move(version),
@@ -867,23 +944,46 @@ auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
             if (*tag != dt_needed && *tag != dt_soname && *tag != dt_rpath && *tag != dt_runpath) {
                 continue;
             }
-            auto name = text(
-                strings, *value, strings.size() - std::min<std::size_t>(*value, strings.size()));
+            auto name = text(strings, *value, strings.size(), budget);
             if (!name) {
                 continue;
             }
+            budget.charge(sizeof(path_reference));
             const auto string_offset = sections[dynamic->link].offset + *value;
             if (*tag == dt_soname) {
-                output.path_references.push_back({path_kind::install_name, *name, string_offset});
+                output.path_references.push_back(
+                    {path_kind::install_name, budget.copy(*name), string_offset});
                 output.install_name = std::move(*name);
             } else if (*tag == dt_needed) {
-                output.path_references.push_back({path_kind::needed_library, *name, string_offset});
+                output.path_references.push_back(
+                    {path_kind::needed_library, budget.copy(*name), string_offset});
+                budget.charge(sizeof(std::string));
                 output.needed_libraries.push_back(std::move(*name));
             } else {
                 output.path_references.push_back(
                     {path_kind::runtime_search_path, std::move(*name), string_offset});
             }
         }
+    }
+    return {};
+}
+
+} // namespace
+
+auto inspect_elf(std::span<const std::byte> bytes) -> result<image> {
+    return inspect_elf(bytes, 16ULL << 20U);
+}
+
+auto inspect_elf(std::span<const std::byte> bytes, std::uint64_t byte_budget) -> result<image> {
+    auto output = image{.kind = image_kind::elf};
+    auto budget = name_budget{output, byte_budget};
+    try {
+        auto parsed = inspect_elf_impl(bytes, output, budget);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+    } catch (const name_limit&) {
+        output.truncated = true;
     }
     std::ranges::sort(output.exported_symbols, {}, &symbol::name);
     std::ranges::sort(output.needed_libraries);

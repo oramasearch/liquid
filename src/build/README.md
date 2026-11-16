@@ -32,9 +32,13 @@ JSON. `abi.cpp` offloads linked-binary extraction, compares an output with the n
 descriptor for its path, stores `abi/1`, and issues `abi_compatibility/1`.
 `content.cpp` creates each result's canonical output tree, folds named upstream trees below
 `deps/<name>/`, imports signed result graphs between sibling project caches, and enumerates the
-signature-valid input/output claims consumed by dependency resolution. `normalise.cpp` classifies
-collected artifacts and applies directory-mode, deterministic-archive, and hash-based Python
-bytecode rules on the runtime compute pool before storage.
+signature-valid input/output claims consumed by dependency resolution. `normalise.cpp` collects
+declared outputs for `executor.cpp` and wrap verification: it opens every path component below the
+output root with `O_NOFOLLOW`, refuses a symbolic link or special file before reading it, and writes
+each regular file's bytes from that descriptor to a parent-owned staged copy, which is what storage
+reads (liquid #425). It classifies collected artifacts and applies directory-mode,
+deterministic-archive, and hash-based Python bytecode rules to the staged bytes on the runtime
+compute pool; an action's output is never rewritten in place.
 `relocation.cpp` scans materialised or repository-backed install trees on the runtime compute pool,
 uses the binary readers for runtime paths, and reports stable file offsets. `wrap.cpp` invokes it
 before install-result publication and records an explicit waiver in the saved scheduling reason.
@@ -54,6 +58,8 @@ provenance and SBOMs and owns output-path lookup.
 components, writes SPDX 2.3 and CycloneDX 1.5 from one model, stores signed `sbom/1` claims, and
 performs explicitly marked ELF/Mach-O/PE inference for foreign artifacts through the shared private
 binary readers.
+Truncated symbol inspection is recorded as SBOM analysis evidence and a blocking relocation
+finding. ABI descriptors retain their truncation flag and cannot establish compatibility.
 
 `wrap.cpp` snapshots an existing working tree, uses the persistent project cache and toolchain pin,
 validates saved actions, launches one writable observed mount, derives child actions from process

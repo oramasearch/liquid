@@ -22,7 +22,9 @@ objects they name.
 A root is a persisted lease under `leases/`. Each record carries a root digest, an expiry, an
 owner note, and an internal generation. `store::lease_root` creates it, `lease::renew` writes a
 new durable generation, and `lease::release` removes the active generation. Destroying the C++
-handle does nothing: expiry, not process lifetime, decides whether the root is live. Renewal
+handle does nothing: expiry, not process lifetime, decides whether the root is live. A
+repository's own working-tree, checkpoint, directory and build-cache leases are the exception:
+they end with the repository handle that holds them (see *A handle's leases end with it* below). Renewal
 writes the replacement before removing the prior generation, so a crash can extend a lease but
 cannot shorten it.
 
@@ -83,7 +85,13 @@ sweep takes the mutation lock again, reloads the committed tombstone manifest so
 added by an eviction or redaction during marking stay dead, includes roots and objects created
 during marking, and treats a lease created during the epoch as after the high-water mark for this
 sweep. The mutation lock is the store's thread-safe asynchronous mutex; see the mutation mutex
-section of [store.md](store.md).
+section of [store.md](store.md). On a disk store opened without an owner, the collection also holds
+the root's cross-process write lock from its snapshot to the end of its sweep, reloading first what
+other processes published, so no other process appends below the high-water mark or publishes an
+object map or index manifest while it runs (liquid #526,
+[store.md](store.md#several-writers-without-an-owner)). `lease_root` in another process waits for
+the lock. A lease another process writes straight to `leases/` during marking (a repository's
+retention roots do) is not seen by this collection.
 
 The backend publication order is:
 
@@ -140,6 +148,37 @@ tree, checkpoint, and directory leases use 30 days; ref leases use their matchin
 the renewable leases at every open and checkpoint and releases superseded roots. Call
 `repository::collect` for a repository; calling
 `store::collect` directly on its store can discard live repository objects.
+
+**A handle's leases end with it (liquid #527).** The working tree, checkpoint, directory and
+build-cache leases protect what one open repository handle is using. Every open checkpoints and
+took a new set, and no handle ever released another's, so a checkout opened, saved and closed
+repeatedly by an IDE beside its daemon gathered 1,202 lease files in twenty minutes; on `dev`,
+52 open-write-close rounds of a three-file repository left 259. Now:
+
+- These leases name their holder as the last line of the owner, `holder <host> <pid> <start>`,
+  where `<start>` is the process's start time (`sysctl` on macOS, `/proc/<pid>/stat` on Linux,
+  `GetProcessTimes` on Windows), so a later process that reuses the pid is not taken for the
+  holder.
+- A handle releases its leases when it is destroyed. On a disk store the lease files are removed
+  at once; on another backend the release is started on the runtime.
+- `repository::open`, after the checkpoint that leases the published state for the new handle,
+  releases every lease of the same repository whose holder is on this host and has ended: a killed
+  or crashed handle's.
+- A holder on another host, and a lease with no holder line (ref retention leases, and leases made
+  through `store::lease_root`), are never collected this way; expiry still applies to them.
+- `repository::lease_count()` counts the store's leases, and `liquid status` prints `leases=<n>`
+  (`"leases"` in `--json`).
+
+So the count is what the live handles hold, plus the retention leases. Between handles the
+published state is retained by no lease. `repository::collect` checkpoints first, so it leases that
+state before it marks; a direct `store::collect` was already unsafe and is more so now.
+
+**Verify.** `tests/store/test_repository_leases.cpp` (`RepositoryLeases.*`): the holder line names
+this process and reads as alive, and another host's as unknown; a handle that ends leaves no lease;
+a checkout opened, written and closed 1,000 times beside a handle kept open ends with exactly that
+handle's leases, never more than two handles' worth, and its last write intact; leases of another
+host, or with no holder, survive an open; and a fixture process killed with `SIGKILL` after a write
+leaves leases whose holder reads as dead, which the next open collects, keeping the write.
 
 Every repository-created lease owner starts with `repository:<repo-id>`. Ref and result retention
 updates remove only leases under that repository prefix. This is required when one caller-owned

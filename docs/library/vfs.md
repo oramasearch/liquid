@@ -28,7 +28,11 @@ depend on lake.
 
 ## Public API
 
-`mount_options::read_only` rejects modifying operations with `EROFS`.
+`mount_options::read_only` rejects modifying operations with `EROFS`, including `setxattr`
+and `removexattr`. Both attribute mutation handlers also reject paths in the immutable `deps/`
+subtree of writable mounts. The checks run before attribute decoding, entry lookup, settings
+persistence, or pin hydration; each refusal records a denied write with the requesting PID in
+the observation sink. Writable paths retain their pin and exclusion controls (liquid #445).
 `mount_options::attr_timeout` controls FUSE attribute and entry caching.
 `mount_options::bearer_token` is used only while registering a configured drive peer and is never
 persisted. The opaque `mount` handle exposes asynchronous `unmount()` and synchronous `status()`:
@@ -43,7 +47,11 @@ persisted. The opaque `mount` handle exposes asynchronous `unmount()` and synchr
 `materialise(repository, target, path_prefix)` requires a missing or empty target. With no prefix,
 it reproduces the entire tree. A directory prefix writes that directory's contents into the target;
 a file prefix writes that file under its basename. File and directory permission bits are
-preserved.
+preserved. Every entry name is checked against the tree entry name rule in
+[`object-model.md`](object-model.md#records-in-the-store) before it is written, and every file and
+directory is created exclusively without following a symbolic link: a name that collides with an
+earlier one on the target filesystem, by case or Unicode normalisation, fails with
+`errc::already_exists` (liquid #386).
 
 ## Hydration and cache
 
@@ -149,7 +157,7 @@ Full materialisation retains its separate portable tests.
 entry points remain testable with both static and shared libliquid. The shared target also compiles
 private hydration, queue, drive-settings, xattr and CBOR helpers; library visibility stays unchanged.
 
-Under [decision 41](https://github.com/oramasearch/liquid-bridge/issues/28), passing this suite means
+By decision, passing this suite means
 **"agrees with liquid's own core"**, which is weaker than **"agrees with a known-good filesystem"**.
 The **libfuse-on-Linux baseline is still owed against #299**. Direct calibration does not cancel
 that debt, replace a production backend, or allow a real backend to skip these cases.
@@ -258,3 +266,13 @@ header. Repository traversal and range access stay in the private adapter. Cache
 `src/vfs/hydration.cpp`, and callbacks belong in `src/vfs/fuse_fs.cpp`. Add a mount operation only
 by giving it a queued runtime request and a repository mutation; a callback must not access the
 store or repository directly.
+
+## Attribute mutation refusal (#445)
+
+`liquid-vfs-xattr-tests` calls the production FUSE request handlers without a kernel mount.
+It covers ordinary and recorded-tree mounts, files, directories, the mount root, and immutable
+`deps` paths; both attribute names and unknown or invalid attributes must return `EROFS` on
+protected paths. Each attempt checks the stored Drive metadata bytes and the denied write's
+path and PID. A writable control verifies both setters still hydrate and persist pins and both
+removers persist the online-only reset. The target requires the FUSE development library,
+but does not require `/dev/fuse` or permission to mount.

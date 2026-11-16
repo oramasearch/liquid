@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -19,6 +21,8 @@
 #include "liquid/drip.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
+
+#include "cli/signer.hpp"
 
 namespace liquid_cli {
 
@@ -406,6 +410,10 @@ auto repo_status(int argc, char** argv) -> int {
     if (!current) {
         return fail(current.error());
     }
+    auto leases = liquid::runtime::block_on(repository->lease_count());
+    if (!leases) {
+        return fail(leases.error());
+    }
     auto daemon_current = std::optional<liquid::daemon_status>{};
     auto ready = ensure_daemon(std::filesystem::current_path());
     if (!ready && ready.error().code != liquid::errc::unsupported) {
@@ -428,7 +436,7 @@ auto repo_status(int argc, char** argv) -> int {
         std::println(
             "{{\"pending_drips\":{},\"remote_bytes\":{},\"paused\":{},\"conflicts\":{},\"oversized_"
             "directories\":{},\"head\":{},\"agents\":{{\"require_base\":{},\"actors\":{}}},"
-            "\"data_branches\":{},"
+            "\"data_branches\":{},\"store_recoveries\":{},\"leases\":{},"
             "\"capture\":{{\"state\":{},\"pending_drips\":{},"
             "\"overflow_count\":{},\"recrawl_count\":{},\"cursor\":{}}},"
             "\"flow\":{},"
@@ -446,6 +454,8 @@ auto repo_status(int argc, char** argv) -> int {
             current->agents.require_base ? "true" : "false",
             strings_json(current->agents.actors),
             data_branches_json(current->data_branches),
+            strings_json(current->store_recoveries),
+            *leases,
             json_string(daemon_current && daemon_current->capture.state ==
                                               liquid::capture_status::state::paused
                             ? "paused"
@@ -490,6 +500,10 @@ auto repo_status(int argc, char** argv) -> int {
                          branch.database,
                          liquid::to_string(branch.mechanism),
                          branch.url);
+        }
+        std::println("leases={}", *leases);
+        for (const auto& recovery : current->store_recoveries) {
+            std::println("store_recovery={}", recovery);
         }
         std::println("daemon_available={}", daemon_current.has_value());
         std::println("capture_state={}",
@@ -607,14 +621,16 @@ auto repo_log(int argc, char** argv) -> int {
                                           : "forced");
                 const auto delegation =
                     drip.delegation ? json_string(liquid::to_string(*drip.delegation)) : "null";
-                std::print("{}{{\"id\":{},\"base\":{},\"paths\":{},\"actor\":{},\"at\":{},"
-                           "\"reasoned_from\":{},\"cursor\":{},\"revalidated\":{},"
+                std::print("{}{{\"id\":{},\"base\":{},\"paths\":{},\"actor\":{},"
+                           "\"identity_verified\":{},\"at\":{},\"reasoned_from\":{},\"cursor\":{},"
+                           "\"revalidated\":{},"
                            "\"delegation\":{}}}",
                            index == 0 ? "" : ",",
                            json_string(liquid::to_string(drip.id.value)),
                            json_string(liquid::to_string(drip.base.value)),
                            strings_json(paths),
-                           json_string(drip.by.taap_id),
+                           json_string(shown_signer(drip.by, drip.identity_verified)),
+                           drip.identity_verified,
                            drip.at.time_since_epoch().count(),
                            reasoned_from,
                            cursor,
@@ -626,7 +642,7 @@ auto repo_log(int argc, char** argv) -> int {
             for (const auto& drip : *drips) {
                 std::println("{} {} {}",
                              liquid::to_string(drip.id.value),
-                             drip.by.taap_id,
+                             shown_signer(drip.by, drip.identity_verified),
                              drip.revalidated == liquid::stale_revalidation::disjoint ? "disjoint"
                              : drip.revalidated == liquid::stale_revalidation::forced ? "forced"
                                                                                       : "");
@@ -642,11 +658,13 @@ auto repo_log(int argc, char** argv) -> int {
         std::print("[");
         for (std::size_t index = 0; index < changes->size(); ++index) {
             const auto& change = (*changes)[index];
-            std::print("{}{{\"id\":{},\"message\":{},\"author\":{},\"at\":{}}}",
+            std::print("{}{{\"id\":{},\"message\":{},\"author\":{},\"identity_verified\":{},"
+                       "\"at\":{}}}",
                        index == 0 ? "" : ",",
                        json_string(liquid::to_string(change.id.value)),
                        json_string(change.message),
-                       json_string(change.author.taap_id),
+                       json_string(shown_signer(change.author, change.identity_verified)),
+                       change.identity_verified,
                        change.at.time_since_epoch().count());
         }
         std::println("]");
@@ -654,7 +672,7 @@ auto repo_log(int argc, char** argv) -> int {
         for (const auto& change : *changes) {
             std::println("{} {} {}",
                          liquid::to_string(change.id.value),
-                         change.author.taap_id,
+                         shown_signer(change.author, change.identity_verified),
                          change.message);
         }
     }
@@ -662,14 +680,31 @@ auto repo_log(int argc, char** argv) -> int {
 }
 
 auto repo_cut(int argc, char** argv) -> int {
-    if (argc == 0) {
-        return usage("cut requires a message");
+    // `-m`/`--message` as in Git, or the remaining words as the message. A leading `-` is refused
+    // so that a mistyped option is never recorded in history (liquid#528).
+    auto message = std::string{};
+    if (argc >= 1 &&
+        (std::string_view{argv[0]} == "-m" || std::string_view{argv[0]} == "--message")) {
+        if (argc != 2) {
+            return usage("cut -m <message> takes one message; quote it");
+        }
+        message = argv[1];
+    } else {
+        message = join(argc, argv);
+    }
+    if (message.empty()) {
+        return usage("cut requires a message: liquid cut -m <message>");
+    }
+    if (message.starts_with('-')) {
+        return usage(std::format("cut refuses a message that starts with '-' ({}); use "
+                                 "liquid cut -m <message>",
+                                 message));
     }
     auto repository = open_repository();
     if (!repository) {
         return fail(repository.error());
     }
-    auto change = liquid::runtime::block_on(repository->cut(join(argc, argv)));
+    auto change = liquid::runtime::block_on(repository->cut(message));
     if (!change) {
         return fail(change.error());
     }

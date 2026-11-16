@@ -29,5 +29,7 @@ input.
 Drive mounts register the endpoint stored in `drive.remote`, apply the persisted folder and size
 policy before reads, and return `EAGAIN` when uncached content cannot reach its peer. They expose
 `user.liquid.state` and `user.liquid.pin`; setters persist pin and exclusion choices in repository
-metadata. Excluded entries are removed from lookup and directory results. The pure attribute and
-policy helpers keep their portable coverage separate from the Linux FUSE syscall coverage.
+metadata on writable paths. Read-only mounts and immutable `deps/` paths reject both attribute
+mutation handlers with `EROFS` before settings or hydration can change and record a denied write
+with the caller PID. Excluded entries are removed from lookup and directory results. The pure
+attribute and policy helpers keep their portable coverage separate from the Linux FUSE syscall coverage.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "build/plan.hpp"
 
 #include <algorithm>
@@ -22,7 +24,9 @@ namespace liquid {
 namespace {
 
 struct configured_action {
-    std::uint64_t key{};
+    // The wrap state's process key, kept as written: 64 hex digits of BLAKE3-256 since liquid#449,
+    // a short hex number in a hand-written configuration. Planning does not interpret it.
+    std::string key;
     result_id result;
 };
 
@@ -74,15 +78,13 @@ auto read_configuration(repository& source) -> result<configured_build> {
             return std::unexpected(
                 plan_error(errc::corrupt, "invalid configured build action", *found));
         }
-        auto key = std::uint64_t{};
-        auto key_input = std::istringstream{line.substr(2, key_end - 2)};
-        key_input >> std::hex >> key;
+        auto key = line.substr(2, key_end - 2);
         auto id = parse_digest(std::string_view{line}.substr(key_end + 1));
-        if (!key_input || !id) {
+        if (key.empty() || !id) {
             return std::unexpected(
                 plan_error(errc::corrupt, "invalid configured build action", *found));
         }
-        output.actions.push_back({key, result_id{*id}});
+        output.actions.push_back({std::move(key), result_id{*id}});
     }
     if (!input.eof()) {
         return std::unexpected(plan_error(errc::io, "cannot read build configuration", *found));

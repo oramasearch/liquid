@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/rpm/rpm.hpp"
 
 #include <algorithm>
@@ -132,9 +134,18 @@ auto lead(const package_metadata& metadata) -> std::vector<std::byte> {
     return output;
 }
 
+// The main-header string tags `read` keeps: name, version, and the four maintainer scripts.
+constexpr auto read_tags = std::array<std::uint32_t, 6>{1000, 1001, 1023, 1024, 1025, 1026};
+
+// Validates the header at `offset` and returns the offset just past its store. With `strings`,
+// which requires `budget`, the string values of `read_tags` are copied into it, and each copy is
+// charged to `budget` before it is made; a copy that does not fit fails the read. Index entries may
+// all point at one long value, so without the charge a header of N entries could copy its whole
+// store N times.
 auto parse_header(std::span<const std::byte> bytes,
                   std::size_t offset,
-                  std::map<std::uint32_t, std::string>* strings = nullptr) -> result<std::size_t> {
+                  std::map<std::uint32_t, std::string>* strings = nullptr,
+                  std::uint64_t* budget = nullptr) -> result<std::size_t> {
     if (offset > bytes.size() || bytes.size() - offset < 16 || bytes[offset] != std::byte{0x8e} ||
         bytes[offset + 1] != std::byte{0xad} || bytes[offset + 2] != std::byte{0xe8}) {
         return std::unexpected(error{errc::corrupt, "invalid rpm header", "rpm"});
@@ -147,30 +158,51 @@ auto parse_header(std::span<const std::byte> bytes,
     }
     const auto data = offset + 16 + static_cast<std::size_t>(index_size);
     if (strings) {
+        const auto store = bytes.subspan(data, data_size);
         for (auto index = 0U; index < count; ++index) {
             const auto entry = offset + 16 + index * 16;
             const auto tag = read_be32(bytes, entry);
             const auto type = read_be32(bytes, entry + 4);
             const auto value_offset = read_be32(bytes, entry + 8);
-            if (type != 6 || value_offset >= data_size) {
+            if (type != 6 || value_offset >= data_size ||
+                std::ranges::find(read_tags, tag) == read_tags.end()) {
                 continue;
             }
-            auto end = data + value_offset;
-            while (end < data + data_size && bytes[end] != std::byte{}) {
-                ++end;
+            // Never scan further than the budget could pay for.
+            auto value = store.subspan(value_offset);
+            if (*budget < value.size()) {
+                value = value.first(static_cast<std::size_t>(*budget) + 1);
             }
-            (*strings)[tag] =
-                std::string{reinterpret_cast<const char*>(bytes.data() + data + value_offset),
-                            end - data - value_offset};
+            const auto length =
+                static_cast<std::size_t>(std::ranges::find(value, std::byte{}) - value.begin());
+            if (length > *budget) {
+                return std::unexpected(
+                    error{errc::unsupported, "rpm header strings exceed the byte budget", "rpm"});
+            }
+            *budget -= length;
+            (*strings)[tag] = std::string{reinterpret_cast<const char*>(value.data()), length};
         }
     }
     return data + data_size;
 }
 
+// Check the padding before adding it, so alignment cannot wrap or leave the input span.
+auto aligned_offset(std::size_t offset, std::size_t alignment, std::size_t limit)
+    -> std::optional<std::size_t> {
+    if (offset > limit) {
+        return std::nullopt;
+    }
+    const auto padding = (alignment - offset % alignment) % alignment;
+    if (padding > limit - offset) {
+        return std::nullopt;
+    }
+    return offset + padding;
+}
+
 auto cpio_files(std::span<const std::byte> bytes) -> result<std::vector<package::file>> {
     auto output = std::vector<package::file>{};
     auto offset = std::size_t{};
-    while (offset + 110 <= bytes.size()) {
+    while (bytes.size() - offset >= 110) {
         if (std::string_view{reinterpret_cast<const char*>(bytes.data() + offset), 6} != "070701") {
             return std::unexpected(error{errc::corrupt, "invalid cpio payload", "rpm"});
         }
@@ -192,20 +224,27 @@ auto cpio_files(std::span<const std::byte> bytes) -> result<std::vector<package:
             return std::unexpected(error{errc::corrupt, "invalid cpio name", "rpm"});
         }
         const auto name_start = offset + 110;
-        auto name =
-            std::string{reinterpret_cast<const char*>(bytes.data() + name_start), name_size - 1};
-        offset = (name_start + name_size + 3) & ~std::size_t{3};
-        if (size > bytes.size() - offset) {
+        const auto file_offset = aligned_offset(name_start + name_size, 4, bytes.size());
+        if (!file_offset) {
+            return std::unexpected(error{errc::corrupt, "truncated cpio name padding", "rpm"});
+        }
+        if (size > bytes.size() - *file_offset) {
             return std::unexpected(error{errc::corrupt, "truncated cpio file", "rpm"});
         }
+        const auto next_offset = aligned_offset(*file_offset + size, 4, bytes.size());
+        if (!next_offset) {
+            return std::unexpected(error{errc::corrupt, "truncated cpio file padding", "rpm"});
+        }
+        auto name =
+            std::string{reinterpret_cast<const char*>(bytes.data() + name_start), name_size - 1};
         if (name == "TRAILER!!!") {
             return output;
         }
         output.push_back({std::move(name),
-                          {bytes.begin() + static_cast<std::ptrdiff_t>(offset),
-                           bytes.begin() + static_cast<std::ptrdiff_t>(offset + size)},
+                          {bytes.begin() + static_cast<std::ptrdiff_t>(*file_offset),
+                           bytes.begin() + static_cast<std::ptrdiff_t>(*file_offset + size)},
                           mode & 0777U});
-        offset = (offset + size + 3) & ~std::size_t{3};
+        offset = *next_offset;
     }
     return std::unexpected(error{errc::corrupt, "cpio trailer is absent", "rpm"});
 }
@@ -368,17 +407,21 @@ result<archive> read(std::span<const std::byte> bytes, std::uint64_t maximum_out
     if (!signature_end) {
         return std::unexpected(signature_end.error());
     }
-    const auto main_offset = (*signature_end + 7) & ~std::size_t{7};
+    const auto main_offset = aligned_offset(*signature_end, 8, bytes.size());
+    if (!main_offset) {
+        return std::unexpected(error{errc::corrupt, "truncated rpm signature padding", "rpm"});
+    }
+    // One allowance for the whole read: header strings first, then the decoded payload.
+    auto budget = maximum_output;
     auto tags = std::map<std::uint32_t, std::string>{};
-    auto payload_offset = parse_header(bytes, main_offset, &tags);
+    auto payload_offset = parse_header(bytes, *main_offset, &tags, &budget);
     if (!payload_offset || *payload_offset >= bytes.size()) {
         return std::unexpected(payload_offset ? error{errc::corrupt, "rpm payload is absent", "rpm"}
                                               : payload_offset.error());
     }
     const auto compressed = bytes.subspan(*payload_offset);
     const auto size = ZSTD_getFrameContentSize(compressed.data(), compressed.size());
-    if (size == ZSTD_CONTENTSIZE_ERROR || size == ZSTD_CONTENTSIZE_UNKNOWN ||
-        size > maximum_output) {
+    if (size == ZSTD_CONTENTSIZE_ERROR || size == ZSTD_CONTENTSIZE_UNKNOWN || size > budget) {
         return std::unexpected(error{errc::corrupt, "invalid rpm zstd payload", "rpm"});
     }
     auto decoded = std::vector<std::byte>(static_cast<std::size_t>(size));

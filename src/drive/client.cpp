@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/drive.hpp"
 
 #include <algorithm>
@@ -19,6 +21,7 @@
 #include "encoding/cbor.hpp"
 #include "liquid/repository.hpp"
 #include "repository/drive_access.hpp"
+#include "repository/local_state.hpp"
 
 namespace liquid {
 namespace {
@@ -45,7 +48,6 @@ struct persisted_state {
 
 struct walk_entry {
     std::string path;
-    std::filesystem::path source;
     std::uint32_t mode{0100644};
 };
 
@@ -191,10 +193,11 @@ auto repository_text(std::span<const std::byte> value) -> std::string {
     return {reinterpret_cast<const char*>(value.data()), value.size()};
 }
 
+// Checkout-local state (liquid #420) and the drive's own temporary files are never synchronised in
+// either direction: the local walk skips them, and every flattened tree drops them, so a peer's
+// tree can never write the repository marker, the store, or trust state kept under `.liquid/`.
 auto excluded_path(std::string_view path) -> bool {
-    return path == "LIQUID_REPO" || path == "LIQUID_JOURNAL" || path == ".liquid" ||
-           path.starts_with(".liquid/") || path == ".liquid-store" ||
-           path.starts_with(".liquid-store/") || path.ends_with(".liquid-drive-tmp");
+    return repository_detail::local_state_path(path) || path.ends_with(".liquid-drive-tmp");
 }
 
 auto within_path(std::string_view path, std::string_view parent) -> bool {
@@ -204,15 +207,6 @@ auto within_path(std::string_view path, std::string_view parent) -> bool {
 auto selected_for_device(const drive_detail::stored_settings& settings, std::string_view path)
     -> bool {
     return drive_detail::effective_state(settings, path) != drive_path_state::not_synced_here;
-}
-
-auto file_mode(const std::filesystem::directory_entry& entry, std::error_code& code)
-    -> std::uint32_t {
-    const auto permissions = entry.status(code).permissions();
-    if (code) {
-        return 0100644;
-    }
-    return 0100000U | static_cast<std::uint32_t>(permissions) & 0777U;
 }
 
 auto walk_files(const std::filesystem::path& folder,
@@ -233,20 +227,20 @@ auto walk_files(const std::filesystem::path& folder,
             code.clear();
             continue;
         }
-        if (!iterator->is_regular_file(code)) {
-            code.clear();
-            continue;
-        }
-        const auto mode = file_mode(*iterator, code);
+        const auto status = iterator->symlink_status(code);
         if (code) {
             return std::unexpected(drive_error(errc::io, code.message(), relative));
         }
+        if (!std::filesystem::is_regular_file(status)) {
+            continue;
+        }
+        const auto mode = 0100000U | (static_cast<std::uint32_t>(status.permissions()) & 0777U);
         output.state_bytes += sizeof(walk_entry) + relative.size() * 2U + 128U;
         if (output.state_bytes > ceiling) {
             return std::unexpected(drive_error(
                 errc::busy, "drive state memory ceiling exceeded", std::to_string(ceiling)));
         }
-        output.entries.push_back({relative, iterator->path(), mode});
+        output.entries.push_back({relative, mode});
     }
     if (code) {
         return std::unexpected(drive_error(errc::io, code.message(), folder.string()));
@@ -262,6 +256,9 @@ runtime::task<void> flatten(repository& source, digest root, std::string prefix,
     }
     for (auto entry : value->entries) {
         const auto path = prefix.empty() ? entry.name : prefix + "/" + entry.name;
+        if (excluded_path(path)) {
+            continue;
+        }
         if (entry.kind == node_kind::tree) {
             auto nested = co_await flatten(source, entry.ref, path, output);
             if (!nested) {
@@ -841,6 +838,10 @@ runtime::task<void> materialise(repository& source,
                                 const file_value& value,
                                 const std::filesystem::path& folder,
                                 bool durable) {
+    if (excluded_path(value.path)) {
+        co_return std::unexpected(drive_error(
+            errc::unauthorized, "drive refuses to write checkout-local state", value.path));
+    }
     const auto destination = folder / value.path;
     auto prepared = co_await runtime::offload([parent = destination.parent_path()] {
         auto code = std::error_code{};
@@ -1024,7 +1025,8 @@ struct drive_client::impl {
         for (const auto& item : (**walked).entries) {
             auto staged = co_await repository_detail::drive_access::stage(
                 local,
-                item.source,
+                folder,
+                item.path,
                 std::filesystem::path{item.path}.filename().string(),
                 item.mode);
             if (!staged) {

@@ -125,6 +125,8 @@ and libc++.
 The target binary is always an inferred component. A recognized library adds another inferred
 component and a `contains` relationship. Section, symbol, and version-string observations are
 included as analysis evidence in an SPDX document comment or CycloneDX metadata properties.
+When symbol inspection is truncated, both formats include the
+`linked-binary-symbols:truncated` evidence marker alongside the retained facts (liquid #475).
 Absence of a recognized signature is not evidence that a library is absent. This path remains a
 small composition analysis; it does not present the linked-binary ABI descriptor as dependency
 evidence.

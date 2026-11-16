@@ -1,8 +1,13 @@
 # Scheduler and worker implementation
 
 `scheduler.cpp` owns the mutex-protected action-digest operation table, duplicate joining,
-size-class placement, lease tokens, heartbeat expiry, and the single requeue. `protocol.cpp` owns
-the dependency-free protobuf messages used between matching liquid schedulers and workers.
+size-class placement, lease tokens, heartbeat expiry, and the single requeue. It authenticates
+every Lease, Heartbeat, and Complete against the pinned key of the worker the request names, keeps
+the per-worker replay window, and binds each result to the leased worker's key. `protocol.cpp`
+owns the dependency-free protobuf messages used between matching liquid schedulers and workers.
+`auth.cpp` owns the signing bodies, signature purposes, random tokens and nonces, the pinned-key
+verifier, and the worker's lease check (liquid #416); the server signs leases with the scheduler's
+`LIQUID_HOME` identity.
 
 `worker.cpp` hydrates native input and toolchain graphs into a co-located repository, invokes the
 Phase 2 executor, uploads output graphs, and completes with the worker's TAAP-signed result,

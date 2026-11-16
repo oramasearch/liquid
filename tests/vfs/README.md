@@ -22,6 +22,16 @@ code changes for this harness.
 The nine cases cover recorded-tree observation, attributed capture, file mutations, xattrs,
 synthetic times, read-only refusal, and concurrent range hydration with persistent cache reuse.
 Required backend execution fails on unavailability; optional availability returns CTest skip code
-77. The direct baseline and deliberate wrong-size failure are recorded in the
+77. A required `libfuse` run on a Linux host where `/dev/fuse` cannot be opened (a container without
+the device) also returns 77 before any case runs, printing the reason
+([#362](https://github.com/oramasearch/liquid/issues/362)). The direct baseline and deliberate wrong-size failure are recorded in the
 [proof record](../../docs/library/vfs-conformance-proof.md). Linux libfuse calibration remains
 owed against #299; see the [run and extension guide](../../docs/library/vfs.md#backend-conformance-301).
+
+`liquid-vfs-xattr-tests` includes the production FUSE implementation in its test translation unit
+to call its private request handlers without exposing a library API or mounting a filesystem.
+Twenty protected-path cases cover both mutation handlers on ordinary and observed mounts,
+read-only roots/files/directories, and immutable `deps` paths. They assert `EROFS`, unchanged
+persisted Drive settings, and denied write observations with path and PID. A writable case checks
+both attribute names still persist pin and reset operations. FUSE headers and libraries are
+required; a kernel FUSE device is not.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include <array>
@@ -46,9 +48,16 @@ struct pack_index_entry {
     sha1 id{};
 };
 
+// Internal import limits; fixtures may lower them without allocating large objects.
+struct object_read_limits {
+    std::uint64_t object_bytes = 4ULL * 1024ULL * 1024ULL * 1024ULL;
+    std::uint64_t read_slack_bytes = 64ULL * 1024ULL * 1024ULL;
+    unsigned delta_depth = 1024;
+};
+
 class object_store {
 public:
-    explicit object_store(std::filesystem::path directory);
+    explicit object_store(std::filesystem::path directory, object_read_limits limits = {});
 
     [[nodiscard]] auto read(const sha1& id) -> result<object>;
     [[nodiscard]] auto read_commit(const sha1& id) -> result<commit>;
@@ -70,6 +79,7 @@ private:
     [[nodiscard]] auto stream_for(const std::filesystem::path& path) -> result<std::ifstream*>;
 
     std::filesystem::path directory_;
+    object_read_limits limits_;
     std::map<std::string, cached_object> delta_cache_;
     std::list<std::string> delta_lru_;
     std::uint64_t delta_cache_bytes_{};
@@ -85,5 +95,15 @@ private:
                                       std::span<const std::byte> payload) -> result<sha1>;
 
 [[nodiscard]] auto kind_name(object_kind kind) -> std::string_view;
+
+// The parsers of untrusted Git bytes, used by object_store and by the fuzz harnesses in fuzz/.
+// parse_object takes an inflated loose object ("<kind> <size>\0<payload>") and checks it against
+// its identifier; parse_commit and parse_tree read a payload; apply_delta applies a pack delta
+// under the default object_read_limits (object_store applies deltas under its own read budget).
+[[nodiscard]] auto parse_object(std::span<const std::byte> bytes, const sha1& id) -> result<object>;
+[[nodiscard]] auto parse_commit(const object& value) -> result<commit>;
+[[nodiscard]] auto parse_tree(const object& value) -> result<std::vector<tree_entry>>;
+[[nodiscard]] auto apply_delta(std::span<const std::byte> base, std::span<const std::byte> delta)
+    -> result<std::vector<std::byte>>;
 
 } // namespace liquid::git_detail

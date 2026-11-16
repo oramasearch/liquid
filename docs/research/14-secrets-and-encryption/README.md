@@ -140,7 +140,7 @@ consumers need pre-encryption provenance
    collaboration property liquid is trying to provide.
 
 3. **Envelope encryption with pluggable KEK custody.** Passphrase (scrypt/Argon2),
-   age/X25519 recipients, cloud KMS, Vault, hardware tokens, TPM. Steve asked for
+   age/X25519 recipients, cloud KMS, Vault, hardware tokens, TPM. The requirement is
    "password protected or key protected" — both, plus the organisational options,
    through one interface.
 

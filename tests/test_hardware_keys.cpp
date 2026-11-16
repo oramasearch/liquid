@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -5,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -35,6 +38,7 @@
 #include "liquid/runtime.hpp"
 #include "monocypher-ed25519.h"
 #include "monocypher.h"
+#include "objects/records.hpp"
 #include "temporary_directory.hpp"
 
 namespace liquid_cli {
@@ -84,6 +88,47 @@ auto field(const cbor::value& source, std::int64_t name) -> const cbor::value* {
 
 auto byte_string(std::span<const std::byte> input) -> cbor::value {
     return cbor::value{cbor::value::bytes{input.begin(), input.end()}};
+}
+
+// SHA-256 computed by OpenSSL, so the vectors below never depend on liquid's own digest code.
+auto openssl_sha256(std::span<const std::byte> input) -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>(32);
+    auto size = 0U;
+    EXPECT_EQ(EVP_Digest(input.data(),
+                         input.size(),
+                         reinterpret_cast<unsigned char*>(output.data()),
+                         &size,
+                         EVP_sha256(),
+                         nullptr),
+              1);
+    EXPECT_EQ(size, 32U);
+    return output;
+}
+
+// WebAuthn Level 2 §6.1 authenticator data for an assertion: rpIdHash (32) || flags (1, UP) ||
+// signCount (4, big-endian). No attested credential data and no extensions.
+auto ctap2_assertion_authenticator_data(std::string_view rp_id,
+                                        std::uint32_t sign_count,
+                                        std::byte flags = std::byte{0x01})
+    -> std::vector<std::byte> {
+    auto output = openssl_sha256(std::as_bytes(std::span{rp_id}));
+    output.push_back(flags);
+    output.push_back(std::byte{static_cast<std::uint8_t>(sign_count >> 24)});
+    output.push_back(std::byte{static_cast<std::uint8_t>(sign_count >> 16)});
+    output.push_back(std::byte{static_cast<std::uint8_t>(sign_count >> 8)});
+    output.push_back(std::byte{static_cast<std::uint8_t>(sign_count)});
+    return output;
+}
+
+// The rpId (CTAP2 getAssertion key 1) the client asked for, as a real authenticator would hash it.
+auto assertion_authenticator_data(const cbor::value& request, std::uint32_t sign_count)
+    -> std::vector<std::byte> {
+    const auto* rp = field(request, 1);
+    const auto* rp_id = rp ? std::get_if<std::string>(&rp->data) : nullptr;
+    if (!rp_id || rp_id->empty()) {
+        return {};
+    }
+    return ctap2_assertion_authenticator_data(*rp_id, sign_count);
 }
 
 class fido_double final : public liquid::identity_detail::fido2_transport {
@@ -149,14 +194,15 @@ public:
             return std::unexpected(liquid::error{
                 liquid::errc::unauthorized, "unknown FIDO2 credential", "FIDO2 double"});
         }
-        auto authenticator_data = std::vector<std::byte>(37, std::byte{0});
-        authenticator_data[32] = std::byte{0x01};
-        auto client_hash = liquid::hash(liquid::algorithm::sha256, *client_bytes);
-        if (!client_hash) {
-            return std::unexpected(client_hash.error());
+        // CTAP 2.2 authenticatorGetAssertion: EdDSA signs authenticatorData || clientDataHash
+        // directly, with the client's 32 bytes exactly as received.
+        auto authenticator_data = assertion_authenticator_data(*decoded, ++sign_count_);
+        if (authenticator_data.empty()) {
+            return std::unexpected(
+                liquid::error{liquid::errc::corrupt, "missing rpId", "FIDO2 double"});
         }
         auto assertion = authenticator_data;
-        assertion.insert(assertion.end(), client_hash->bytes.begin(), client_hash->bytes.end());
+        assertion.insert(assertion.end(), client_bytes->begin(), client_bytes->end());
         auto signature = std::vector<std::byte>(64);
         crypto_ed25519_sign(reinterpret_cast<std::uint8_t*>(signature.data()),
                             secret_.data(),
@@ -176,6 +222,7 @@ private:
     std::array<std::uint8_t, 64> secret_{};
     std::array<std::uint8_t, 32> public_key_{};
     std::vector<std::byte> credential_{std::byte{0x81}, std::byte{0x02}, std::byte{0x03}};
+    std::uint32_t sign_count_{};
 };
 
 class p256_key {
@@ -242,6 +289,30 @@ public:
         return output;
     }
 
+    // ECDSA with SHA-256 over the message, hashed by OpenSSL (RFC 8152 ES256 / FIPS 186-5).
+    auto sign_message(std::span<const std::byte> message) const -> std::vector<std::byte> {
+        auto context = EVP_MD_CTX_new();
+        EXPECT_NE(context, nullptr);
+        EXPECT_GT(EVP_DigestSignInit(context, nullptr, EVP_sha256(), nullptr, key_), 0);
+        auto size = std::size_t{};
+        EXPECT_GT(EVP_DigestSign(context,
+                                 nullptr,
+                                 &size,
+                                 reinterpret_cast<const unsigned char*>(message.data()),
+                                 message.size()),
+                  0);
+        auto output = std::vector<std::byte>(size);
+        EXPECT_GT(EVP_DigestSign(context,
+                                 reinterpret_cast<unsigned char*>(output.data()),
+                                 &size,
+                                 reinterpret_cast<const unsigned char*>(message.data()),
+                                 message.size()),
+                  0);
+        EVP_MD_CTX_free(context);
+        output.resize(size);
+        return output;
+    }
+
 private:
     EVP_PKEY* key_{};
 };
@@ -297,19 +368,16 @@ public:
             return std::unexpected(liquid::error{
                 liquid::errc::unauthorized, "unknown FIDO2 credential", "FIDO2 ES256 double"});
         }
-        auto authenticator_data = std::vector<std::byte>(37, std::byte{0});
-        authenticator_data[32] = std::byte{0x01};
-        auto client_hash = liquid::hash(liquid::algorithm::sha256, *client_bytes);
-        if (!client_hash) {
-            return std::unexpected(client_hash.error());
+        // CTAP 2.2 authenticatorGetAssertion: ES256 is ECDSA P-256 with SHA-256 over
+        // authenticatorData || clientDataHash; OpenSSL does the hashing, not liquid.
+        auto authenticator_data = assertion_authenticator_data(*decoded, ++sign_count_);
+        if (authenticator_data.empty()) {
+            return std::unexpected(
+                liquid::error{liquid::errc::corrupt, "missing rpId", "FIDO2 ES256 double"});
         }
         auto assertion = authenticator_data;
-        assertion.insert(assertion.end(), client_hash->bytes.begin(), client_hash->bytes.end());
-        auto assertion_hash = liquid::hash(liquid::algorithm::sha256, assertion);
-        if (!assertion_hash) {
-            return std::unexpected(assertion_hash.error());
-        }
-        const auto signature = key_.sign_digest(assertion_hash->bytes);
+        assertion.insert(assertion.end(), client_bytes->begin(), client_bytes->end());
+        const auto signature = key_.sign_message(assertion);
         return cbor::encode(cbor::value{cbor::value::map{
             {cbor::value{std::uint64_t{2}}, byte_string(authenticator_data)},
             {cbor::value{std::uint64_t{3}}, byte_string(signature)},
@@ -323,6 +391,7 @@ public:
 private:
     p256_key key_;
     std::vector<std::byte> credential_{std::byte{0x82}, std::byte{0x04}, std::byte{0x08}};
+    std::uint32_t sign_count_{};
 };
 
 auto tlv(std::initializer_list<std::byte> tag, std::span<const std::byte> value)
@@ -682,6 +751,17 @@ auto open_identity(std::string_view name) -> liquid::signer {
     return std::move(*signer);
 }
 
+// A verifier binds a signer's name to its key only through a chain it holds (liquid#383), so the
+// current home trusts each signer's (single, initial) identity document.
+auto trust_identities(std::initializer_list<const liquid::signer*> signers) -> void {
+    for (const auto* value : signers) {
+        const auto document = value->document();
+        ASSERT_TRUE(document) << document.error().message;
+        const auto trusted = liquid::trust_identity_chain(std::array{*document});
+        ASSERT_TRUE(trusted) << trusted.error().message;
+    }
+}
+
 auto test_signatures(std::string_view name, std::string_view destination) -> void {
     auto signer = open_identity(name);
     const auto original = signer.identity();
@@ -787,6 +867,8 @@ auto expect_public_document(liquid::signer& signer, std::span<const std::byte> s
 }
 
 TEST(IdentityDocument, SoftwareOutputExcludesPrivateKey) {
+    // File custody keeps the wrapping key readable here, so the test can open the sealed key.
+    set_environment("LIQUID_IDENTITY_KEY_CUSTODY", "file");
     auto signer = open_identity("document-software");
     const auto home = liquid::test::fixture_path("liquid-hardware-document-software");
     const auto root = home / "identity";
@@ -861,6 +943,180 @@ TEST(HardwareIdentity, fido2_es256_fallback_signs_drips_and_changes) {
     test_signatures("fido-es256", "fido2");
 }
 
+// Independent vectors: what a real CTAP2 authenticator returns for liquid's getAssertion, built only
+// from the specifications with OpenSSL. TAAP/1 signed bytes are "TAAP/1 " || purpose || 0x00 ||
+// body; liquid sends clientDataHash = SHA-256(signed bytes); the authenticator signs
+// authenticatorData || clientDataHash (WebAuthn Level 2 §6.3.3 step 11, CTAP 2.2 §6.2). EdDSA signs
+// that message directly (RFC 8032); ES256 is ECDSA P-256 with SHA-256 over it (RFC 8152 §8.1).
+class openssl_ed25519_key {
+public:
+    openssl_ed25519_key() {
+        auto seed = std::array<unsigned char, 32>{};
+        for (std::size_t index = 0; index < seed.size(); ++index) {
+            seed[index] = static_cast<unsigned char>(0xa0 + index);
+        }
+        key_ = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, seed.data(), seed.size());
+        EXPECT_NE(key_, nullptr);
+    }
+
+    ~openssl_ed25519_key() {
+        EVP_PKEY_free(key_);
+    }
+
+    auto public_key() const -> std::vector<std::byte> {
+        auto output = std::vector<std::byte>(32);
+        auto size = output.size();
+        EXPECT_GT(EVP_PKEY_get_raw_public_key(
+                      key_, reinterpret_cast<unsigned char*>(output.data()), &size),
+                  0);
+        EXPECT_EQ(size, 32U);
+        return output;
+    }
+
+    auto sign_message(std::span<const std::byte> message) const -> std::vector<std::byte> {
+        auto context = EVP_MD_CTX_new();
+        EXPECT_NE(context, nullptr);
+        EXPECT_GT(EVP_DigestSignInit(context, nullptr, nullptr, nullptr, key_), 0);
+        auto output = std::vector<std::byte>(64);
+        auto size = output.size();
+        EXPECT_GT(EVP_DigestSign(context,
+                                 reinterpret_cast<unsigned char*>(output.data()),
+                                 &size,
+                                 reinterpret_cast<const unsigned char*>(message.data()),
+                                 message.size()),
+                  0);
+        EVP_MD_CTX_free(context);
+        EXPECT_EQ(size, 64U);
+        return output;
+    }
+
+private:
+    EVP_PKEY* key_{};
+};
+
+auto taap_signed_bytes(std::string_view purpose, std::span<const std::byte> body)
+    -> std::vector<std::byte> {
+    auto output = bytes("TAAP/1 " + std::string{purpose});
+    output.push_back(std::byte{0});
+    output.insert(output.end(), body.begin(), body.end());
+    return output;
+}
+
+struct fido2_vector {
+    liquid::actor by;
+    liquid::signature correct;
+    liquid::signature double_hashed;
+    liquid::signature other_relying_party;
+    liquid::signature user_absent;
+};
+
+template <typename Sign>
+auto make_fido2_vector(std::string algorithm,
+                       std::vector<std::byte> public_key,
+                       std::string_view purpose,
+                       std::span<const std::byte> body,
+                       Sign sign) -> fido2_vector {
+    auto by = liquid::actor{};
+    by.algorithm = std::move(algorithm);
+    by.fingerprint = std::string(52, 'V');
+    by.key_fingerprint = std::string(52, 'W');
+    by.taap_id = "taap:1:" + by.fingerprint;
+    by.public_key = std::move(public_key);
+    by.custody = "fido2";
+    const auto client_data_hash = openssl_sha256(taap_signed_bytes(purpose, body));
+    const auto authenticator_data = ctap2_assertion_authenticator_data("liquid", 7);
+
+    auto correct_input = authenticator_data;
+    correct_input.insert(correct_input.end(), client_data_hash.begin(), client_data_hash.end());
+    // The form liquid verified before liquid#81 was fixed: the client hash hashed a second time.
+    const auto rehashed = openssl_sha256(client_data_hash);
+    auto double_hashed_input = authenticator_data;
+    double_hashed_input.insert(double_hashed_input.end(), rehashed.begin(), rehashed.end());
+
+    auto make = [&](std::vector<std::byte> signature_bytes, std::vector<std::byte> data) {
+        return liquid::signature{by.algorithm,
+                                 "taap:1:" + by.algorithm + ":" + by.key_fingerprint,
+                                 "fido2",
+                                 std::string{purpose},
+                                 "2026-10-20T00:00:00Z",
+                                 std::move(signature_bytes),
+                                 std::move(data),
+                                 client_data_hash};
+    };
+    // Correctly signed assertions whose authenticator data fails WebAuthn §7.2 steps 15-16.
+    auto signed_with = [&](std::vector<std::byte> data) {
+        auto input = data;
+        input.insert(input.end(), client_data_hash.begin(), client_data_hash.end());
+        return make(sign(input), std::move(data));
+    };
+    return {by,
+            make(sign(correct_input), authenticator_data),
+            make(sign(double_hashed_input), authenticator_data),
+            signed_with(ctap2_assertion_authenticator_data("example.com", 7)),
+            signed_with(ctap2_assertion_authenticator_data("liquid", 7, std::byte{0x00}))};
+}
+
+auto expect_fido2_vector(const fido2_vector& vector,
+                         std::string_view purpose,
+                         std::span<const std::byte> body) -> void {
+    auto verified = liquid::verify(vector.by, purpose, body, vector.correct);
+    ASSERT_TRUE(verified) << vector.by.algorithm << ": " << verified.error().message;
+    EXPECT_TRUE(*verified);
+
+    auto rehashed = liquid::verify(vector.by, purpose, body, vector.double_hashed);
+    ASSERT_FALSE(rehashed) << vector.by.algorithm << " accepted a double-hashed client hash";
+    EXPECT_EQ(rehashed.error().code, liquid::errc::unauthorized);
+
+    for (const auto* refused : {&vector.other_relying_party, &vector.user_absent}) {
+        auto result = liquid::verify(vector.by, purpose, body, *refused);
+        ASSERT_FALSE(result) << vector.by.algorithm << " accepted invalid authenticator data";
+        EXPECT_EQ(result.error().code, liquid::errc::unauthorized);
+    }
+
+    auto tampered = vector.correct;
+    tampered.authenticator_data[32] = std::byte{0x05};
+    auto tampered_result = liquid::verify(vector.by, purpose, body, tampered);
+    ASSERT_FALSE(tampered_result);
+    EXPECT_EQ(tampered_result.error().code, liquid::errc::unauthorized);
+
+    auto other_body = bytes("another body");
+    auto wrong_body = liquid::verify(vector.by, purpose, other_body, vector.correct);
+    ASSERT_FALSE(wrong_body);
+    EXPECT_EQ(wrong_body.error().code, liquid::errc::unauthorized);
+}
+
+TEST(HardwareIdentity, fido2_assertion_vectors_follow_ctap2_signed_bytes) {
+    identity_home("fido2-vectors");
+    const auto ed25519 = openssl_ed25519_key{};
+    const auto p256 = p256_key{};
+    for (const auto purpose : {std::string{"drip"},
+                               std::string{"change"},
+                               std::string{"identity_document"},
+                               std::string{"attestation"}}) {
+        const auto body = bytes(purpose + " canonical body");
+        expect_fido2_vector(
+            make_fido2_vector("fido2-eddsa",
+                              ed25519.public_key(),
+                              purpose,
+                              body,
+                              [&](std::span<const std::byte> message) {
+                                  return ed25519.sign_message(message);
+                              }),
+            purpose,
+            body);
+        expect_fido2_vector(
+            make_fido2_vector("fido2-es256",
+                              p256.public_key(),
+                              purpose,
+                              body,
+                              [&](std::span<const std::byte> message) {
+                                  return p256.sign_message(message);
+                              }),
+            purpose,
+            body);
+    }
+}
+
 TEST(HardwareIdentity, piv_double_signs_drips_and_changes) {
     liquid::identity_detail::install_piv_transport(std::make_shared<piv_double>());
     test_signatures("piv", "piv:9c");
@@ -882,6 +1138,13 @@ TEST(HardwareIdentity, wrong_algorithm_and_malformed_metadata_are_unauthorized) 
     EXPECT_EQ(malformed.error().code, liquid::errc::unauthorized);
 }
 
+// liquid#384: the verifier pins the policy issuer and the repository outside the repository.
+auto release_trust_for(const liquid::digest& repository, const liquid::signer& policy_signer)
+    -> liquid::release_trust {
+    return liquid::release_trust{.repository = repository,
+                                 .policy_issuers = {policy_signer.identity().taap_id}};
+}
+
 TEST(ReleaseApproval, threshold_counts_distinct_valid_identities) {
     auto policy_signer = open_identity("release-policy");
     auto first = open_identity("release-first");
@@ -897,6 +1160,9 @@ TEST(ReleaseApproval, threshold_counts_distinct_valid_identities) {
         "2099-01-01T00:00:00Z",
         policy_signer));
     ASSERT_TRUE(policy) << policy.error().message;
+    // liquid#384: the verifier pins the policy issuer and the repository outside the repository.
+    const auto trust = liquid::release_trust{.repository = repository,
+                                             .policy_issuers = {policy_signer.identity().taap_id}};
     auto first_approval =
         liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v1", first));
     auto second_approval =
@@ -904,22 +1170,157 @@ TEST(ReleaseApproval, threshold_counts_distinct_valid_identities) {
     ASSERT_TRUE(first_approval) << first_approval.error().message;
     ASSERT_TRUE(second_approval) << second_approval.error().message;
 
+    // The verifier runs in `third`'s home. Until it trusts the other identities, the policy's
+    // issuer is unknown and the policy is refused.
+    const auto both = std::array{*first_approval, *second_approval};
+    auto unknown_policy = liquid::verify_release(artifact, *policy, both, trust);
+    ASSERT_FALSE(unknown_policy);
+    EXPECT_EQ(unknown_policy.error().code, liquid::errc::unauthorized);
+    trust_identities({&policy_signer});
+    auto unknown_approvers = liquid::verify_release(artifact, *policy, both, trust);
+    ASSERT_TRUE(unknown_approvers) << unknown_approvers.error().message;
+    EXPECT_FALSE(unknown_approvers->satisfied);
+    EXPECT_TRUE(unknown_approvers->distinct_valid_signers.empty());
+    auto expected_unknown =
+        std::vector<std::string>{first.identity().taap_id, second.identity().taap_id};
+    std::ranges::sort(expected_unknown);
+    EXPECT_EQ(unknown_approvers->unknown_signers, expected_unknown);
+    trust_identities({&first, &second});
+
     const auto one = std::array{*first_approval};
-    auto one_result = liquid::verify_release(artifact, *policy, one);
+    auto one_result = liquid::verify_release(artifact, *policy, one, trust);
     ASSERT_TRUE(one_result) << one_result.error().message;
     EXPECT_FALSE(one_result->satisfied);
 
     const auto duplicate = std::array{*first_approval, *first_approval};
-    auto duplicate_result = liquid::verify_release(artifact, *policy, duplicate);
+    auto duplicate_result = liquid::verify_release(artifact, *policy, duplicate, trust);
     ASSERT_TRUE(duplicate_result) << duplicate_result.error().message;
     EXPECT_FALSE(duplicate_result->satisfied);
     EXPECT_EQ(duplicate_result->distinct_valid_signers.size(), 1U);
 
     const auto two = std::array{*first_approval, *second_approval};
-    auto two_result = liquid::verify_release(artifact, *policy, two);
+    auto two_result = liquid::verify_release(artifact, *policy, two, trust);
     ASSERT_TRUE(two_result) << two_result.error().message;
     EXPECT_TRUE(two_result->satisfied);
     EXPECT_EQ(two_result->distinct_valid_signers.size(), 2U);
+}
+
+// liquid#429, second exploit: one person forges release_approval/1 statements that name two
+// listed signers, each self-signed with a throwaway key. They never count toward the threshold:
+// not while the verifier lacks the named signers' chains, not once it holds them, and not when it
+// also trusts the throwaway identities.
+TEST(ReleaseApproval, self_signed_approvals_naming_listed_signers_do_not_count) {
+    auto policy_signer = open_identity("forged-policy");
+    auto first = open_identity("forged-first");
+    auto second = open_identity("forged-second");
+    auto third = open_identity("forged-third");
+    auto throwaway_one = open_identity("forged-throwaway-one");
+    auto throwaway_two = open_identity("forged-throwaway-two");
+    const auto repository = digest_with(std::byte{0x55});
+    const auto artifact = digest_with(std::byte{0x66});
+    auto policy = liquid::runtime::block_on(liquid::make_release_policy(
+        repository,
+        "targets",
+        2,
+        {first.identity().taap_id, second.identity().taap_id, third.identity().taap_id},
+        "2099-01-01T00:00:00Z",
+        policy_signer));
+    ASSERT_TRUE(policy) << policy.error().message;
+
+    // The issuer names a listed signer; the key, and the signature, are the throwaway's.
+    const auto forge =
+        [&](liquid::signer& throwaway,
+            const liquid::actor& claimed) -> liquid::result<liquid::release_approval> {
+        auto approval =
+            liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v1", throwaway));
+        if (!approval) {
+            return std::unexpected(approval.error());
+        }
+        auto statement = approval->statement;
+        statement.issuer.taap_id = claimed.taap_id;
+        statement.issuer.fingerprint = claimed.fingerprint;
+        auto body = liquid::objects::encode_attestation_body_unchecked(statement);
+        if (!body) {
+            return std::unexpected(body.error());
+        }
+        auto signed_value = liquid::runtime::block_on(throwaway.sign("attestation", *body));
+        if (!signed_value) {
+            return std::unexpected(signed_value.error());
+        }
+        auto encoded = liquid::encode_attestation_signature(*signed_value);
+        if (!encoded) {
+            return std::unexpected(encoded.error());
+        }
+        statement.signature = std::move(*encoded);
+        return liquid::release_approval{std::move(statement)};
+    };
+    auto forged_first = forge(throwaway_one, first.identity());
+    auto forged_second = forge(throwaway_two, second.identity());
+    ASSERT_TRUE(forged_first) << forged_first.error().message;
+    ASSERT_TRUE(forged_second) << forged_second.error().message;
+    const auto forged = std::array{*forged_first, *forged_second};
+
+    select_identity_home("forged-third");
+    trust_identities({&policy_signer});
+    auto unknown = liquid::verify_release(
+        artifact, *policy, forged, release_trust_for(repository, policy_signer));
+    ASSERT_TRUE(unknown) << unknown.error().message;
+    EXPECT_FALSE(unknown->satisfied);
+    EXPECT_TRUE(unknown->distinct_valid_signers.empty());
+
+    trust_identities({&first, &second, &throwaway_one, &throwaway_two});
+    auto known = liquid::verify_release(
+        artifact, *policy, forged, release_trust_for(repository, policy_signer));
+    ASSERT_TRUE(known) << known.error().message;
+    EXPECT_FALSE(known->satisfied) << "self-signed approvals met a 2-of-3 threshold";
+    EXPECT_TRUE(known->distinct_valid_signers.empty());
+    EXPECT_TRUE(known->unknown_signers.empty());
+
+    // A real approval counts once; the forged one beside it still adds nothing.
+    auto real_first =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v1", first));
+    ASSERT_TRUE(real_first) << real_first.error().message;
+    const auto mixed = std::array{*real_first, *forged_second};
+    auto one = liquid::verify_release(
+        artifact, *policy, mixed, release_trust_for(repository, policy_signer));
+    ASSERT_TRUE(one) << one.error().message;
+    EXPECT_FALSE(one->satisfied);
+    EXPECT_EQ(one->distinct_valid_signers, std::vector<std::string>{first.identity().taap_id});
+}
+
+TEST(ReleaseApproval, fido2_eddsa_and_es256_approvals_meet_the_threshold) {
+    auto policy_signer = open_identity("fido2-release-policy");
+    liquid::identity_detail::install_fido2_transport(std::make_shared<fido_double>());
+    auto first = open_identity("fido2-release-eddsa");
+    ASSERT_TRUE(liquid::runtime::block_on(first.rotate_to("fido2")));
+    ASSERT_EQ(first.identity().algorithm, "fido2-eddsa");
+    liquid::identity_detail::install_fido2_transport(std::make_shared<fido_es256_double>());
+    auto second = open_identity("fido2-release-es256");
+    ASSERT_TRUE(liquid::runtime::block_on(second.rotate_to("fido2")));
+    ASSERT_EQ(second.identity().algorithm, "fido2-es256");
+    const auto repository = digest_with(std::byte{0x55});
+    const auto artifact = digest_with(std::byte{0x66});
+    auto policy = liquid::runtime::block_on(
+        liquid::make_release_policy(repository,
+                                    "targets",
+                                    2,
+                                    {first.identity().taap_id, second.identity().taap_id},
+                                    "2099-01-01T00:00:00Z",
+                                    policy_signer));
+    ASSERT_TRUE(policy) << policy.error().message;
+    auto first_approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v3", first));
+    auto second_approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v3", second));
+    ASSERT_TRUE(first_approval) << first_approval.error().message;
+    ASSERT_TRUE(second_approval) << second_approval.error().message;
+    const auto approvals = std::array{*first_approval, *second_approval};
+    auto result = liquid::verify_release(
+        artifact, *policy, approvals, release_trust_for(repository, policy_signer));
+    ASSERT_TRUE(result) << result.error().message;
+    EXPECT_TRUE(result->satisfied);
+    EXPECT_EQ(result->distinct_valid_signers.size(), 2U);
+    liquid::identity_detail::install_fido2_transport({});
 }
 
 TEST(ReleaseApproval, approval_after_declared_compromise_is_rejected) {
@@ -948,11 +1349,84 @@ TEST(ReleaseApproval, approval_after_declared_compromise_is_rejected) {
     auto rotated = liquid::runtime::block_on(second.rotate(liquid::compromise_declaration{
         second.identity().key_fingerprint, signature->signed_at, "release key compromised"}));
     ASSERT_TRUE(rotated) << rotated.error().message;
+    trust_identities({&policy_signer, &first});
     const auto approvals = std::array{*first_approval, *second_approval};
-    auto result = liquid::verify_release(artifact, *policy, approvals);
+    const auto trust = liquid::release_trust{.repository = repository,
+                                             .policy_issuers = {policy_signer.identity().taap_id}};
+    auto result = liquid::verify_release(artifact, *policy, approvals, trust);
     ASSERT_TRUE(result) << result.error().message;
     EXPECT_FALSE(result->satisfied);
     EXPECT_EQ(result->distinct_valid_signers.size(), 1U);
+}
+
+// liquid#384: the release policy ships with the repository, so a writer of the repository can sign
+// one naming themselves. Its issuer is authenticated (its chain is held, as sync would leave it),
+// but it is not a pinned release-policy issuer, so the policy is refused.
+TEST(ReleaseApproval, policy_from_an_unpinned_issuer_is_refused) {
+    auto pinned = open_identity("unpinned-pinned");
+    auto attacker = open_identity("unpinned-attacker");
+    auto verifier = open_identity("unpinned-verifier");
+    const auto repository = digest_with(std::byte{0x55});
+    const auto artifact = digest_with(std::byte{0x66});
+    auto policy = liquid::runtime::block_on(liquid::make_release_policy(
+        repository, "targets", 1, {attacker.identity().taap_id}, "2099-01-01T00:00:00Z", attacker));
+    ASSERT_TRUE(policy) << policy.error().message;
+    auto approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v3", attacker));
+    ASSERT_TRUE(approval) << approval.error().message;
+    trust_identities({&pinned, &attacker});
+    const auto approvals = std::array{*approval};
+
+    const auto pinned_trust = liquid::release_trust{.repository = repository,
+                                                    .policy_issuers = {pinned.identity().taap_id}};
+    auto refused = liquid::verify_release(artifact, *policy, approvals, pinned_trust);
+    ASSERT_FALSE(refused) << "a policy from an unpinned issuer authorized a release";
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+    EXPECT_NE(refused.error().message.find("not a configured release-policy issuer"),
+              std::string::npos)
+        << refused.error().message;
+
+    const auto empty_trust = liquid::release_trust{.repository = repository};
+    auto empty = liquid::verify_release(artifact, *policy, approvals, empty_trust);
+    ASSERT_FALSE(empty) << "a policy was accepted with no release-policy issuer configured";
+    EXPECT_EQ(empty.error().code, liquid::errc::unauthorized);
+    static_cast<void>(verifier);
+}
+
+// liquid#384: a pinned issuer's policy names the repository it governs and cannot be replayed to
+// authorize a release of another repository; for its own repository it passes.
+TEST(ReleaseApproval, policy_for_another_repository_is_refused) {
+    auto issuer = open_identity("other-repository-issuer");
+    auto approver = open_identity("other-repository-approver");
+    auto verifier = open_identity("other-repository-verifier");
+    const auto governed = digest_with(std::byte{0x77});
+    const auto released = digest_with(std::byte{0x78});
+    const auto artifact = digest_with(std::byte{0x79});
+    auto policy = liquid::runtime::block_on(liquid::make_release_policy(
+        governed, "targets", 1, {approver.identity().taap_id}, "2099-01-01T00:00:00Z", issuer));
+    ASSERT_TRUE(policy) << policy.error().message;
+    auto approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v4", approver));
+    ASSERT_TRUE(approval) << approval.error().message;
+    trust_identities({&issuer, &approver});
+    const auto approvals = std::array{*approval};
+
+    const auto other = liquid::release_trust{.repository = released,
+                                             .policy_issuers = {issuer.identity().taap_id}};
+    auto refused = liquid::verify_release(artifact, *policy, approvals, other);
+    ASSERT_FALSE(refused) << "a policy for another repository authorized a release";
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+    EXPECT_NE(refused.error().message.find("another repository"), std::string::npos)
+        << refused.error().message;
+
+    const auto own = liquid::release_trust{.repository = governed,
+                                           .policy_issuers = {issuer.identity().taap_id}};
+    auto accepted = liquid::verify_release(artifact, *policy, approvals, own);
+    ASSERT_TRUE(accepted) << accepted.error().message;
+    EXPECT_TRUE(accepted->satisfied);
+    EXPECT_EQ(accepted->distinct_valid_signers,
+              std::vector<std::string>{approver.identity().taap_id});
+    static_cast<void>(verifier);
 }
 
 TEST(TpmCustody, seal_unseal_and_changed_pcr_refusal) {

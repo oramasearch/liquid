@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/abi.hpp"
 
 #include <algorithm>
@@ -51,6 +53,8 @@ auto change_name(abi_change_kind value) -> std::string_view {
         return "size_changed";
     case abi_change_kind::version_changed:
         return "version_changed";
+    case abi_change_kind::inspection_truncated:
+        return "inspection_truncated";
     }
     return "type_changed";
 }
@@ -97,7 +101,8 @@ auto convert(formats::binary::image parsed, digest subject) -> abi_descriptor {
                                                                       : abi_binary_kind::pe,
         .architecture = std::move(parsed.architecture),
         .install_name = parsed.shared_library ? std::move(parsed.install_name) : std::nullopt,
-        .needed_libraries = std::move(parsed.needed_libraries)};
+        .needed_libraries = std::move(parsed.needed_libraries),
+        .truncated = parsed.truncated};
     output.exported_symbols.reserve(parsed.exported_symbols.size());
     for (auto& symbol : parsed.exported_symbols) {
         output.exported_symbols.push_back(
@@ -156,6 +161,13 @@ result<abi_descriptor> extract_abi(std::span<const std::byte> binary) {
 
 abi_report diff_abi(const abi_descriptor& old_descriptor, const abi_descriptor& new_descriptor) {
     auto report = abi_report{};
+    if (old_descriptor.truncated || new_descriptor.truncated) {
+        report.verdict = abi_verdict::incompatible;
+        report.changes.push_back({{},
+                                  abi_change_kind::inspection_truncated,
+                                  "symbol inspection was truncated; compatibility is unknown"});
+        return report;
+    }
     auto incompatible = false;
     auto additions = false;
     auto matched = std::vector<bool>(new_descriptor.exported_symbols.size());
@@ -258,7 +270,7 @@ result<std::string> abi_json(const abi_descriptor& descriptor) {
         }
         output += quoted(descriptor.needed_libraries[index]);
     }
-    output += "]}";
+    output += descriptor.truncated ? "],\"truncated\":true}" : "],\"truncated\":false}";
     return output;
 }
 

@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: MIT
+
 #include <gtest/gtest.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -22,24 +25,44 @@
 #include <future>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
+#include <optional>
+
+#include <mutex>
+
 #include <random>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <variant>
+
+#include <utility>
 #include <vector>
 
+#include "build/repository_access.hpp"
+
+#include "drive/source.hpp"
 #include "encoding/cbor.hpp"
+#include "liquid/attestation.hpp"
 #include "liquid/drive.hpp"
+#include "liquid/identity.hpp"
+
+#include "liquid/hash.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "liquid/sync.hpp"
+#include "net/retry_after.hpp"
 #include "objects/records.hpp"
+#include "repository/drive_access.hpp"
 #include "repository/store_access.hpp"
+#include "repository/sync_access.hpp"
+#include "sync/codec.hpp"
 #include "temporary_directory.hpp"
+#include "vfs/repository_access.hpp"
 
 namespace {
 
@@ -179,6 +202,30 @@ private:
     std::vector<liquid::digest> requests_;
 };
 
+class requesting_sync_destination final : public liquid::remote_blob_source {
+public:
+    std::optional<std::vector<liquid::digest>> requested;
+    std::vector<liquid::digest> offered;
+    std::vector<std::pair<liquid::digest, std::vector<std::byte>>> uploads;
+
+    liquid::runtime::task<std::vector<liquid::digest>>
+    find_missing(std::string, std::vector<liquid::digest> objects) override {
+        offered = std::move(objects);
+        co_return requested.value_or(offered);
+    }
+
+    liquid::runtime::task<std::uint64_t>
+    read_range(std::string, liquid::digest, std::uint64_t, std::span<std::byte>) override {
+        co_return std::unexpected(liquid::error{liquid::errc::unsupported, "destination only"});
+    }
+
+    liquid::runtime::task<void>
+    write(std::string, liquid::digest id, std::vector<std::byte> contents) override {
+        uploads.emplace_back(id, std::move(contents));
+        co_return liquid::result<void>{};
+    }
+};
+
 template <class T>
 liquid::runtime::task<void>
 complete_async(liquid::runtime::task<T> operation,
@@ -256,6 +303,27 @@ public:
         fail_chunk_read_.store(true);
     }
 
+    // Answer the next `count` requests of `route` (find-missing, chunk-upload, push, pull,
+    // chunk-read) with `status` and a canonical `unavailable` error body, plus a `Retry-After`
+    // header when `retry_after` is not empty, before serving that route normally again.
+    void refuse_next(std::string route, unsigned count, unsigned status, std::string retry_after) {
+        auto lock = std::scoped_lock{mutex_};
+        refusals_[std::move(route)] = refusal{count, status, std::move(retry_after)};
+    }
+
+    // How many requests of `route` arrived, refused ones included.
+    auto requests(const std::string& route) const -> unsigned {
+        auto lock = std::scoped_lock{mutex_};
+        const auto found = requests_.find(route);
+        return found == requests_.end() ? 0U : found->second;
+    }
+
+    auto pending_refusals(const std::string& route) const -> unsigned {
+        auto lock = std::scoped_lock{mutex_};
+        const auto found = refusals_.find(route);
+        return found == refusals_.end() ? 0U : found->second.remaining;
+    }
+
 private:
     void serve() {
         while (!stopping_.load()) {
@@ -303,6 +371,9 @@ private:
         const auto body_text = std::string_view{request}.substr(header_end + 4);
         const auto* first = reinterpret_cast<const std::byte*>(body_text.data());
         const auto body = std::span<const std::byte>{first, body_text.size()};
+        if (refused(connection, route(method, target))) {
+            return;
+        }
         if (!required_bearer_.empty()) {
             const auto authorization = "\r\nAuthorization: Bearer " + required_bearer_ + "\r\n";
             if (request.find(authorization) == std::string::npos) {
@@ -332,6 +403,52 @@ private:
         } else {
             respond(connection, 404, {});
         }
+    }
+
+    static auto route(std::string_view method, std::string_view target) -> std::string {
+        if (method == "POST" && target.ends_with("/sync/find-missing")) {
+            return "find-missing";
+        }
+        if (method == "POST" && target.ends_with("/sync/chunks")) {
+            return "chunk-upload";
+        }
+        if (method == "POST" && target.ends_with("/sync/push")) {
+            return "push";
+        }
+        if (method == "POST" && target.ends_with("/sync/pull")) {
+            return "pull";
+        }
+        if (method == "GET" && target.find("/sync/chunks/") != std::string_view::npos) {
+            return "chunk-read";
+        }
+        return "other";
+    }
+
+    auto refused(int connection, const std::string& name) -> bool {
+        auto status = 0U;
+        auto retry_after = std::string{};
+        {
+            auto lock = std::scoped_lock{mutex_};
+            ++requests_[name];
+            const auto found = refusals_.find(name);
+            if (found == refusals_.end() || found->second.remaining == 0) {
+                return false;
+            }
+            --found->second.remaining;
+            status = found->second.status;
+            retry_after = found->second.retry_after;
+        }
+        auto body = liquid::sync_server::encode_error(liquid::error{
+            liquid::errc::unavailable, "repository store is being moved", "store_unavailable"});
+        auto headers = std::string{};
+        if (!retry_after.empty()) {
+            headers = "Retry-After: " + retry_after + "\r\n";
+        }
+        respond(connection,
+                status,
+                body ? std::span<const std::byte>{*body} : std::span<const std::byte>{},
+                headers);
+        return true;
     }
 
     void find_missing(int connection, std::span<const std::byte> body) {
@@ -429,20 +546,33 @@ private:
                 body ? std::span<const std::byte>{*body} : std::span<const std::byte>{});
     }
 
-    void respond(int connection, unsigned status, std::span<const std::byte> body) {
+    void respond(int connection,
+                 unsigned status,
+                 std::span<const std::byte> body,
+                 std::string_view extra_headers = {}) {
         const auto reason = status == 200 ? "OK" : status == 400 ? "Bad Request" : "Not Found";
         auto response = "HTTP/1.1 " + std::to_string(status) + " " + reason + "\r\n";
         response += "Content-Type: application/vnd.liquid.sync-v1\r\n";
+        response += extra_headers;
         response += "Content-Length: " + std::to_string(body.size()) + "\r\n";
         response += "Connection: close\r\n\r\n";
         response.append(reinterpret_cast<const char*>(body.data()), body.size());
         static_cast<void>(send_all(connection, response));
     }
 
+    struct refusal {
+        unsigned remaining{};
+        unsigned status{};
+        std::string retry_after;
+    };
+
     int listener_{-1};
     std::uint16_t port_{};
     std::atomic_bool stopping_{};
     std::atomic_bool fail_chunk_read_{};
+    mutable std::mutex mutex_;
+    std::map<std::string, refusal> refusals_;
+    std::map<std::string, unsigned> requests_;
     std::thread thread_;
     liquid::sync_server* server_{};
     bool legacy_push_reply_{};
@@ -467,6 +597,87 @@ auto export_all(liquid::repository& repository) -> liquid::result<std::vector<li
             return output;
         }
     }
+}
+
+TEST(Sync, SendRejectsUnofferedObjectsBeforeAnyUpload) {
+    temporary_directory path;
+    auto source = liquid::runtime::block_on(liquid::store::open(path.path()));
+    ASSERT_TRUE(source);
+    auto root = liquid::runtime::block_on(source->put(bytes("selected repository")));
+    auto unrelated = liquid::runtime::block_on(source->put(bytes("unrelated private object")));
+    ASSERT_TRUE(root);
+    ASSERT_TRUE(unrelated);
+    auto peer = requesting_sync_destination{};
+    auto session = liquid::sync_session{*source, peer, "repository"};
+    for (const auto& roots : {std::vector<liquid::digest>{*root}, std::vector<liquid::digest>{}}) {
+        for (const auto& response : {std::vector<liquid::digest>{*unrelated},
+                                     std::vector<liquid::digest>{*root, *unrelated},
+                                     std::vector<liquid::digest>{*unrelated, *root}}) {
+            peer.requested = response;
+            peer.uploads.clear();
+            auto sent = liquid::runtime::block_on(session.send(roots));
+            ASSERT_FALSE(sent);
+            EXPECT_EQ(sent.error().code, liquid::errc::corrupt);
+            EXPECT_TRUE(peer.uploads.empty());
+        }
+    }
+    // A later negotiation is restricted to its own roots, even on the same session.
+    peer.requested = std::vector<liquid::digest>{*root};
+    auto sent = liquid::runtime::block_on(session.send(std::array{*unrelated}));
+    ASSERT_FALSE(sent);
+    EXPECT_EQ(sent.error().code, liquid::errc::corrupt);
+    EXPECT_TRUE(peer.uploads.empty());
+}
+
+TEST(Sync, SendChecksTheRequestedDigestAlgorithm) {
+    temporary_directory path;
+    auto source = liquid::runtime::block_on(liquid::store::open(path.path()));
+    ASSERT_TRUE(source);
+    auto root = liquid::runtime::block_on(source->put(bytes("selected repository")));
+    ASSERT_TRUE(root);
+    auto wrong_algorithm = *root;
+    wrong_algorithm.alg = liquid::algorithm::sha256;
+    auto peer = requesting_sync_destination{};
+    peer.requested = std::vector<liquid::digest>{wrong_algorithm};
+    auto session = liquid::sync_session{*source, peer, "repository"};
+    auto sent = liquid::runtime::block_on(session.send(std::array{*root}));
+    ASSERT_FALSE(sent);
+    EXPECT_EQ(sent.error().code, liquid::errc::corrupt);
+    EXPECT_TRUE(peer.uploads.empty());
+}
+
+TEST(Sync, SendAcceptsOfferedMetadataAndPayloadChunks) {
+    temporary_directory path;
+    auto source = liquid::runtime::block_on(liquid::store::open(path.path()));
+    ASSERT_TRUE(source);
+    auto content = liquid::runtime::block_on(source->put(bytes("selected payload")));
+    ASSERT_TRUE(content);
+    auto blob = liquid::repository_detail::store_access::blob_for(*source, *content);
+    ASSERT_TRUE(blob);
+    auto record = liquid::objects::encode(*blob);
+    ASSERT_TRUE(record);
+    auto root_id = liquid::hash(liquid::algorithm::sha256, *record);
+    ASSERT_TRUE(root_id);
+    auto root = liquid::runtime::block_on(
+        liquid::repository_detail::store_access::put_verified(*source, *root_id, *record));
+    ASSERT_TRUE(root);
+    auto peer = requesting_sync_destination{};
+    auto session = liquid::sync_session{*source, peer, "repository"};
+    auto sent = liquid::runtime::block_on(session.send(std::array{*root}));
+    ASSERT_TRUE(sent) << sent.error().message;
+    EXPECT_EQ(sent->objects, 1U + blob->chunks.size());
+    EXPECT_EQ(peer.uploads.size(), peer.offered.size());
+    for (const auto& [id, uploaded] : peer.uploads) {
+        auto expected = liquid::runtime::block_on(source->get(id));
+        ASSERT_TRUE(expected);
+        EXPECT_EQ(uploaded, *expected);
+    }
+    peer.uploads.clear();
+    peer.requested = std::vector<liquid::digest>{};
+    sent = liquid::runtime::block_on(session.send(std::array{*root}));
+    ASSERT_TRUE(sent);
+    EXPECT_EQ(sent->objects, 0U);
+    EXPECT_TRUE(peer.uploads.empty());
 }
 
 TEST(Sync, ReceiveMetadataRegistersBlobsWithoutFetchingChunks) {
@@ -677,6 +888,214 @@ TEST(Sync, peer_bucket_returns_retry_report_and_leaves_repository_unchanged) {
     auto head = liquid::runtime::block_on(destination->head());
     EXPECT_FALSE(head);
     EXPECT_EQ(head.error().code, liquid::errc::not_found);
+}
+
+TEST(RetryAfter, ReadsDelaySecondsAndEveryHttpDateForm) {
+    using namespace std::chrono;
+    // 1994-11-06 08:49:37 UTC, the example instant RFC 9110 uses for all three date forms.
+    const auto instant = sys_days{year{1994} / November / 6} + hours{8} + minutes{49} + seconds{37};
+    const auto before = instant - seconds{5};
+    EXPECT_EQ(liquid::net_detail::parse_retry_after("0", before), milliseconds{0});
+    EXPECT_EQ(liquid::net_detail::parse_retry_after("1", before), milliseconds{1000});
+    EXPECT_EQ(liquid::net_detail::parse_retry_after(" 120 ", before), milliseconds{120000});
+    EXPECT_EQ(liquid::net_detail::parse_retry_after("Sun, 06 Nov 1994 08:49:37 GMT", before),
+              milliseconds{5000});
+    EXPECT_EQ(liquid::net_detail::parse_retry_after("Sunday, 06-Nov-94 08:49:37 GMT", before),
+              milliseconds{5000});
+    EXPECT_EQ(liquid::net_detail::parse_retry_after("Sun Nov  6 08:49:37 1994", before),
+              milliseconds{5000});
+    // A date that has passed asks for no wait.
+    EXPECT_EQ(
+        liquid::net_detail::parse_retry_after("Sun, 06 Nov 1994 08:49:37 GMT", instant + hours{1}),
+        milliseconds{0});
+    // An enormous delay is clamped rather than overflowing; it is still far past any budget.
+    const auto huge = liquid::net_detail::parse_retry_after("99999999999999999999999999", before);
+    ASSERT_TRUE(huge);
+    EXPECT_GT(*huge, hours{24 * 365});
+    for (const auto* malformed : {"",
+                                  "  ",
+                                  "-1",
+                                  "1.5",
+                                  "soon",
+                                  "Sun, 06 Nov 1994 08:49:37 UTC",
+                                  "Sun, 31 Feb 1994 08:49:37 GMT",
+                                  "Sun, 06 Nov 1994 25:49:37 GMT",
+                                  "Sun Nov 6 08:49:37 1994"}) {
+        EXPECT_FALSE(liquid::net_detail::parse_retry_after(malformed, before)) << malformed;
+    }
+}
+
+namespace {
+
+// A server repository behind the fake HTTP adapter, and a local source repository with one cut.
+struct retry_fixture {
+    temporary_directory source_path;
+    temporary_directory destination_path;
+    temporary_directory server_path;
+    liquid::store server_store;
+    liquid::repository server_repository;
+    liquid::repository source;
+    liquid::repository destination;
+    std::unique_ptr<liquid::sync_server> sync_server;
+    std::unique_ptr<sync_http_server> http;
+
+    retry_fixture()
+        : server_store(open_store(server_path.path() / "store")),
+          server_repository(create_repository("repository", server_store)),
+          source(create_local(source_path.path())),
+          destination(create_local(destination_path.path())) {
+        sync_server = std::make_unique<liquid::sync_server>(server_repository, server_store);
+        http = std::make_unique<sync_http_server>(*sync_server);
+        expect(liquid::runtime::block_on(source.write("one.txt", bytes("one"))));
+        expect(liquid::runtime::block_on(source.cut("first")));
+    }
+
+    static auto open_store(const std::filesystem::path& path) -> liquid::store {
+        auto opened = liquid::runtime::block_on(liquid::store::open(path));
+        expect(opened);
+        return std::move(*opened);
+    }
+
+    static auto create_repository(std::string name, liquid::store& store) -> liquid::repository {
+        auto options = liquid::repository_options{};
+        options.store = &store;
+        auto created = liquid::runtime::block_on(liquid::repository::create(name, options));
+        expect(created);
+        return std::move(*created);
+    }
+
+    static auto create_local(const std::filesystem::path& path) -> liquid::repository {
+        auto created = liquid::runtime::block_on(liquid::repository::create(path));
+        expect(created);
+        return std::move(*created);
+    }
+
+    template <class T> static void expect(const liquid::result<T>& value) {
+        if (!value) {
+            throw std::runtime_error(value.error().message + " " + value.error().context);
+        }
+    }
+};
+
+} // namespace
+
+TEST(Sync, RetriesEveryRequestRefused503WithRetryAfter) {
+    retry_fixture fixture;
+    auto& http = *fixture.http;
+    for (const auto* route : {"find-missing", "chunk-upload", "push"}) {
+        http.refuse_next(route, 1, 503, "0");
+    }
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto pushed = liquid::runtime::block_on(endpoint.push(fixture.source));
+    ASSERT_TRUE(pushed) << pushed.error().message << " " << pushed.error().context;
+    EXPECT_GT(pushed->sent.objects, 0U);
+    for (const auto* route : {"find-missing", "chunk-upload", "push"}) {
+        EXPECT_EQ(http.pending_refusals(route), 0U) << route;
+    }
+    EXPECT_EQ(http.requests("find-missing"), 2U);
+    EXPECT_EQ(http.requests("push"), 2U);
+    EXPECT_GE(http.requests("chunk-upload"), 2U);
+
+    for (const auto* route : {"pull", "chunk-read"}) {
+        http.refuse_next(route, 1, 503, "0");
+    }
+    auto pulled = liquid::runtime::block_on(endpoint.pull(fixture.destination));
+    ASSERT_TRUE(pulled) << pulled.error().message << " " << pulled.error().context;
+    EXPECT_EQ(http.requests("pull"), 2U);
+    EXPECT_EQ(http.pending_refusals("chunk-read"), 0U);
+    EXPECT_GE(http.requests("chunk-read"), 2U);
+    auto one = liquid::runtime::block_on(fixture.destination.read("one.txt"));
+    ASSERT_TRUE(one);
+    EXPECT_EQ(text(*one), "one");
+}
+
+TEST(Sync, RetryWaitsForRetryAfterSecondsAndHonoursAnHttpDate) {
+    retry_fixture fixture;
+    auto& http = *fixture.http;
+    auto endpoint = liquid::sync_endpoint{http.url()};
+
+    http.refuse_next("push", 1, 503, "1");
+    const auto started = std::chrono::steady_clock::now();
+    auto pushed = liquid::runtime::block_on(endpoint.push(fixture.source));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    ASSERT_TRUE(pushed) << pushed.error().message << " " << pushed.error().context;
+    EXPECT_EQ(http.requests("push"), 2U);
+    EXPECT_GE(elapsed, std::chrono::milliseconds{950});
+
+    // An HTTP-date that has already passed is a retry with no wait.
+    http.refuse_next("pull", 1, 503, "Sun, 06 Nov 1994 08:49:37 GMT");
+    auto pulled = liquid::runtime::block_on(endpoint.pull(fixture.destination));
+    ASSERT_TRUE(pulled) << pulled.error().message << " " << pulled.error().context;
+    EXPECT_EQ(http.requests("pull"), 2U);
+
+    // A 429 that carries Retry-After is retried the same way.
+    http.refuse_next("find-missing", 2, 429, "0");
+    ASSERT_TRUE(liquid::runtime::block_on(fixture.source.write("two.txt", bytes("two"))));
+    ASSERT_TRUE(liquid::runtime::block_on(fixture.source.cut("second")));
+    auto again = liquid::runtime::block_on(endpoint.push(fixture.source));
+    ASSERT_TRUE(again) << again.error().message << " " << again.error().context;
+    EXPECT_EQ(http.requests("find-missing"), 3U + 1U);
+    EXPECT_EQ(http.pending_refusals("find-missing"), 0U);
+}
+
+TEST(Sync, RefusalsWithoutRetryAfterOrOfOtherStatusesAreNotRetried) {
+    retry_fixture fixture;
+    auto& http = *fixture.http;
+    auto endpoint = liquid::sync_endpoint{http.url()};
+
+    http.refuse_next("find-missing", 1, 503, "");
+    auto bare = liquid::runtime::block_on(endpoint.push(fixture.source));
+    ASSERT_FALSE(bare);
+    EXPECT_EQ(bare.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 1U);
+
+    http.refuse_next("find-missing", 1, 500, "0");
+    auto server_error = liquid::runtime::block_on(endpoint.push(fixture.source));
+    ASSERT_FALSE(server_error);
+    EXPECT_EQ(server_error.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 2U);
+
+    http.refuse_next("find-missing", 1, 503, "whenever");
+    auto malformed = liquid::runtime::block_on(endpoint.push(fixture.source));
+    ASSERT_FALSE(malformed);
+    EXPECT_EQ(malformed.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 3U);
+}
+
+TEST(Sync, RetryStopsWhenAttemptsOrTheWaitBudgetAreSpent) {
+    retry_fixture fixture;
+    auto& http = *fixture.http;
+
+    auto options = liquid::sync_endpoint_options{};
+    options.retry_attempts = 3;
+    auto limited = liquid::sync_endpoint{http.url(), options};
+    http.refuse_next("find-missing", 100, 503, "0");
+    auto exhausted = liquid::runtime::block_on(limited.push(fixture.source));
+    ASSERT_FALSE(exhausted);
+    EXPECT_EQ(exhausted.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 3U);
+
+    // A wait longer than the remaining budget is not taken: the refusal is returned at once.
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    http.refuse_next("find-missing", 1, 503, "120");
+    const auto started = std::chrono::steady_clock::now();
+    auto too_long = liquid::runtime::block_on(endpoint.push(fixture.source));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    ASSERT_FALSE(too_long);
+    EXPECT_EQ(too_long.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 4U);
+    EXPECT_LT(elapsed, std::chrono::seconds{10});
+
+    // The budget is a total across retries: two 1 s waits do not fit in 1.5 s, so the second
+    // refusal is returned after one wait.
+    auto budget = liquid::sync_endpoint_options{};
+    budget.retry_budget = std::chrono::milliseconds{1500};
+    auto budgeted = liquid::sync_endpoint{http.url(), budget};
+    http.refuse_next("find-missing", 5, 503, "1");
+    auto spent = liquid::runtime::block_on(budgeted.push(fixture.source));
+    ASSERT_FALSE(spent);
+    EXPECT_EQ(spent.error().code, liquid::errc::unavailable);
+    EXPECT_EQ(http.requests("find-missing"), 6U);
 }
 
 TEST(Sync, ChangeRefusalProducesAReferenceOutcome) {
@@ -890,7 +1309,7 @@ TEST(Sync, AtomicPushRefusesEveryReferenceWhenOneIsRefused) {
     EXPECT_TRUE(root->entries.empty());
 }
 
-TEST(Sync, ThrowingAuthorizerRefusesEveryReferenceAndKeepsObjects) {
+TEST(Sync, ThrowingAuthorizerRefusesEveryReferenceAndStoresNothing) {
     temporary_directory source_path;
     temporary_directory server_path;
     auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
@@ -928,10 +1347,198 @@ TEST(Sync, ThrowingAuthorizerRefusesEveryReferenceAndKeepsObjects) {
     auto destination_refs = liquid::runtime::block_on(destination->refs());
     ASSERT_TRUE(destination_refs);
     EXPECT_TRUE(destination_refs->empty());
+    // liquid#403: a refused push's uploads are discarded instead of staying in the store.
     auto stored = liquid::runtime::block_on(server_store.contains(source_head->value));
     ASSERT_TRUE(stored);
-    EXPECT_TRUE(*stored);
+    EXPECT_FALSE(*stored);
 }
+
+// liquid#403: objects a refused push uploaded never enter the store. Uploads wait in a quarantine
+// until a push that reaches them is authorized; refusal discards them.
+TEST(Sync, RefusedPushLeavesNoUploadedObjectInTheStore) {
+    temporary_directory source_path;
+    temporary_directory server_path;
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    auto opened_store =
+        liquid::runtime::block_on(liquid::store::open(server_path.path() / "store"));
+    ASSERT_TRUE(source);
+    ASSERT_TRUE(opened_store);
+    auto server_store = std::move(*opened_store);
+    auto repository_options = liquid::repository_options{};
+    repository_options.store = &server_store;
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create("repository", repository_options));
+    ASSERT_TRUE(destination);
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("secret.txt", bytes("refused bytes"))));
+    auto source_head = liquid::runtime::block_on(source->cut("refused"));
+    ASSERT_TRUE(source_head);
+    auto source_root = liquid::runtime::block_on(source->root());
+    ASSERT_TRUE(source_root);
+    ASSERT_EQ(source_root->entries.size(), 1U);
+    const auto blob = source_root->entries.front().ref;
+
+    auto authorize = [](const liquid::sync_item&, std::span<const liquid::sync_ref_update> updates)
+        -> liquid::runtime::task<std::vector<liquid::sync_ref_verdict>> {
+        co_return refused_verdicts(updates, "main", "pushes are not accepted");
+    };
+    auto server = liquid::sync_server{
+        *destination, server_store, liquid::sync_server_options{.authorize = authorize}};
+    sync_http_server http{server};
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+    ASSERT_TRUE(pushed) << pushed.error().message;
+    EXPECT_GT(pushed->sent.objects, 0U);
+    ASSERT_EQ(pushed->references.size(), 1U);
+    EXPECT_EQ(pushed->references.front().outcome, liquid::sync_ref_outcome_kind::refused);
+
+    for (const auto& id : {source_head->value, blob}) {
+        auto stored = liquid::runtime::block_on(server_store.contains(id));
+        ASSERT_TRUE(stored);
+        EXPECT_FALSE(*stored) << liquid::to_string(id);
+    }
+    auto missing = liquid::runtime::block_on(endpoint.find_missing({}, {blob}));
+    ASSERT_TRUE(missing);
+    EXPECT_EQ(missing->size(), 1U);
+}
+
+// liquid#403: an upload is staged, not stored. It is invisible to find-missing and range reads
+// until a push authorizes it, and an upload beyond the quota is refused whole.
+TEST(Sync, UploadsWaitInAQuarantineBoundedByTheUploadQuota) {
+    temporary_directory server_path;
+    auto opened_store =
+        liquid::runtime::block_on(liquid::store::open(server_path.path() / "store"));
+    ASSERT_TRUE(opened_store);
+    auto server_store = std::move(*opened_store);
+    auto repository_options = liquid::repository_options{};
+    repository_options.store = &server_store;
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create("repository", repository_options));
+    ASSERT_TRUE(destination);
+    auto options = liquid::sync_server_options{};
+    options.upload_quota_bytes = 16;
+    options.staging_directory = server_path.path() / "staging";
+    auto server = liquid::sync_server{*destination, server_store, std::move(options)};
+    sync_http_server http{server};
+    auto endpoint = liquid::sync_endpoint{http.url()};
+
+    const auto small = bytes("twelve bytes");
+    auto small_id = liquid::hash(liquid::algorithm::blake3, small);
+    ASSERT_TRUE(small_id);
+    auto staged = liquid::runtime::block_on(endpoint.write({}, *small_id, small));
+    ASSERT_TRUE(staged) << staged.error().message;
+    auto stored = liquid::runtime::block_on(server_store.contains(*small_id));
+    ASSERT_TRUE(stored);
+    EXPECT_FALSE(*stored);
+    auto missing = liquid::runtime::block_on(endpoint.find_missing({}, {*small_id}));
+    ASSERT_TRUE(missing);
+    EXPECT_EQ(missing->size(), 1U);
+    auto range = std::vector<std::byte>(small.size());
+    EXPECT_FALSE(liquid::runtime::block_on(endpoint.read_range({}, *small_id, 0, range)));
+
+    // The same object again is not charged twice.
+    ASSERT_TRUE(liquid::runtime::block_on(endpoint.write({}, *small_id, small)));
+
+    const auto large = bytes("this upload is larger than the remaining quota");
+    auto large_id = liquid::hash(liquid::algorithm::blake3, large);
+    ASSERT_TRUE(large_id);
+    auto refused = liquid::runtime::block_on(endpoint.write({}, *large_id, large));
+    ASSERT_FALSE(refused);
+    EXPECT_NE(refused.error().message.find("quota"), std::string::npos) << refused.error().message;
+    stored = liquid::runtime::block_on(server_store.contains(*large_id));
+    ASSERT_TRUE(stored);
+    EXPECT_FALSE(*stored);
+}
+
+// liquid#403: a push larger than the upload quota is refused and leaves the repository and store
+// unchanged.
+TEST(Sync, PushBeyondTheUploadQuotaIsRefusedAndStoresNothing) {
+    temporary_directory source_path;
+    temporary_directory server_path;
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    auto opened_store =
+        liquid::runtime::block_on(liquid::store::open(server_path.path() / "store"));
+    ASSERT_TRUE(source);
+    ASSERT_TRUE(opened_store);
+    auto server_store = std::move(*opened_store);
+    auto repository_options = liquid::repository_options{};
+    repository_options.store = &server_store;
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create("repository", repository_options));
+    ASSERT_TRUE(destination);
+    ASSERT_TRUE(
+        liquid::runtime::block_on(source->write("large.txt", bytes(std::string(4096, 'q')))));
+    auto source_head = liquid::runtime::block_on(source->cut("too large"));
+    ASSERT_TRUE(source_head);
+
+    auto options = liquid::sync_server_options{};
+    options.upload_quota_bytes = 64;
+    auto server = liquid::sync_server{*destination, server_store, std::move(options)};
+    sync_http_server http{server};
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+    EXPECT_FALSE(pushed);
+    auto destination_refs = liquid::runtime::block_on(destination->refs());
+    ASSERT_TRUE(destination_refs);
+    EXPECT_TRUE(destination_refs->empty());
+    auto stored = liquid::runtime::block_on(server_store.contains(source_head->value));
+    ASSERT_TRUE(stored);
+    EXPECT_FALSE(*stored);
+}
+
+#if !defined(LIQUID_SHARED_TEST_BUILD)
+// liquid#403: the per-author flow budget is spent only by items proven to be that author's. A peer
+// that names someone else as the author of records it cannot sign is refused before admission, so
+// it cannot exhaust that author's budget.
+TEST(Sync, UnverifiedClaimedAuthorDoesNotSpendThatAuthorsFlowBudget) {
+    temporary_directory source_path;
+    temporary_directory destination_path;
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source);
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("first")));
+    auto items = export_all(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    const auto authored = static_cast<std::uint64_t>(std::ranges::count_if(
+        *items, [](const liquid::sync_item& item) { return !item.author.taap_id.empty(); }));
+    ASSERT_GT(authored, 0U);
+    const auto drip = std::ranges::find_if(*items, [](const liquid::sync_item& item) {
+        return item.kind == liquid::sync_item_kind::drip;
+    });
+    ASSERT_NE(drip, items->end());
+
+    auto options = liquid::repository_options{};
+    options.flow.per_actor = {.rate_per_s = 1, .burst = authored};
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path(), options));
+    ASSERT_TRUE(destination);
+    auto server = liquid::sync_server{*destination};
+
+    // More forged items than the author's whole budget: the author's drip with a broken signature.
+    auto forged_items = std::vector<liquid::sync_item>{};
+    for (auto index = std::uint64_t{}; index <= authored; ++index) {
+        auto copy = *drip;
+        copy.signature.back() ^= std::byte{1};
+        forged_items.push_back(std::move(copy));
+    }
+    auto forged = liquid::sync_detail::encode_metadata(
+        liquid::sync_detail::metadata_document{.items = std::move(forged_items)});
+    ASSERT_TRUE(forged) << forged.error().message;
+    for (auto attempt = 0; attempt < 3; ++attempt) {
+        auto refused = liquid::runtime::block_on(server.handle_push(*forged));
+        ASSERT_FALSE(refused);
+        EXPECT_NE(refused.error().code, liquid::errc::busy) << refused.error().message;
+    }
+
+    sync_http_server http{server};
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+    ASSERT_TRUE(pushed) << pushed.error().message;
+    EXPECT_EQ(pushed->retry_after_ms, 0U);
+    EXPECT_TRUE(pushed->exhausted_scope.empty()) << pushed->exhausted_scope;
+    auto head = liquid::runtime::block_on(destination->head());
+    EXPECT_TRUE(head);
+}
+#endif
 
 TEST(Sync, LegacySuccessfulReplyReportsEveryRequestedReferenceAsApplied) {
     temporary_directory source_path;
@@ -1043,6 +1650,440 @@ TEST(Sync, bad_signature_rejects_the_complete_batch) {
     auto head = liquid::runtime::block_on(destination->head());
     EXPECT_FALSE(head);
     EXPECT_EQ(head.error().code, liquid::errc::not_found);
+}
+
+class scoped_liquid_home {
+public:
+    scoped_liquid_home() {
+        if (const auto* value = std::getenv("LIQUID_HOME")) {
+            previous_ = value;
+        }
+    }
+
+    ~scoped_liquid_home() {
+        if (previous_) {
+            setenv("LIQUID_HOME", previous_->c_str(), 1);
+        } else {
+            unsetenv("LIQUID_HOME");
+        }
+    }
+
+    scoped_liquid_home(const scoped_liquid_home&) = delete;
+    scoped_liquid_home& operator=(const scoped_liquid_home&) = delete;
+
+    static auto select(const std::filesystem::path& path) -> void {
+        setenv("LIQUID_HOME", path.c_str(), 1);
+    }
+
+private:
+    std::optional<std::string> previous_;
+};
+
+auto open_local_signer() -> liquid::signer {
+    auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    EXPECT_TRUE(signer) << signer.error().message;
+    return std::move(*signer);
+}
+
+// Re-signs an exported drip with `signing_key` while its body and frame name `claimed`.
+auto forge_drip(liquid::sync_item drip, liquid::signer& signing_key, const liquid::actor& claimed)
+    -> liquid::sync_item {
+    auto body = liquid::encoding::cbor::decode(drip.body);
+    EXPECT_TRUE(body) << body.error().message;
+    auto* fields = std::get_if<liquid::encoding::cbor::value::map>(&body->data);
+    EXPECT_NE(fields, nullptr);
+    for (auto& [key, value] : *fields) {
+        if (key == liquid::encoding::cbor::value{"author"}) {
+            value = liquid::encoding::cbor::value{claimed.taap_id};
+        }
+    }
+    auto encoded = liquid::encoding::cbor::encode(*body);
+    EXPECT_TRUE(encoded) << encoded.error().message;
+    auto signed_value = liquid::runtime::block_on(signing_key.sign("drip", *encoded));
+    EXPECT_TRUE(signed_value) << signed_value.error().message;
+    auto signature = liquid::encode_attestation_signature(*signed_value);
+    EXPECT_TRUE(signature) << signature.error().message;
+    drip.author = signing_key.identity();
+    drip.author.taap_id = claimed.taap_id;
+    drip.author.fingerprint = claimed.fingerprint;
+    drip.body = std::move(*encoded);
+    drip.signature = std::move(*signature);
+    return drip;
+}
+
+// liquid#383: a peer sends a drip signed by its own key that names another identity as the
+// author. The receiver does not hold that identity's chain, so the drip must be refused.
+TEST(Sync, drip_signed_by_one_key_naming_another_identity_is_refused) {
+    const auto restore = scoped_liquid_home{};
+    temporary_directory victim_home;
+    temporary_directory attacker_home;
+    temporary_directory receiver_home;
+    temporary_directory source_path;
+    temporary_directory destination_path;
+
+    scoped_liquid_home::select(victim_home.path());
+    const auto victim = open_local_signer().identity();
+
+    scoped_liquid_home::select(attacker_home.path());
+    auto attacker = open_local_signer();
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source) << source.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    auto items = export_all(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    const auto drip = std::ranges::find_if(*items, [](const liquid::sync_item& item) {
+        return item.kind == liquid::sync_item_kind::drip;
+    });
+    ASSERT_NE(drip, items->end());
+    const auto forged = std::vector{forge_drip(*drip, attacker, victim)};
+
+    scoped_liquid_home::select(receiver_home.path());
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(destination) << destination.error().message;
+    auto imported = liquid::runtime::block_on(destination->import_drips(forged));
+    ASSERT_FALSE(imported) << "a drip signed by one key was imported as another identity's work";
+    EXPECT_EQ(imported.error().code, liquid::errc::unauthorized);
+    EXPECT_TRUE(liquid::is_unknown_signer(imported.error())) << imported.error().message;
+
+    // Carrying the victim's real chain does not help: it does not contain the attacker's key.
+    scoped_liquid_home::select(victim_home.path());
+    auto victim_chain = liquid::load_identity_chain(victim.taap_id);
+    ASSERT_TRUE(victim_chain) << victim_chain.error().message;
+    auto chain_body = liquid::encode_identity_chain(*victim_chain);
+    ASSERT_TRUE(chain_body) << chain_body.error().message;
+    scoped_liquid_home::select(receiver_home.path());
+    const auto with_chain = std::vector{liquid::sync_item{.kind = liquid::sync_item_kind::identity,
+                                                          .author = victim,
+                                                          .body = *chain_body},
+                                        forged.front()};
+    auto still_refused = liquid::runtime::block_on(destination->import_drips(with_chain));
+    ASSERT_FALSE(still_refused);
+    EXPECT_EQ(still_refused.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(still_refused.error().message, "signing key is not in the identity chain");
+}
+
+// liquid#429, first exploit: a member pushes a change whose author names a colleague's taap_id
+// but carries, and is signed by, the member's own key. The change is refused on import, whether
+// or not the receiver holds the colleague's chain.
+TEST(Sync, change_signed_by_one_key_naming_another_identity_is_refused) {
+    const auto restore = scoped_liquid_home{};
+    temporary_directory victim_home;
+    temporary_directory attacker_home;
+    temporary_directory receiver_home;
+    temporary_directory source_path;
+    temporary_directory destination_path;
+
+    scoped_liquid_home::select(victim_home.path());
+    const auto victim = open_local_signer().identity();
+
+    scoped_liquid_home::select(attacker_home.path());
+    auto attacker = open_local_signer();
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source) << source.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("first")));
+    auto items = export_all(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    const auto change = std::ranges::find_if(*items, [](const liquid::sync_item& item) {
+        return item.kind == liquid::sync_item_kind::change;
+    });
+    ASSERT_NE(change, items->end());
+
+    auto record = liquid::objects::decode_change(change->body);
+    ASSERT_TRUE(record) << record.error().message;
+    record->author.taap_id = victim.taap_id;
+    record->author.fingerprint = victim.fingerprint;
+    auto body = liquid::objects::encode_change_body(*record);
+    ASSERT_TRUE(body) << body.error().message;
+    auto signed_value = liquid::runtime::block_on(attacker.sign("change", *body));
+    ASSERT_TRUE(signed_value) << signed_value.error().message;
+    auto signature = liquid::encode_attestation_signature(*signed_value);
+    ASSERT_TRUE(signature) << signature.error().message;
+    record->sig = *signature;
+    auto encoded = liquid::objects::encode(*record);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    change->author = attacker.identity();
+    change->author.taap_id = victim.taap_id;
+    change->author.fingerprint = victim.fingerprint;
+    change->body = std::move(*encoded);
+    change->signature = std::move(*signature);
+
+    scoped_liquid_home::select(receiver_home.path());
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(destination) << destination.error().message;
+    auto imported = liquid::runtime::block_on(destination->import_drips(*items));
+    ASSERT_FALSE(imported) << "a change signed by one key was imported as another identity's work";
+    EXPECT_EQ(imported.error().code, liquid::errc::unauthorized);
+    EXPECT_TRUE(liquid::is_unknown_signer(imported.error())) << imported.error().message;
+
+    // Carrying the colleague's real chain does not help: it does not contain the member's key.
+    scoped_liquid_home::select(victim_home.path());
+    auto victim_chain = liquid::load_identity_chain(victim.taap_id);
+    ASSERT_TRUE(victim_chain) << victim_chain.error().message;
+    auto chain_body = liquid::encode_identity_chain(*victim_chain);
+    ASSERT_TRUE(chain_body) << chain_body.error().message;
+    scoped_liquid_home::select(receiver_home.path());
+    auto with_chain = std::vector{liquid::sync_item{
+        .kind = liquid::sync_item_kind::identity, .author = victim, .body = *chain_body}};
+    with_chain.insert(with_chain.end(), items->begin(), items->end());
+    auto still_refused = liquid::runtime::block_on(destination->import_drips(with_chain));
+    ASSERT_FALSE(still_refused);
+    EXPECT_EQ(still_refused.error().code, liquid::errc::unauthorized);
+    EXPECT_EQ(still_refused.error().message, "signing key is not in the identity chain");
+}
+
+// liquid#429: history whose author's chain this machine does not hold (for example drips and
+// changes signed before liquid#448 by an identity whose chain was never kept) is listed as
+// signed by an unverified key, never as the author it names.
+TEST(Sync, history_without_its_authors_chain_is_listed_as_unverified) {
+    const auto restore = scoped_liquid_home{};
+    temporary_directory author_home;
+    temporary_directory reader_home;
+    temporary_directory repository_path;
+
+    scoped_liquid_home::select(author_home.path());
+    {
+        auto written =
+            liquid::runtime::block_on(liquid::repository::create(repository_path.path()));
+        ASSERT_TRUE(written) << written.error().message;
+        ASSERT_TRUE(liquid::runtime::block_on(written->write("one.txt", bytes("one"))));
+        ASSERT_TRUE(liquid::runtime::block_on(written->cut("first")));
+        auto drips = liquid::runtime::block_on(written->drips());
+        ASSERT_TRUE(drips) << drips.error().message;
+        ASSERT_FALSE(drips->empty());
+        EXPECT_TRUE(std::ranges::all_of(*drips, &liquid::drip::identity_verified));
+        auto changes = liquid::runtime::block_on(written->log());
+        ASSERT_TRUE(changes) << changes.error().message;
+        ASSERT_FALSE(changes->empty());
+        EXPECT_TRUE(std::ranges::all_of(*changes, &liquid::change::identity_verified));
+    }
+
+    scoped_liquid_home::select(reader_home.path());
+    auto opened = liquid::runtime::block_on(liquid::repository::open(repository_path.path()));
+    ASSERT_TRUE(opened) << opened.error().message;
+    auto drips = liquid::runtime::block_on(opened->drips());
+    ASSERT_TRUE(drips) << drips.error().message;
+    ASSERT_FALSE(drips->empty());
+    EXPECT_TRUE(std::ranges::none_of(*drips, &liquid::drip::identity_verified));
+    auto changes = liquid::runtime::block_on(opened->log());
+    ASSERT_TRUE(changes) << changes.error().message;
+    ASSERT_FALSE(changes->empty());
+    EXPECT_TRUE(std::ranges::none_of(*changes, &liquid::change::identity_verified));
+}
+
+// liquid#508: `blame`, `history`, `ops`, `why` and `wrap` print an author from path history,
+// operation records, line attribution and change attribution. Opened from a home that holds no
+// chain for the author, every one of them names someone no chain verified, exactly as a forged
+// author would, and must be reported as unverified. In the author's own home they are verified.
+TEST(Sync, attribution_surfaces_report_an_author_no_chain_verifies_as_unverified) {
+    const auto restore = scoped_liquid_home{};
+    temporary_directory author_home;
+    temporary_directory reader_home;
+    temporary_directory repository_path;
+
+    const auto check = [](liquid::repository& opened, bool expected) {
+        auto head = liquid::runtime::block_on(opened.head());
+        ASSERT_TRUE(head) << head.error().message;
+
+        auto history = liquid::runtime::block_on(opened.history("one.txt"));
+        ASSERT_TRUE(history) << history.error().message;
+        ASSERT_FALSE(history->empty());
+        for (const auto& entry : *history) {
+            EXPECT_EQ(entry.identity_verified, expected) << entry.path;
+        }
+
+        auto operations = liquid::runtime::block_on(opened.operations());
+        ASSERT_TRUE(operations) << operations.error().message;
+        ASSERT_FALSE(operations->empty());
+        for (const auto& operation : *operations) {
+            EXPECT_EQ(operation.identity_verified, expected) << operation.kind;
+        }
+
+        auto lines = liquid::runtime::block_on(opened.attribution("one.txt", *head));
+        ASSERT_TRUE(lines) << lines.error().message;
+        ASSERT_FALSE(lines->empty());
+        for (const auto& line : *lines) {
+            EXPECT_EQ(line.identity_verified, expected) << line.line;
+        }
+
+        auto entry = liquid::runtime::block_on(
+            liquid::repository_detail::vfs_access::entry(opened, "one.txt"));
+        ASSERT_TRUE(entry) << entry.error().message;
+        auto changed = liquid::runtime::block_on(
+            liquid::repository_detail::build_access::path_change(opened, "one.txt", entry->object));
+        ASSERT_TRUE(changed) << changed.error().message;
+        ASSERT_TRUE(*changed);
+        EXPECT_EQ((*changed)->identity_verified, expected);
+    };
+
+    scoped_liquid_home::select(author_home.path());
+    {
+        auto written =
+            liquid::runtime::block_on(liquid::repository::create(repository_path.path()));
+        ASSERT_TRUE(written) << written.error().message;
+        ASSERT_TRUE(liquid::runtime::block_on(written->write("one.txt", bytes("one\ntwo\n"))));
+        ASSERT_TRUE(liquid::runtime::block_on(written->cut("first")));
+        check(*written, true);
+    }
+
+    scoped_liquid_home::select(reader_home.path());
+    auto opened = liquid::runtime::block_on(liquid::repository::open(repository_path.path()));
+    ASSERT_TRUE(opened) << opened.error().message;
+    check(*opened, false);
+}
+
+// liquid#508: the push rate limit is charged to the identity that authenticated the push, never to
+// the author the pushed records claim. A pusher cannot spend, or borrow, another person's budget
+// by naming them.
+TEST(Sync, push_rate_limit_is_keyed_on_the_authenticated_pusher) {
+    temporary_directory source_path;
+    temporary_directory limited_path;
+    temporary_directory allowed_path;
+    const auto author = open_local_signer().identity();
+    const auto pusher = std::string{"taap:authenticated-pusher"};
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source) << source.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("first")));
+
+    // The claimed author has a large budget and the pusher a budget of one: the push is refused
+    // on the actor bucket, because it is charged to the pusher.
+    auto limited_options = liquid::repository_options{};
+    limited_options.flow.per_actor = {.rate_per_s = 1, .burst = 1};
+    limited_options.flow.actor_overrides[author.taap_id] = {.rate_per_s = 100'000,
+                                                            .burst = 100'000};
+    auto limited =
+        liquid::runtime::block_on(liquid::repository::create(limited_path.path(), limited_options));
+    ASSERT_TRUE(limited) << limited.error().message;
+    {
+        auto server = liquid::sync_server{*limited, {.pusher = pusher}};
+        sync_http_server http{server};
+        auto endpoint = liquid::sync_endpoint{http.url()};
+        auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+        ASSERT_TRUE(pushed) << (pushed ? "" : pushed.error().message);
+        EXPECT_GT(pushed->retry_after_ms, 0U);
+        EXPECT_EQ(pushed->exhausted_scope, "actor");
+        EXPECT_FALSE(liquid::runtime::block_on(limited->head()));
+    }
+
+    // The reverse: the claimed author's budget is one and the pusher's is large. The push is
+    // admitted, because the author's bucket is never charged.
+    auto allowed_options = liquid::repository_options{};
+    allowed_options.flow.per_actor = {.rate_per_s = 1, .burst = 1};
+    allowed_options.flow.actor_overrides[pusher] = {.rate_per_s = 100'000, .burst = 100'000};
+    auto allowed =
+        liquid::runtime::block_on(liquid::repository::create(allowed_path.path(), allowed_options));
+    ASSERT_TRUE(allowed) << allowed.error().message;
+    {
+        auto server = liquid::sync_server{*allowed, {.pusher = pusher}};
+        sync_http_server http{server};
+        auto endpoint = liquid::sync_endpoint{http.url()};
+        auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+        ASSERT_TRUE(pushed) << (pushed ? "" : pushed.error().message);
+        EXPECT_EQ(pushed->retry_after_ms, 0U);
+        EXPECT_TRUE(pushed->exhausted_scope.empty());
+        EXPECT_TRUE(liquid::runtime::block_on(allowed->head()));
+    }
+}
+
+// The honest case: two people on two machines. The sender's chain travels ahead of its drips and
+// change, and the receiver verifies and stores it before checking their signatures.
+TEST(Sync, author_identity_chain_travels_with_its_drips) {
+    const auto restore = scoped_liquid_home{};
+    temporary_directory author_home;
+    temporary_directory receiver_home;
+    temporary_directory source_path;
+    temporary_directory destination_path;
+
+    scoped_liquid_home::select(author_home.path());
+    const auto author = open_local_signer().identity();
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source) << source.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("first")));
+    auto items = export_all(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    ASSERT_FALSE(items->empty());
+    EXPECT_EQ(items->front().kind, liquid::sync_item_kind::identity);
+    EXPECT_EQ(items->front().author.taap_id, author.taap_id);
+
+    scoped_liquid_home::select(receiver_home.path());
+    EXPECT_FALSE(liquid::load_identity_chain(author.taap_id));
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(destination) << destination.error().message;
+    auto without_chain = std::vector<liquid::sync_item>{};
+    std::ranges::copy_if(*items, std::back_inserter(without_chain), [](const auto& item) {
+        return item.kind != liquid::sync_item_kind::identity;
+    });
+    auto refused = liquid::runtime::block_on(destination->import_drips(without_chain));
+    ASSERT_FALSE(refused);
+    EXPECT_TRUE(liquid::is_unknown_signer(refused.error())) << refused.error().message;
+
+    auto imported = liquid::runtime::block_on(destination->import_drips(*items));
+    ASSERT_TRUE(imported) << imported.error().message;
+    auto stored = liquid::load_identity_chain(author.taap_id);
+    ASSERT_TRUE(stored) << stored.error().message;
+    EXPECT_EQ(stored->front().subject.taap_id, author.taap_id);
+    auto head = liquid::runtime::block_on(destination->head());
+    ASSERT_TRUE(head) << head.error().message;
+
+    // The receiver relays the author's chain to the next machine, even from a new process home
+    // (a restarted container): the repository keeps every author's chain with its records.
+    temporary_directory restarted_home;
+    scoped_liquid_home::select(restarted_home.path());
+    EXPECT_FALSE(liquid::load_identity_chain(author.taap_id));
+    auto relayed = export_all(*destination);
+    ASSERT_TRUE(relayed) << relayed.error().message;
+    EXPECT_TRUE(std::ranges::any_of(*relayed, [&](const liquid::sync_item& item) {
+        return item.kind == liquid::sync_item_kind::identity &&
+               item.author.taap_id == author.taap_id;
+    }));
+}
+
+auto repeated_frames(std::span<const std::byte> frame, std::size_t copies)
+    -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>{};
+    for (auto copy = std::size_t{}; copy < copies; ++copy) {
+        output.insert(output.end(), frame.begin(), frame.end());
+    }
+    return output;
+}
+
+// liquid#435: every frame of a chunk upload, repeats included, is charged against the request's
+// decoded-size budget before anything is decompressed, so one small compressed frame repeated
+// cannot make the server materialise unbounded memory.
+TEST(Sync, chunk_upload_charges_repeated_frames_against_the_decoded_budget) {
+    temporary_directory path;
+    auto repository = liquid::runtime::block_on(liquid::repository::create(path.path()));
+    ASSERT_TRUE(repository);
+    auto& objects = liquid::repository_detail::sync_access::objects(*repository);
+    auto server = liquid::sync_server{*repository};
+
+    // 16 MiB of zeros compresses to a few hundred bytes: the frame is valid and verifiable.
+    const auto contents = std::vector<std::byte>(16U * 1024U * 1024U);
+    auto id = liquid::hash(liquid::algorithm::blake3, contents);
+    ASSERT_TRUE(id);
+    auto frame = liquid::sync_detail::encode_pack_frame(*id, contents);
+    ASSERT_TRUE(frame);
+    ASSERT_LT(frame->size(), 4096U);
+
+    auto refused = liquid::runtime::block_on(server.handle_chunks(repeated_frames(*frame, 5)));
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::invalid_argument);
+    auto present = liquid::runtime::block_on(objects.contains(*id));
+    ASSERT_TRUE(present);
+    EXPECT_FALSE(*present);
+
+    // Within the budget the upload is accepted. It is staged, not stored: it enters the store only
+    // once a push that reaches it is authorized (liquid#403).
+    auto accepted = liquid::runtime::block_on(server.handle_chunks(repeated_frames(*frame, 4)));
+    ASSERT_TRUE(accepted) << (accepted ? "" : accepted.error().message);
+    present = liquid::runtime::block_on(objects.contains(*id));
+    ASSERT_TRUE(present);
+    EXPECT_FALSE(*present);
 }
 
 auto write_drive_file(const std::filesystem::path& path, std::string_view value) -> void {
@@ -1431,6 +2472,122 @@ TEST(Drive, refused_reference_preserves_reason_and_unadvanced_base) {
     EXPECT_FALSE(status->trees.base);
 }
 
+TEST(Drive, symlink_targets_never_enter_the_synced_repository) {
+    temporary_directory folder;
+    temporary_directory outside;
+    temporary_directory server_path;
+    const auto secret = std::string{"dummy host credential LSR-029"};
+    write_drive_file(outside.path() / "secret.txt", secret);
+    write_drive_file(folder.path() / "regular.txt", "ordinary content");
+    std::filesystem::create_symlink(outside.path() / "secret.txt", folder.path() / "absolute.txt");
+    std::filesystem::create_symlink(
+        (outside.path() / "secret.txt").lexically_relative(folder.path()),
+        folder.path() / "relative.txt");
+    std::filesystem::create_symlink("regular.txt", folder.path() / "internal.txt");
+    std::filesystem::create_symlink("missing.txt", folder.path() / "dangling.txt");
+    std::filesystem::create_directory_symlink(outside.path(), folder.path() / "directory");
+    auto remote = liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(remote);
+    auto server = liquid::sync_server{*remote};
+    sync_http_server http{server};
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client);
+    auto first = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(first) << first.error().message;
+    for (const auto* path :
+         {"absolute.txt", "relative.txt", "internal.txt", "dangling.txt", "directory/secret.txt"}) {
+        EXPECT_FALSE(liquid::runtime::block_on(remote->read(path))) << path;
+    }
+    auto ordinary = liquid::runtime::block_on(remote->read("regular.txt"));
+    ASSERT_TRUE(ordinary);
+    EXPECT_EQ(text(*ordinary), "ordinary content");
+
+    // A later full walk must apply the same rule to an already synchronized name.
+    std::filesystem::remove(folder.path() / "regular.txt");
+    std::filesystem::create_symlink(outside.path() / "secret.txt", folder.path() / "regular.txt");
+    auto later = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(later) << later.error().message;
+    auto retained = liquid::runtime::block_on(remote->read("regular.txt"));
+    ASSERT_TRUE(retained);
+    EXPECT_EQ(text(*retained), "ordinary content");
+    auto secret_id = liquid::hash(liquid::algorithm::blake3, bytes(secret));
+    ASSERT_TRUE(secret_id);
+    auto present = liquid::runtime::block_on(
+        liquid::repository_detail::drive_access::objects(*remote).contains(*secret_id));
+    ASSERT_TRUE(present);
+    EXPECT_FALSE(*present);
+}
+
+TEST(Drive, staging_refuses_links_and_invalid_sources_even_without_the_walk) {
+    temporary_directory folder;
+    temporary_directory outside;
+    temporary_directory repository_path;
+    write_drive_file(folder.path() / "nested/file.txt", "safe");
+    write_drive_file(outside.path() / "file.txt", "dummy host credential");
+    auto repository = liquid::runtime::block_on(liquid::repository::create(repository_path.path()));
+    ASSERT_TRUE(repository);
+    auto stage = [&](const std::filesystem::path& relative) {
+        return liquid::runtime::block_on(liquid::repository_detail::drive_access::stage(
+            *repository, folder.path(), relative, "file.txt", 0100644));
+    };
+    ASSERT_TRUE(stage("nested/file.txt"));
+    std::filesystem::remove(folder.path() / "nested/file.txt");
+    std::filesystem::create_symlink(outside.path() / "file.txt", folder.path() / "nested/file.txt");
+    EXPECT_FALSE(stage("nested/file.txt"));
+    std::filesystem::remove_all(folder.path() / "nested");
+    std::filesystem::create_directory_symlink(outside.path(), folder.path() / "nested");
+    EXPECT_FALSE(stage("nested/file.txt"));
+    EXPECT_FALSE(stage(outside.path() / "file.txt"));
+    EXPECT_FALSE(stage("../file.txt"));
+    EXPECT_FALSE(stage("nested/../file.txt"));
+    EXPECT_FALSE(stage(std::string{"file.txt\0ignored", 16}));
+    EXPECT_FALSE(stage(""));
+    EXPECT_FALSE(stage("nested"));
+    ASSERT_EQ(::mkfifo((folder.path() / "pipe").c_str(), 0600), 0);
+    EXPECT_FALSE(stage("pipe"));
+}
+
+TEST(Drive, pinned_source_survives_file_and_parent_replacement) {
+    temporary_directory folder;
+    temporary_directory outside;
+    write_drive_file(folder.path() / "nested/file.txt", "original safe bytes");
+    write_drive_file(outside.path() / "file.txt", "dummy host credential");
+    auto source = liquid::drive_detail::source_file::open(folder.path(), "nested/file.txt");
+    ASSERT_TRUE(source);
+    auto read_source = [&] {
+        auto input = std::ifstream{source->path(), std::ios::binary};
+        input.seekg(0);
+        return std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+    };
+    std::filesystem::remove(folder.path() / "nested/file.txt");
+    std::filesystem::create_symlink(outside.path() / "file.txt", folder.path() / "nested/file.txt");
+    EXPECT_EQ(read_source(), "original safe bytes");
+    std::filesystem::rename(folder.path() / "nested", folder.path() / "renamed");
+    std::filesystem::create_directory_symlink(outside.path(), folder.path() / "nested");
+    EXPECT_EQ(read_source(), "original safe bytes");
+
+    class observed_write_through final : public liquid::blob_write_through {
+    public:
+        std::string received;
+        liquid::runtime::task<void> put(liquid::digest,
+                                        std::span<const std::byte> contents,
+                                        std::span<const liquid::digest>,
+                                        std::span<const std::uint64_t>) override {
+            received = text(contents);
+            co_return liquid::result<void>{};
+        }
+    };
+    auto hook = std::make_shared<observed_write_through>();
+    temporary_directory store_path;
+    auto store =
+        liquid::runtime::block_on(liquid::store::open(store_path.path(), {.write_through = hook}));
+    ASSERT_TRUE(store);
+    auto content = liquid::runtime::block_on(store->put_file(source->path()));
+    ASSERT_TRUE(content) << content.error().message;
+    EXPECT_EQ(hook->received, "original safe bytes");
+}
+
 TEST(Drive, fresh_folder_joins_an_existing_remote_repository) {
     temporary_directory folder;
     temporary_directory server_path;
@@ -1453,6 +2610,176 @@ TEST(Drive, fresh_folder_joins_an_existing_remote_repository) {
     auto server_local = liquid::runtime::block_on(server_repository->read("local.txt"));
     ASSERT_TRUE(server_local);
     EXPECT_EQ(text(*server_local), "new local");
+}
+
+// Every trust- and execution-controlling key a repository document can hold, set the way a hostile
+// repository would want them (liquid #420): its own REAPI cache with peer verification off, a
+// client key and a bearer header for it, a restart hook, a deployment control plane that receives
+// the caller's token, agent rules, cache publication, and a TUF trust state.
+auto hostile_trust_options() -> liquid::repository_options {
+    auto options = liquid::repository_options{};
+    auto remote = liquid::remote_config{};
+    remote.endpoint = "grpcs://cache.attacker.invalid:443";
+    remote.instance_name = "attacker";
+    remote.tls.enabled = true;
+    remote.tls.verify_peer = false;
+    remote.tls.client_key = std::filesystem::path{"/home/victim/.ssh/id_ed25519"};
+    remote.headers["authorization"] = "Bearer attacker";
+    remote.publish = true;
+    options.remote = std::move(remote);
+    options.hot_update.restart_hook = {"/bin/sh", "-c", "touch liquid-420-restart-hook-ran"};
+    options.hot_update.targets.push_back({"service", "liquid-420.sock"});
+    options.deploy.control_plane = "https://control.attacker.invalid";
+    options.agents.require_base = true;
+    options.agents.actors = {"taap:attacker"};
+    options.cache.publish = true;
+    return options;
+}
+
+auto expect_no_trust_configuration(liquid::repository& repository) -> void {
+    EXPECT_FALSE(repository.remote_configuration().has_value());
+    EXPECT_EQ(repository.hot_update_configuration(), liquid::hot_update_config{});
+    EXPECT_TRUE(repository.deploy_configuration().control_plane.empty());
+    const auto status = repository.status();
+    ASSERT_TRUE(status) << status.error().message;
+    EXPECT_FALSE(status->agents.require_base);
+    EXPECT_TRUE(status->agents.actors.empty());
+    const auto tuf = liquid::runtime::block_on(repository.metadata("config.tuf"));
+    ASSERT_TRUE(tuf) << tuf.error().message;
+    EXPECT_FALSE(tuf->has_value());
+}
+
+auto create_hostile_source(const std::filesystem::path& path)
+    -> liquid::result<liquid::repository> {
+    auto created =
+        liquid::runtime::block_on(liquid::repository::create(path, hostile_trust_options()));
+    if (!created) {
+        return created;
+    }
+    auto pinned =
+        liquid::runtime::block_on(created->set_metadata("config.tuf", bytes("attacker root")));
+    if (!pinned) {
+        return std::unexpected(pinned.error());
+    }
+    auto written = liquid::runtime::block_on(created->write("content.txt", bytes("content")));
+    if (!written) {
+        return std::unexpected(written.error());
+    }
+    auto cut = liquid::runtime::block_on(created->cut("hostile configuration"));
+    if (!cut) {
+        return std::unexpected(cut.error());
+    }
+    return created;
+}
+
+TEST(Sync, trust_configuration_never_travels_with_exported_drips) {
+    temporary_directory source_path;
+    temporary_directory destination_path;
+    auto source = create_hostile_source(source_path.path());
+    ASSERT_TRUE(source) << source.error().message << " " << source.error().context;
+    ASSERT_TRUE(source->remote_configuration().has_value());
+    EXPECT_FALSE(source->remote_configuration()->tls.verify_peer);
+
+    auto items = export_all(*source);
+    ASSERT_TRUE(items) << items.error().message;
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(destination);
+    auto imported = liquid::runtime::block_on(destination->import_drips(*items));
+    ASSERT_TRUE(imported) << imported.error().message << " " << imported.error().context;
+    // Only metadata is imported here, so the content's chunks are not in this store; the history
+    // that names them is. The pull test below reads the content through a full sync.
+    auto head = liquid::runtime::block_on(destination->head());
+    ASSERT_TRUE(head) << head.error().message;
+    expect_no_trust_configuration(*destination);
+
+    *destination = {};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(destination_path.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    expect_no_trust_configuration(*reopened);
+}
+
+TEST(Sync, pull_and_drive_clone_leave_trust_configuration_behind) {
+    temporary_directory source_path;
+    temporary_directory pulled_path;
+    temporary_directory folder;
+    auto source = create_hostile_source(source_path.path());
+    ASSERT_TRUE(source) << source.error().message << " " << source.error().context;
+    auto server = liquid::sync_server{*source};
+    sync_http_server http{server};
+
+    auto pulled = liquid::runtime::block_on(liquid::repository::create(pulled_path.path()));
+    ASSERT_TRUE(pulled);
+    auto endpoint = liquid::sync_endpoint{http.url()};
+    auto received = liquid::runtime::block_on(endpoint.pull(*pulled));
+    ASSERT_TRUE(received) << received.error().message << " " << received.error().context;
+    auto content = liquid::runtime::block_on(pulled->read("content.txt"));
+    ASSERT_TRUE(content) << content.error().message;
+    expect_no_trust_configuration(*pulled);
+
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client) << client.error().message;
+    auto synchronized = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(synchronized) << synchronized.error().message << ": "
+                              << synchronized.error().context;
+    EXPECT_EQ(read_drive_file(folder.path() / "content.txt"), "content");
+    client = liquid::drive_client{};
+    auto cloned = liquid::runtime::block_on(liquid::repository::open(folder.path()));
+    ASSERT_TRUE(cloned) << cloned.error().message;
+    expect_no_trust_configuration(*cloned);
+}
+
+// A peer's tree can name paths a checkout keeps for itself. A drive never writes them, so a clone
+// cannot replace the repository marker (and with it every key in the repository document), the
+// object store, release policy under `.liquid/`, or build state (liquid #420).
+TEST(Drive, peer_tree_cannot_write_checkout_local_state) {
+    temporary_directory folder;
+    temporary_directory server_path;
+    auto server_repository =
+        liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(server_repository);
+    for (const auto* path : {"LIQUID_REPO",
+                             "LIQUID_JOURNAL",
+                             ".liquid/release/policy.cbor",
+                             ".liquid-store/planted",
+                             ".liquid-build/tests/planted.test",
+                             ".liquid-data/planted",
+                             ".liquid-wrap-cache/planted"}) {
+        ASSERT_TRUE(liquid::runtime::block_on(server_repository->write(path, bytes("planted"))))
+            << path;
+    }
+    ASSERT_TRUE(
+        liquid::runtime::block_on(server_repository->write("ordinary.txt", bytes("ordinary"))));
+    ASSERT_TRUE(liquid::runtime::block_on(server_repository->cut("plant local state")));
+    auto server = liquid::sync_server{*server_repository};
+    sync_http_server http{server};
+
+    auto client = liquid::runtime::block_on(
+        liquid::drive_client::open(folder.path(), http.url(), {.durable = false}));
+    ASSERT_TRUE(client) << client.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(client->pin("")));
+    auto synchronized = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(synchronized) << synchronized.error().message << ": "
+                              << synchronized.error().context;
+    EXPECT_EQ(read_drive_file(folder.path() / "ordinary.txt"), "ordinary");
+    EXPECT_NE(read_drive_file(folder.path() / "LIQUID_REPO"), "planted");
+    EXPECT_NE(read_drive_file(folder.path() / "LIQUID_JOURNAL"), "planted");
+    for (const auto* path : {".liquid/release/policy.cbor",
+                             ".liquid-store/planted",
+                             ".liquid-build/tests/planted.test",
+                             ".liquid-data/planted",
+                             ".liquid-wrap-cache/planted"}) {
+        EXPECT_FALSE(std::filesystem::exists(folder.path() / path)) << path;
+    }
+    auto again = liquid::runtime::block_on(client->sync());
+    ASSERT_TRUE(again) << again.error().message << ": " << again.error().context;
+    client = liquid::drive_client{};
+    auto reopened = liquid::runtime::block_on(liquid::repository::open(folder.path()));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    auto ordinary = liquid::runtime::block_on(reopened->read("ordinary.txt"));
+    ASSERT_TRUE(ordinary) << ordinary.error().message;
+    EXPECT_EQ(text(*ordinary), "ordinary");
 }
 
 #if defined(LIQUID_CLI)
@@ -1560,6 +2887,131 @@ public:
 private:
     pid_t child_{-1};
 };
+
+// `liquid serve sync` started with extra arguments, for the listener security options.
+class cli_sync_server_process {
+public:
+    cli_sync_server_process(const std::filesystem::path& repository,
+                            std::uint16_t port,
+                            std::vector<std::string> extra) {
+        auto arguments = std::vector<std::string>{
+            LIQUID_CLI, "serve", "sync", repository.string(), "--port", std::to_string(port)};
+        arguments.insert(arguments.end(), extra.begin(), extra.end());
+        child_ = ::fork();
+        if (child_ == 0) {
+            auto pointers = std::vector<char*>{};
+            for (auto& argument : arguments) {
+                pointers.push_back(argument.data());
+            }
+            pointers.push_back(nullptr);
+            ::execv(LIQUID_CLI, pointers.data());
+            std::_Exit(127);
+        }
+    }
+
+    ~cli_sync_server_process() {
+        if (child_ > 0) {
+            static_cast<void>(::kill(child_, SIGTERM));
+            static_cast<void>(::waitpid(child_, nullptr, 0));
+        }
+    }
+
+    cli_sync_server_process(const cli_sync_server_process&) = delete;
+    auto operator=(const cli_sync_server_process&) -> cli_sync_server_process& = delete;
+
+    auto ready(std::uint16_t port) -> bool {
+        for (auto attempt = 0; attempt < 200; ++attempt) {
+            auto status = 0;
+            if (::waitpid(child_, &status, WNOHANG) == child_) {
+                child_ = -1;
+                return false;
+            }
+            const auto socket = ::socket(AF_INET, SOCK_STREAM, 0);
+            if (socket >= 0) {
+                auto address = sockaddr_in{};
+                address.sin_family = AF_INET;
+                address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+                address.sin_port = htons(port);
+                const auto connected =
+                    ::connect(socket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
+                ::close(socket);
+                if (connected) {
+                    return true;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{10});
+        }
+        return false;
+    }
+
+private:
+    pid_t child_{-1};
+};
+
+// liquid#403: `serve sync --token-file` refuses a push or pull without its bearer token, or with a
+// wrong one, and serves the client that presents it.
+TEST(Sync, cli_sync_server_requires_its_bearer_token) {
+    temporary_directory source_path;
+    temporary_directory destination_path;
+    temporary_directory server_path;
+    auto server_repository =
+        liquid::runtime::block_on(liquid::repository::create(server_path.path()));
+    ASSERT_TRUE(server_repository);
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    auto destination =
+        liquid::runtime::block_on(liquid::repository::create(destination_path.path()));
+    ASSERT_TRUE(source);
+    ASSERT_TRUE(destination);
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("token.txt", bytes("authenticated"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("token")));
+    *source = liquid::repository{};
+    *destination = liquid::repository{};
+    *server_repository = liquid::repository{};
+
+    const auto token = std::string{"sync-server-token-0123456789abcdefghij"};
+    const auto token_file =
+        source_path.path().parent_path() /
+        ("sync-token-" + std::to_string(::getpid()) + "-" + std::to_string(available_port()));
+    {
+        auto output = std::ofstream{token_file, std::ios::binary};
+        output << token << "\n";
+    }
+    std::filesystem::permissions(token_file,
+                                 std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::replace);
+    const auto port = available_port();
+    ASSERT_NE(port, 0);
+    auto server =
+        cli_sync_server_process{server_path.path(), port, {"--token-file", token_file.string()}};
+    ASSERT_TRUE(server.ready(port));
+    const auto url = "http://127.0.0.1:" + std::to_string(port);
+    const auto executable = shell_quote(LIQUID_CLI);
+    const auto error_file = source_path.path() / "push-error.txt";
+    const auto push = [&](const std::string& environment) {
+        return "cd " + shell_quote(source_path.path()) + " && " + environment + executable +
+               " push '" + url + "' 2> " + shell_quote(error_file);
+    };
+    EXPECT_NE(std::system(push("").c_str()), 0);
+    auto error_input = std::ifstream{error_file};
+    const auto error_text = std::string{std::istreambuf_iterator<char>{error_input}, {}};
+    EXPECT_NE(error_text.find("unauthorized"), std::string::npos) << error_text;
+    EXPECT_NE(std::system(push("LIQUID_TOKEN=" + std::string(token.size(), 'x') + " ").c_str()), 0);
+    EXPECT_EQ(std::system(push("LIQUID_TOKEN=" + token + " ").c_str()), 0);
+
+    const auto pull = [&](const std::string& environment) {
+        return "cd " + shell_quote(destination_path.path()) + " && " + environment + executable +
+               " pull '" + url + "' 2> /dev/null";
+    };
+    EXPECT_NE(std::system(pull("").c_str()), 0);
+    EXPECT_EQ(std::system(pull("LIQUID_TOKEN=" + token + " ").c_str()), 0);
+    auto opened = liquid::runtime::block_on(liquid::repository::open(destination_path.path()));
+    ASSERT_TRUE(opened);
+    auto content = liquid::runtime::block_on(opened->read("token.txt"));
+    ASSERT_TRUE(content) << content.error().message;
+    EXPECT_EQ(text(*content), "authenticated");
+    std::filesystem::remove(token_file);
+}
 
 TEST(Sync, cli_push_and_pull_round_trip) {
     temporary_directory source_path;

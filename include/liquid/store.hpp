@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include <chrono>
@@ -47,6 +49,18 @@ public:
     [[nodiscard]] virtual runtime::task<void> remove(std::string key) = 0;
     [[nodiscard]] virtual runtime::task<std::vector<store_backend_entry>>
     list(std::string prefix) = 0;
+    // Ordering and durability (liquid #344). Barriers cut the mutations issued through a backend
+    // (put, put_if_absent, put_range, remove) into intervals. When barrier() succeeds, every
+    // mutation that succeeded before it is durable, so a crash never keeps a mutation issued after
+    // a barrier without everything issued before it. Within one interval a crash may keep any
+    // subset of the interval's mutations, with one exception: the mutations of one key keep their
+    // issue order, so a crash keeps a prefix of each key's own mutations (a put_range never
+    // survives without the ranges before it, and an earlier put never overwrites a later one).
+    // Reads see every mutation that succeeded. Liquid puts a barrier between any two mutations of
+    // different keys whose order its recovery depends on, and relies on nothing stronger, so a
+    // backend may send one interval's writes to different keys concurrently. A backend may also
+    // give more: Lake's workspace store keeps a prefix of the whole issue order. See
+    // docs/library/store.md, "Ordering between barriers".
     [[nodiscard]] virtual runtime::task<void> barrier() = 0;
 
     // A view of this backend whose every mutation carries an owner's fence (liquid #327). An open
@@ -140,8 +154,9 @@ struct LIQUID_EXPORT store_options {
     // handle is destroyed or its process exits. Another exclusive opener then waits up to its own
     // owner_wait and fails with errc::locked naming the holder. A store kept by a long-running
     // service sets it, so a successor process can take over from a draining predecessor. Opens
-    // without it take no lock and keep the single-process contract: the caller must ensure no
-    // other process writes the root. A backend without a local root needs an injected owner.
+    // without it share a disk root with other processes: each mutation takes the root's write
+    // lock (`store.write.lock`) and first reloads what another process published (liquid #526).
+    // A backend without a local root needs an injected owner for either.
     bool exclusive_owner{};
     // How long an exclusive open waits for the current owner to release the root. Zero makes one
     // attempt. Only meaningful with exclusive_owner.
@@ -218,6 +233,9 @@ public:
 
 private:
     friend class store;
+    friend struct repository_detail::store_access;
+    // Releases the lease without awaiting, for a holder that is ending (liquid #527).
+    void release_now() noexcept;
     struct impl;
     std::unique_ptr<impl> impl_;
 };
@@ -253,6 +271,9 @@ public:
     // Closes the store and then releases its owner, awaiting the release, so a waiting successor
     // can take over. Finish in-flight operations first. The handle is empty afterwards.
     [[nodiscard]] runtime::task<void> close();
+    // What open repaired, one sentence each, for example an index rebuilt from the packs and the
+    // reason (liquid #526). Empty when the store opened as it was.
+    [[nodiscard]] std::vector<std::string> recoveries() const;
 
 private:
     friend class repository;
@@ -264,6 +285,8 @@ private:
     [[nodiscard]] runtime::task<digest> put_verified(digest id, std::vector<std::byte> input);
     [[nodiscard]] result<blob> blob_for(digest id) const;
     [[nodiscard]] result<std::uint64_t> remote_bytes(digest blob_record) const;
+    // The repairs recorded in the store's recoveries.log by any process, oldest first.
+    [[nodiscard]] std::vector<std::string> recorded_recoveries() const;
     [[nodiscard]] runtime::task<void> redact(std::vector<digest> ids);
     [[nodiscard]] std::vector<digest> object_ids(std::string_view kind) const;
     [[nodiscard]] runtime::task<digest> put_plain(std::vector<std::byte> input);

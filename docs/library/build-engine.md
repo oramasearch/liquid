@@ -244,7 +244,18 @@ tree.
 ### Output normalisation
 
 Collection classifies each output before hashing and storing. CPU-only rewriting runs through
-`runtime::offload`. The versioned rule names are fields of the sandbox-definition record, so
+`runtime::offload`.
+
+Collection never follows a link the action could have made (liquid #425). Each declared output is
+opened one component at a time below the output root with `O_NOFOLLOW`, and each node is checked
+before and after it is opened. A symbolic link anywhere under a declared output, or a FIFO, socket
+or device, fails the action with `errc::unauthorized` before anything is read through it; a link is
+not stored as an output either. A regular file is read from its verified descriptor, normalised in
+memory, and written to a new parent-owned file in the run's `staging/` directory, and that copy is
+what the store reads. The action's output file is never rewritten in place, so no host file reached
+through an output path can be read, normalised, imported, or published. Wrap verification collects
+its re-executed outputs the same way, without normalisation. Windows has no sandbox and the collector
+reports `errc::unsupported` there. The versioned rule names are fields of the sandbox-definition record, so
 machines with different implementations have different sandbox digests and cannot share entries.
 
 | Artifact kind | Canonical rule before storage |
@@ -304,8 +315,8 @@ read, so a large input tree costs nothing to set up (features/06: data movement 
 
 | Platform | Mechanism | What it guarantees |
 |---|---|---|
-| Linux | user + mount + pid + net namespaces (unprivileged `unshare`), the sandbox root bind-mounted as the only visible filesystem besides `/proc` and a private `/tmp`; a remote-eligible action adds the static read guard | an eligible read outside input/toolchain roots returns `EACCES` and the normalized path; other actions retain the namespace boundary |
-| macOS | `sandbox-exec` profile denying file reads outside the mount and the fixed toolchain path, denying network; the mount is the only readable tree | the same guarantee with a weaker tool; the observation layer is unchanged |
+| Linux | user + mount + pid + net namespaces (unprivileged `unshare`), the sandbox root bind-mounted as the only visible filesystem besides `/proc` and a private `/tmp`; a remote-eligible action adds the static read guard | the namespaces are the enforcement. The read guard is **diagnostic**: it traces `open*` calls and reports a read outside the input and toolchain roots (`EACCES` and the normalized path); it does not stop reads made by other calls (liquid#419). `/proc/sys/kernel/random/boot_id` reads a fixed all-zero id, so the host's boot id never reaches an action (liquid#414) |
+| macOS | `sandbox-exec` profile denying network and file reads outside the mount and the toolchain path, **except** the system trees a toolchain needs (`/System`, `/usr`, `/opt/homebrew`, `/Library/Developer`, read only), and allowing writes to the output and temporary roots **and to `/tmp` and `/private/tmp`**. A `network_only` launch allows everything but network (liquid#400) | weaker than Linux: an action can read the system and Homebrew trees and write shared temp, so a macOS action is not hermetic; the observation layer is unchanged |
 | Windows | Phase 2: no sandbox and no mount; actions run with declared inputs only, `wrap` refuses with `errc::unsupported` and the reason; Phase 6 brings Cloud Files and a job-object sandbox | honest about the gap |
 
 Environment inside the sandbox is fixed and minimal (`PATH` to the toolchain tree, `HOME`
@@ -616,6 +627,65 @@ environment is never changed. Before launch, the wrapper validates saved action 
 writes a per-run plan keyed by executable, fixed-root working directory, and argv. A planned hit
 exits from the tool process constructor after the wrapper has materialised its outputs. This also
 handles drivers that invoke an absolute compiler path, which a `PATH` wrapper would miss.
+
+#### The wrap plan and what the hook trusts
+
+Because a planned hit skips the tool, the plan and its conditions decide whether new source can be
+answered with an old object. liquid#401 closed two ways to make that happen. The plan reader and the
+condition check are one C file, `src/sandbox/wrap_plan.c`, compiled into both the hook and libliquid,
+so the writer and the reader hash and parse the same way.
+
+The plan has two row kinds:
+
+```
+H\t<process key, 64 hex>\t<exit status>
+C\t<process key, 64 hex>\t<BLAKE3-256 of the input, 64 hex>\t<size>\t<relative path, hex>
+```
+
+- **The process key is BLAKE3-256** (liquid#449). It names a wrapped process: the hook hashes the
+  label `liquid wrap process key v2`, then the executable, the fixed-root working directory and the
+  NUL-separated argv, each preceded by its length as eight little-endian bytes, so no byte can move
+  from one part to the next (`liquid_wrap_process_key_hex`). The key is written as 64 lowercase hex
+  digits in the trace and the plan, and carried as a 32-byte digest through the trace parser, the
+  plan rows and the saved wrap state in `src/build/wrap.cpp`. It was 64-bit FNV-1a until
+  liquid#449. An author who controls part of a command line (an argument, a file name) could find a
+  second command with a cached command's key and have it answered from the first one's result.
+  `WrapPlan.command_lines_whose_fnv1a_keys_collide_get_different_keys_and_do_not_hit` uses the
+  colliding pair below as two executables: their old keys are equal, their keys differ, and a plan
+  row for one is not a hit for the other. A row whose key is not exactly 64 lowercase hex digits
+  never matches, so a plan in the old form has no hits.
+- **The saved wrap state is versioned.** The state file in the wrap cache directory starts with
+  `V\t2`. A state without that line (written with 64-bit keys) or with another version is not read:
+  the run starts from an empty state, executes what it must, and writes a current one. A version-2
+  state with a key in any other form is corrupt and is refused, never read as a key
+  (`WrapState.a_state_with_64_bit_process_keys_is_ignored_and_rebuilt`).
+
+- **Conditional inputs are revalidated with BLAKE3-256**, the hash liquid content-addresses with. A
+  `C` row names an input the cached action read that an earlier action in this run may have
+  rewritten; the hit stands only when the file's size and BLAKE3 digest both match. The rows used
+  64-bit FNV-1a until liquid#401, and FNV-1a collisions are cheap: the test
+  `WrapPlan.a_changed_input_with_the_same_fnv1a_value_no_longer_hits` carries two 16-byte inputs
+  with the same FNV-1a value, which under the old check served the stale object. A `C` row for the
+  key that does not parse, or carries any other digest form, is a miss.
+- **The plan is bound to the run that wrote it.** liquid writes the plan as a new 0600 file and
+  passes the BLAKE3-256 digest of its bytes in `LIQUID_WRAP_PLAN_DIGEST`. The hook reads the file
+  once (without following a final link, as a regular file), and uses it only when the bytes hash to
+  that digest; a missing or different digest means no hits, and the tool runs.
+- **The plan is read only from liquid's own location.** On Linux the hook reads only `/liquid/plan`,
+  which the sandbox bind-mounts and then remounts read-only, and reads conditional inputs only under
+  `/liquid/work`; `LIQUID_WRAP_PLAN` is not consulted. macOS has no mount namespace, so the hook
+  accepts `LIQUID_WRAP_PLAN` only when it is `<run>/plan` beside the input mount `<run>/mount`
+  (`LIQUID_WRAP_ROOT`), is owned by the effective user, and has no group or other permission. A plan
+  planted anywhere else is ignored.
+- **Override binaries.** `LIQUID_WRAP_HOOK` and `LIQUID_READ_GUARD` are honoured only when they name a
+  regular file owned by the effective user or root that no other user can write
+  (`src/sandbox/override.hpp`); otherwise the built-in locations are used.
+
+Code running inside an action can already write any output it likes, so the plan checks protect the cache from data an author
+controls (a conditional input) and from files planted outside the run, not from the action's own
+code. Verify with `tests/build/test_wrap_plan.cpp` (`WrapPlan.*` and `WrapState.*` on every platform,
+`WrapHook.macos_hook_runs_the_tool_unless_a_bound_plan_beside_the_mount_matches` with the real hook
+on macOS).
 
 The first fixture set exposed two details now encoded in the implementation. Build drivers such as
 Ninja write bookkeeping files, so a writer is an inner action only when no output-writing descendant

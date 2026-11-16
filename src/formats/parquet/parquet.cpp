@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/builtin.hpp"
 
 #include <algorithm>
@@ -25,6 +27,70 @@ auto failure(std::string message, std::size_t offset = 0) -> error {
             offset == 0 ? "parquet" : "parquet byte " + std::to_string(offset)};
 }
 
+// The bytes one unpack may still allocate. Every buffer, collection and decoded value whose size
+// comes from the file is charged here before it is allocated, so no declared size or count can
+// allocate past `format_limits::byte_budget`. Column bytes the tree keeps stay charged. Other
+// memory is charged through a `held_charges` and returned when that holder ends.
+class allocation_budget {
+public:
+    explicit allocation_budget(std::uint64_t bytes) : remaining_(bytes) {}
+
+    // Charges `count` items of `size` bytes, or fails without charging when they do not fit.
+    auto charge(std::uint64_t count, std::uint64_t size = 1) -> result<void> {
+        if (size != 0 && count > remaining_ / size) {
+            exhausted_ = true;
+            return std::unexpected(
+                error{errc::unsupported, "Parquet byte budget reached", "parquet"});
+        }
+        remaining_ -= count * size;
+        return {};
+    }
+
+    auto refund(std::uint64_t bytes) -> void {
+        remaining_ += bytes;
+    }
+
+    [[nodiscard]] auto remaining() const -> std::uint64_t {
+        return remaining_;
+    }
+
+    // True once a charge has failed; the decoders' error is then the budget, not the file.
+    [[nodiscard]] auto exhausted() const -> bool {
+        return exhausted_;
+    }
+
+private:
+    std::uint64_t remaining_;
+    bool exhausted_{};
+};
+
+// Charges held for as long as this holder lives; the destructor returns them to the budget. One
+// page's levels and values are held per page, since each value they produce is charged again as
+// output. The footer, decompressed pages and dictionaries are held for the whole unpack: many
+// column chunks can name the same page, and none of them may decode it on a fresh allowance.
+class held_charges {
+public:
+    explicit held_charges(allocation_budget& budget) : budget_(budget) {}
+    held_charges(const held_charges&) = delete;
+    auto operator=(const held_charges&) -> held_charges& = delete;
+
+    ~held_charges() {
+        budget_.refund(held_);
+    }
+
+    auto charge(std::uint64_t count, std::uint64_t size = 1) -> result<void> {
+        auto charged = budget_.charge(count, size);
+        if (charged) {
+            held_ += count * size;
+        }
+        return charged;
+    }
+
+private:
+    allocation_budget& budget_;
+    std::uint64_t held_{};
+};
+
 template <class Integer>
 auto little(std::span<const std::byte> input, std::size_t offset) -> result<Integer> {
     if (offset > input.size() || input.size() - offset < sizeof(Integer)) {
@@ -46,9 +112,12 @@ struct thrift_value {
     storage data;
 };
 
+// Reads the Thrift compact protocol. Every collection and binary it builds is charged to
+// `charges` before it is allocated, and a declared element count must fit in the bytes left.
 class compact_reader {
 public:
-    explicit compact_reader(std::span<const std::byte> input) : input_(input) {}
+    compact_reader(std::span<const std::byte> input, held_charges& charges)
+        : input_(input), charges_(charges) {}
 
     auto object_value(std::size_t depth = 0) -> result<thrift_value> {
         if (depth > 64) {
@@ -82,6 +151,10 @@ public:
                                                 : read(type, depth + 1);
             if (!value) {
                 return std::unexpected(value.error());
+            }
+            auto charged = charges_.charge(1, field_node_bytes);
+            if (!charged) {
+                return std::unexpected(charged.error());
             }
             fields.emplace(id, std::move(*value));
         }
@@ -129,6 +202,10 @@ private:
         if (!length || *length > input_.size() - std::min(input_.size(), offset_)) {
             return std::unexpected(failure("invalid Thrift binary length", offset_));
         }
+        auto charged = charges_.charge(*length);
+        if (!charged) {
+            return std::unexpected(charged.error());
+        }
         auto output =
             std::vector<std::byte>{input_.begin() + offset_, input_.begin() + offset_ + *length};
         offset_ += static_cast<std::size_t>(*length);
@@ -151,6 +228,14 @@ private:
         }
         if (size > 10'000'000) {
             return std::unexpected(failure("Thrift list limit exceeded", offset_));
+        }
+        // Every element takes at least one byte, so a count beyond the input is a lie.
+        if (size > input_.size() - offset_) {
+            return std::unexpected(failure("Thrift list exceeds its input", offset_));
+        }
+        auto charged = charges_.charge(size, sizeof(thrift_value));
+        if (!charged) {
+            return std::unexpected(charged.error());
         }
         auto output = thrift_value::list{};
         output.reserve(static_cast<std::size_t>(size));
@@ -175,6 +260,14 @@ private:
         auto types = byte();
         if (!types) {
             return std::unexpected(types.error());
+        }
+        // Every key and every value takes at least one byte.
+        if (*size > (input_.size() - offset_) / 2) {
+            return std::unexpected(failure("Thrift map exceeds its input", offset_));
+        }
+        auto charged = charges_.charge(*size * 2, sizeof(thrift_value));
+        if (!charged) {
+            return std::unexpected(charged.error());
         }
         auto output = thrift_value::list{};
         output.reserve(static_cast<std::size_t>(*size) * 2);
@@ -238,7 +331,12 @@ private:
         }
     }
 
+    // One field of a Thrift struct: the map node holding it, with its tree links.
+    static constexpr auto field_node_bytes =
+        sizeof(thrift_value::object::value_type) + 4 * sizeof(void*);
+
     std::span<const std::byte> input_;
+    held_charges& charges_;
     std::size_t offset_{};
 };
 
@@ -330,19 +428,33 @@ auto hex(std::span<const std::byte> input) -> std::string {
     return output;
 }
 
-auto decompress_page(std::span<const std::byte> input, std::int64_t codec, std::size_t expected)
-    -> result<std::vector<std::byte>> {
-    if (codec == 0) {
-        if (input.size() != expected) {
-            return std::unexpected(failure("uncompressed page size mismatch"));
-        }
-        return std::vector<std::byte>{input.begin(), input.end()};
-    }
+// Decodes one page into a buffer of the header's declared size, charged to `charges` before it
+// is allocated.
+auto decompress_page(std::span<const std::byte> input,
+                     std::int64_t codec,
+                     std::uint64_t expected,
+                     held_charges& charges) -> result<std::vector<std::byte>> {
     if (codec == 1) {
         return std::unexpected(
             error{errc::unsupported, "Parquet Snappy pages are unsupported", "parquet"});
     }
-    auto output = std::vector<std::byte>(expected);
+    if (codec != 0 && codec != 2 && codec != 6) {
+        return std::unexpected(
+            error{errc::unsupported,
+                  "Parquet compression codec " + std::to_string(codec) + " is unsupported",
+                  "parquet"});
+    }
+    if (codec == 0 && input.size() != expected) {
+        return std::unexpected(failure("uncompressed page size mismatch"));
+    }
+    auto charged = charges.charge(expected);
+    if (!charged) {
+        return std::unexpected(charged.error());
+    }
+    if (codec == 0) {
+        return std::vector<std::byte>{input.begin(), input.end()};
+    }
+    auto output = std::vector<std::byte>(static_cast<std::size_t>(expected));
     if (codec == 2) {
         auto stream = z_stream{};
         stream.next_in = reinterpret_cast<Bytef*>(const_cast<std::byte*>(input.data()));
@@ -360,18 +472,11 @@ auto decompress_page(std::span<const std::byte> input, std::int64_t codec, std::
         }
         return output;
     }
-    if (codec == 6) {
-        const auto produced =
-            ZSTD_decompress(output.data(), output.size(), input.data(), input.size());
-        if (ZSTD_isError(produced) || produced != expected) {
-            return std::unexpected(failure("invalid zstd page"));
-        }
-        return output;
+    const auto produced = ZSTD_decompress(output.data(), output.size(), input.data(), input.size());
+    if (ZSTD_isError(produced) || produced != expected) {
+        return std::unexpected(failure("invalid zstd page"));
     }
-    return std::unexpected(
-        error{errc::unsupported,
-              "Parquet compression codec " + std::to_string(codec) + " is unsupported",
-              "parquet"});
+    return output;
 }
 
 auto bit_width(std::uint64_t maximum) -> std::uint8_t {
@@ -390,6 +495,10 @@ auto varint(std::span<const std::byte> input, std::size_t& offset) -> result<std
             return std::unexpected(failure("truncated RLE varint"));
         }
         const auto value = std::to_integer<std::uint8_t>(input[offset++]);
+        // The tenth byte carries only bit 63; anything above it would be silently dropped.
+        if (shift == 63U && (value & 0x7eU) != 0) {
+            return std::unexpected(failure("RLE varint overflows"));
+        }
         output |= static_cast<std::uint64_t>(value & 0x7fU) << shift;
         if ((value & 0x80U) == 0) {
             return output;
@@ -398,9 +507,23 @@ auto varint(std::span<const std::byte> input, std::size_t& offset) -> result<std
     return std::unexpected(failure("RLE varint overflows"));
 }
 
-auto hybrid(std::span<const std::byte> input, std::uint8_t width, std::size_t wanted)
-    -> result<std::vector<std::uint64_t>> {
+// Decodes `wanted` values from a Parquet RLE/bit-packed hybrid stream. Every run is checked
+// against the bytes that remain before it is read, and each read goes through that run's span.
+// The output is charged to `charges` before it is allocated: one short RLE run can expand to
+// every value the page header declares.
+auto hybrid(std::span<const std::byte> input,
+            std::uint8_t width,
+            std::size_t wanted,
+            held_charges& charges) -> result<std::vector<std::uint64_t>> {
+    if (width > 64U) {
+        return std::unexpected(failure("invalid RLE bit width"));
+    }
+    auto charged = charges.charge(wanted, sizeof(std::uint64_t));
+    if (!charged) {
+        return std::unexpected(charged.error());
+    }
     auto output = std::vector<std::uint64_t>{};
+    output.reserve(wanted);
     auto offset = std::size_t{};
     while (output.size() < wanted && offset < input.size()) {
         auto header = varint(input, offset);
@@ -410,41 +533,41 @@ auto hybrid(std::span<const std::byte> input, std::uint8_t width, std::size_t wa
         if ((*header & 1U) == 0) {
             const auto count = *header >> 1U;
             const auto byte_count = (width + 7U) / 8U;
-            if (offset + byte_count > input.size()) {
+            if (byte_count > input.size() - offset) {
                 return std::unexpected(failure("truncated RLE value"));
             }
+            const auto run = input.subspan(offset, byte_count);
             auto value = std::uint64_t{};
-            for (auto index = std::uint8_t{}; index < byte_count; ++index) {
-                value |=
-                    static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(input[offset + index]))
-                    << (index * 8U);
+            for (auto index = std::size_t{}; index < run.size(); ++index) {
+                value |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(run[index]))
+                         << (index * 8U);
             }
-            offset += byte_count;
+            offset += run.size();
             for (auto index = std::uint64_t{}; index < count && output.size() < wanted; ++index) {
                 output.push_back(value);
             }
             continue;
         }
-        const auto count = (*header >> 1U) * 8U;
-        const auto bits = count * width;
-        const auto bytes_needed = (bits + 7U) / 8U;
-        if (offset + bytes_needed > input.size()) {
+        // Each group of eight values fills exactly `width` bytes, so the run length is bounded
+        // by division before it is multiplied.
+        const auto groups = *header >> 1U;
+        if (width != 0 && groups > (input.size() - offset) / width) {
             return std::unexpected(failure("truncated bit-packed run"));
         }
-        auto bit = std::uint64_t{};
-        for (auto index = std::uint64_t{}; index < count && output.size() < wanted; ++index) {
+        const auto run = input.subspan(offset, static_cast<std::size_t>(groups * width));
+        auto bit = std::size_t{};
+        for (auto index = std::uint64_t{}; index / 8U < groups && output.size() < wanted; ++index) {
             auto value = std::uint64_t{};
             for (auto value_bit = std::uint8_t{}; value_bit < width; ++value_bit) {
                 const auto source_bit = bit + value_bit;
-                const auto source = std::to_integer<std::uint8_t>(
-                    input[offset + static_cast<std::size_t>(source_bit / 8U)]);
+                const auto source = std::to_integer<std::uint8_t>(run[source_bit / 8U]);
                 value |= static_cast<std::uint64_t>((source >> (source_bit % 8U)) & 1U)
                          << value_bit;
             }
             output.push_back(value);
             bit += width;
         }
-        offset += static_cast<std::size_t>(bytes_needed);
+        offset += run.size();
     }
     if (output.size() != wanted) {
         return std::unexpected(failure("RLE stream ended early"));
@@ -455,8 +578,13 @@ auto hybrid(std::span<const std::byte> input, std::uint8_t width, std::size_t wa
 auto level_stream(std::span<const std::byte> input,
                   std::uint64_t maximum,
                   std::size_t count,
-                  std::size_t& consumed) -> result<std::vector<std::uint64_t>> {
+                  std::size_t& consumed,
+                  held_charges& charges) -> result<std::vector<std::uint64_t>> {
     if (maximum == 0) {
+        auto charged = charges.charge(count, sizeof(std::uint64_t));
+        if (!charged) {
+            return std::unexpected(charged.error());
+        }
         consumed = 0;
         return std::vector<std::uint64_t>(count, 0);
     }
@@ -464,7 +592,7 @@ auto level_stream(std::span<const std::byte> input,
     if (!length || *length > input.size() - 4) {
         return std::unexpected(failure("invalid level stream length"));
     }
-    auto output = hybrid(input.subspan(4, *length), bit_width(maximum), count);
+    auto output = hybrid(input.subspan(4, *length), bit_width(maximum), count, charges);
     if (!output) {
         return std::unexpected(output.error());
     }
@@ -472,69 +600,84 @@ auto level_stream(std::span<const std::byte> input,
     return output;
 }
 
+// Decodes `count` PLAIN values, charging each to `charges`: a zero-width FIXED_LEN_BYTE_ARRAY
+// reads no input at all, so the count alone cannot be trusted.
 auto plain_values(std::span<const std::byte> input,
                   std::int64_t type,
                   std::size_t count,
-                  std::optional<std::size_t> fixed_size = {}) -> result<std::vector<std::string>> {
+                  std::optional<std::size_t> fixed_size,
+                  held_charges& charges) -> result<std::vector<std::string>> {
+    auto charged = charges.charge(count, sizeof(std::string));
+    if (!charged) {
+        return std::unexpected(charged.error());
+    }
     auto output = std::vector<std::string>{};
+    output.reserve(count);
     auto offset = std::size_t{};
     for (auto index = std::size_t{}; index < count; ++index) {
+        auto value = std::string{};
         if (type == 0) {
             if (index / 8 >= input.size()) {
                 return std::unexpected(failure("truncated PLAIN boolean"));
             }
             const auto byte = std::to_integer<std::uint8_t>(input[index / 8]);
-            output.push_back((byte & (1U << (index % 8))) != 0 ? "true" : "false");
-            continue;
-        }
-        if (type == 1 || type == 4) {
+            value = (byte & (1U << (index % 8))) != 0 ? "true" : "false";
+        } else if (type == 1 || type == 4) {
             auto raw = little<std::uint32_t>(input, offset);
             if (!raw) {
                 return std::unexpected(raw.error());
             }
             offset += 4;
-            output.push_back(type == 1 ? std::to_string(static_cast<std::int32_t>(*raw))
-                                       : std::to_string(std::bit_cast<float>(*raw)));
-            continue;
-        }
-        if (type == 2 || type == 5) {
+            value = type == 1 ? std::to_string(static_cast<std::int32_t>(*raw))
+                              : std::to_string(std::bit_cast<float>(*raw));
+        } else if (type == 2 || type == 5) {
             auto raw = little<std::uint64_t>(input, offset);
             if (!raw) {
                 return std::unexpected(raw.error());
             }
             offset += 8;
-            output.push_back(type == 2 ? std::to_string(static_cast<std::int64_t>(*raw))
-                                       : std::to_string(std::bit_cast<double>(*raw)));
-            continue;
-        }
-        if (type == 3) {
+            value = type == 2 ? std::to_string(static_cast<std::int64_t>(*raw))
+                              : std::to_string(std::bit_cast<double>(*raw));
+        } else if (type == 3) {
             if (offset + 12 > input.size()) {
                 return std::unexpected(failure("truncated PLAIN INT96"));
             }
-            output.push_back(hex(input.subspan(offset, 12)));
+            value = hex(input.subspan(offset, 12));
             offset += 12;
+        } else {
+            auto size = std::size_t{};
+            if (type == 6) {
+                auto length = little<std::uint32_t>(input, offset);
+                if (!length) {
+                    return std::unexpected(length.error());
+                }
+                offset += 4;
+                size = *length;
+            } else if (type == 7 && fixed_size) {
+                size = *fixed_size;
+            } else {
+                return std::unexpected(error{errc::unsupported,
+                                             "Parquet PLAIN physical type is unsupported",
+                                             std::to_string(type)});
+            }
+            if (size > input.size() - std::min(input.size(), offset)) {
+                return std::unexpected(failure("truncated PLAIN byte array"));
+            }
+            charged = charges.charge(size);
+            if (!charged) {
+                return std::unexpected(charged.error());
+            }
+            output.emplace_back(reinterpret_cast<const char*>(input.data() + offset), size);
+            offset += size;
             continue;
         }
-        auto size = std::size_t{};
-        if (type == 6) {
-            auto length = little<std::uint32_t>(input, offset);
-            if (!length) {
-                return std::unexpected(length.error());
-            }
-            offset += 4;
-            size = *length;
-        } else if (type == 7 && fixed_size) {
-            size = *fixed_size;
-        } else {
-            return std::unexpected(error{errc::unsupported,
-                                         "Parquet PLAIN physical type is unsupported",
-                                         std::to_string(type)});
+        // Text decoded from a fixed-width value is a few hundred bytes at most, so it is charged
+        // once it exists.
+        charged = charges.charge(value.size());
+        if (!charged) {
+            return std::unexpected(charged.error());
         }
-        if (size > input.size() - std::min(input.size(), offset)) {
-            return std::unexpected(failure("truncated PLAIN byte array"));
-        }
-        output.emplace_back(reinterpret_cast<const char*>(input.data() + offset), size);
-        offset += size;
+        output.push_back(std::move(value));
     }
     return output;
 }
@@ -547,7 +690,10 @@ struct schema_leaf {
     std::uint64_t maximum_repetition{};
 };
 
-auto schema_leaves(const thrift_value& metadata) -> result<std::map<std::string, schema_leaf>> {
+// Walks the flattened schema into its leaves. Nesting is limited like the Thrift reader's, and
+// every leaf's path is charged to `charges`: a long group name is copied into each leaf below it.
+auto schema_leaves(const thrift_value& metadata, held_charges& charges)
+    -> result<std::map<std::string, schema_leaf>> {
     const auto* schema_value = child(metadata, 2);
     const auto* elements = schema_value ? list(*schema_value) : nullptr;
     if (!elements || elements->empty()) {
@@ -563,6 +709,9 @@ auto schema_leaves(const thrift_value& metadata) -> result<std::map<std::string,
         for (auto child_index = std::int64_t{}; child_index < children; ++child_index) {
             if (index >= elements->size()) {
                 return std::unexpected(failure("truncated Parquet schema"));
+            }
+            if (path.size() >= 64) {
+                return std::unexpected(failure("Parquet schema nesting limit exceeded"));
             }
             const auto& element = elements->at(index++);
             auto name = text(element, 4);
@@ -588,6 +737,15 @@ auto schema_leaves(const thrift_value& metadata) -> result<std::map<std::string,
             if (!type) {
                 return std::unexpected(failure("Parquet leaf type is absent"));
             }
+            // The map key and the leaf each keep the whole path.
+            auto path_size = next_path.size() - 1;
+            for (const auto& part : next_path) {
+                path_size += part.size();
+            }
+            auto charged = charges.charge(2, path_size + sizeof(schema_leaf));
+            if (!charged) {
+                return std::unexpected(charged.error());
+            }
             const auto path_text = join_path(next_path);
             output[path_text] = {.path = path_text,
                                  .type = *type,
@@ -606,10 +764,14 @@ auto schema_leaves(const thrift_value& metadata) -> result<std::map<std::string,
     return output;
 }
 
+// Decodes one page. Its levels and values are charged to `page_charges`; a dictionary page's
+// values are charged to `unpack_charges`.
 auto page_values(std::span<const std::byte> page,
                  const thrift_value& header,
                  const schema_leaf& schema,
-                 std::vector<std::string>& dictionary) -> result<std::vector<std::string>> {
+                 std::vector<std::string>& dictionary,
+                 held_charges& page_charges,
+                 held_charges& unpack_charges) -> result<std::vector<std::string>> {
     const auto page_type = integer(header, 1).value_or(-1);
     if (page_type == 2) {
         const auto* dictionary_header = child(header, 7);
@@ -622,12 +784,12 @@ auto page_values(std::span<const std::byte> page,
             return std::unexpected(error{
                 errc::unsupported, "Parquet dictionary page encoding is unsupported", "parquet"});
         }
-        auto decoded =
-            plain_values(page, schema.type, static_cast<std::size_t>(count), schema.fixed_size);
+        auto decoded = plain_values(
+            page, schema.type, static_cast<std::size_t>(count), schema.fixed_size, unpack_charges);
         if (!decoded) {
             return std::unexpected(decoded.error());
         }
-        dictionary = *decoded;
+        dictionary = std::move(*decoded);
         return std::vector<std::string>{};
     }
     if (page_type != 0) {
@@ -645,8 +807,11 @@ auto page_values(std::span<const std::byte> page,
     }
     auto offset = std::size_t{};
     auto repetition_bytes = std::size_t{};
-    auto repetitions = level_stream(
-        page, schema.maximum_repetition, static_cast<std::size_t>(count), repetition_bytes);
+    auto repetitions = level_stream(page,
+                                    schema.maximum_repetition,
+                                    static_cast<std::size_t>(count),
+                                    repetition_bytes,
+                                    page_charges);
     if (!repetitions) {
         return std::unexpected(repetitions.error());
     }
@@ -655,7 +820,8 @@ auto page_values(std::span<const std::byte> page,
     auto definitions = level_stream(page.subspan(offset),
                                     schema.maximum_definition,
                                     static_cast<std::size_t>(count),
-                                    definition_bytes);
+                                    definition_bytes,
+                                    page_charges);
     if (!definitions) {
         return std::unexpected(definitions.error());
     }
@@ -664,7 +830,8 @@ auto page_values(std::span<const std::byte> page,
         static_cast<std::size_t>(std::ranges::count(*definitions, schema.maximum_definition));
     auto decoded = std::vector<std::string>{};
     if (encoding == 0) {
-        auto values = plain_values(page.subspan(offset), schema.type, present, schema.fixed_size);
+        auto values = plain_values(
+            page.subspan(offset), schema.type, present, schema.fixed_size, page_charges);
         if (!values) {
             return std::unexpected(values.error());
         }
@@ -674,21 +841,38 @@ auto page_values(std::span<const std::byte> page,
             return std::unexpected(failure("dictionary data page is invalid"));
         }
         const auto width = std::to_integer<std::uint8_t>(page[offset++]);
-        auto indices = hybrid(page.subspan(offset), width, present);
+        auto indices = hybrid(page.subspan(offset), width, present, page_charges);
         if (!indices) {
             return std::unexpected(indices.error());
         }
+        auto charged = page_charges.charge(indices->size(), sizeof(std::string));
+        if (!charged) {
+            return std::unexpected(charged.error());
+        }
+        decoded.reserve(indices->size());
         for (const auto index : *indices) {
             if (index >= dictionary.size()) {
                 return std::unexpected(failure("dictionary index exceeds dictionary"));
             }
-            decoded.push_back(dictionary[static_cast<std::size_t>(index)]);
+            // Every index copies its dictionary value, so one long value repeated is charged
+            // each time it is copied.
+            const auto& value = dictionary[static_cast<std::size_t>(index)];
+            charged = page_charges.charge(value.size());
+            if (!charged) {
+                return std::unexpected(charged.error());
+            }
+            decoded.push_back(value);
         }
     } else if (encoding == 3) {
-        auto values = hybrid(page.subspan(offset), bit_width(1), present);
+        auto values = hybrid(page.subspan(offset), bit_width(1), present, page_charges);
         if (!values) {
             return std::unexpected(values.error());
         }
+        auto charged = page_charges.charge(values->size(), sizeof(std::string));
+        if (!charged) {
+            return std::unexpected(charged.error());
+        }
+        decoded.reserve(values->size());
         for (const auto value : *values) {
             decoded.push_back(std::to_string(value));
         }
@@ -698,11 +882,16 @@ auto page_values(std::span<const std::byte> page,
                   "Parquet data page encoding " + std::to_string(encoding) + " is unsupported",
                   schema.path});
     }
+    auto charged = page_charges.charge(definitions->size(), sizeof(std::string));
+    if (!charged) {
+        return std::unexpected(charged.error());
+    }
     auto output = std::vector<std::string>{};
+    output.reserve(definitions->size());
     auto value_index = std::size_t{};
     for (const auto definition : *definitions) {
         if (definition == schema.maximum_definition) {
-            output.push_back(decoded[value_index++]);
+            output.push_back(std::move(decoded[value_index++]));
         } else {
             output.push_back("NULL");
         }
@@ -710,11 +899,16 @@ auto page_values(std::span<const std::byte> page,
     return output;
 }
 
+// Decodes one column chunk into newline-separated values. The bytes it returns are charged to
+// `budget` as they are written. Decompressed pages and the dictionary are charged to
+// `unpack_charges`; each page's levels and values are returned once the page is done.
 auto column_values(std::span<const std::byte> file,
                    const thrift_value& metadata,
                    const schema_leaf& schema,
                    std::uint64_t row_count,
-                   std::string& opaque_reason) -> result<std::vector<std::byte>> {
+                   std::string& opaque_reason,
+                   allocation_budget& budget,
+                   held_charges& unpack_charges) -> result<std::vector<std::byte>> {
     const auto codec = integer(metadata, 4).value_or(-1);
     if (codec == 1) {
         opaque_reason = "Snappy compression is unsupported";
@@ -730,10 +924,21 @@ auto column_values(std::span<const std::byte> file,
     }
     auto offset = static_cast<std::size_t>(start);
     auto produced = std::uint64_t{};
-    auto values = std::vector<std::string>{};
+    auto output = std::vector<std::byte>{};
+    // An unsupported page makes the column opaque and returns what it had decoded to the budget;
+    // a spent budget is reported by the caller.
+    const auto opaque = [&](const error& failed) -> result<std::vector<std::byte>> {
+        if (failed.code == errc::unsupported && !budget.exhausted()) {
+            opaque_reason = failed.message;
+            budget.refund(output.size());
+            return std::vector<std::byte>{};
+        }
+        return std::unexpected(failed);
+    };
     auto dictionary = std::vector<std::string>{};
     while (produced < row_count) {
-        auto reader = compact_reader{file.subspan(offset)};
+        auto page_charges = held_charges{budget};
+        auto reader = compact_reader{file.subspan(offset), page_charges};
         auto header = reader.object_value();
         if (!header) {
             return std::unexpected(header.error());
@@ -746,35 +951,31 @@ auto column_values(std::span<const std::byte> file,
         }
         const auto compressed =
             file.subspan(offset + reader.offset(), static_cast<std::size_t>(compressed_size));
-        auto page = decompress_page(compressed, codec, static_cast<std::size_t>(uncompressed_size));
+        auto page = decompress_page(
+            compressed, codec, static_cast<std::uint64_t>(uncompressed_size), unpack_charges);
         if (!page) {
-            if (page.error().code == errc::unsupported) {
-                opaque_reason = page.error().message;
-                return std::vector<std::byte>{};
-            }
-            return std::unexpected(page.error());
+            return opaque(page.error());
         }
-        auto decoded = page_values(*page, *header, schema, dictionary);
+        auto decoded =
+            page_values(*page, *header, schema, dictionary, page_charges, unpack_charges);
         if (!decoded) {
-            if (decoded.error().code == errc::unsupported) {
-                opaque_reason = decoded.error().message;
-                return std::vector<std::byte>{};
-            }
-            return std::unexpected(decoded.error());
+            return opaque(decoded.error());
         }
-        values.insert(values.end(), decoded->begin(), decoded->end());
+        for (const auto& value : *decoded) {
+            auto charged = budget.charge(value.size() + 1);
+            if (!charged) {
+                return std::unexpected(charged.error());
+            }
+            output.insert(output.end(),
+                          reinterpret_cast<const std::byte*>(value.data()),
+                          reinterpret_cast<const std::byte*>(value.data()) + value.size());
+            output.push_back(std::byte{'\n'});
+        }
         produced += decoded->size();
         offset += reader.offset() + static_cast<std::size_t>(compressed_size);
         if (reader.offset() == 0 && compressed_size == 0) {
             return std::unexpected(failure("empty page made no progress", offset));
         }
-    }
-    auto output = std::vector<std::byte>{};
-    for (const auto& value : values) {
-        output.insert(output.end(),
-                      reinterpret_cast<const std::byte*>(value.data()),
-                      reinterpret_cast<const std::byte*>(value.data()) + value.size());
-        output.push_back(std::byte{'\n'});
     }
     return output;
 }
@@ -825,12 +1026,18 @@ public:
             return std::unexpected(failure("invalid footer size", blob.size() - 8));
         }
         const auto footer_offset = blob.size() - 8 - *footer_size;
-        auto reader = compact_reader{blob.subspan(footer_offset, *footer_size)};
+        // One budget covers the footer, every page and every column this unpack decodes.
+        auto budget = allocation_budget{limits.byte_budget};
+        auto unpack_charges = held_charges{budget};
+        auto reader = compact_reader{blob.subspan(footer_offset, *footer_size), unpack_charges};
         auto metadata = reader.object_value();
+        if (!metadata && budget.exhausted()) {
+            return std::unexpected(metadata.error());
+        }
         if (!metadata || reader.offset() != *footer_size) {
             return std::unexpected(failure("invalid Thrift footer", footer_offset));
         }
-        auto schemas = schema_leaves(*metadata);
+        auto schemas = schema_leaves(*metadata, unpack_charges);
         if (!schemas) {
             return std::unexpected(schemas.error());
         }
@@ -842,7 +1049,6 @@ public:
         auto output = format_tree{.codec = "parquet",
                                   .tier = format_tier::semantic_verbatim,
                                   .original = {blob.begin(), blob.end()}};
-        auto remaining_bytes = limits.byte_budget;
         for (auto group_index = std::size_t{}; group_index < row_groups->size(); ++group_index) {
             const auto& group = row_groups->at(group_index);
             const auto row_count = integer(group, 3).value_or(-1);
@@ -865,21 +1071,26 @@ public:
                 if (decoded_size < 0) {
                     return std::unexpected(failure("column decoded size is absent"));
                 }
-                if (static_cast<std::uint64_t>(decoded_size) > remaining_bytes) {
+                if (static_cast<std::uint64_t>(decoded_size) > budget.remaining()) {
                     output.truncated = true;
                     output.limits.push_back("Parquet byte budget reached at " + path);
                     return output;
                 }
                 auto reason = std::string{};
-                auto contents =
-                    column_values(blob, *column_metadata, schema->second, row_count, reason);
+                auto contents = column_values(blob,
+                                              *column_metadata,
+                                              schema->second,
+                                              row_count,
+                                              reason,
+                                              budget,
+                                              unpack_charges);
                 if (!contents) {
+                    if (budget.exhausted()) {
+                        output.truncated = true;
+                        output.limits.push_back("Parquet byte budget reached at " + path);
+                        return output;
+                    }
                     return std::unexpected(contents.error());
-                }
-                if (contents->size() > remaining_bytes) {
-                    output.truncated = true;
-                    output.limits.push_back("Parquet byte budget reached at " + path);
-                    return output;
                 }
                 auto metadata_bytes = attributes(
                     {{"codec", std::to_string(integer(*column_metadata, 4).value_or(-1))},
@@ -907,7 +1118,6 @@ public:
                     return std::unexpected(entry.error());
                 }
                 entry->opaque_reason = std::move(reason);
-                remaining_bytes -= contents->size();
                 output.entries.push_back(std::move(*entry));
                 if (output.entries.size() > limits.maximum_entries) {
                     output.truncated = true;

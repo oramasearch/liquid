@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_CLI_ROOT)
   message(FATAL_ERROR "LIQUID_CLI and LIQUID_CLI_ROOT are required")
 endif()

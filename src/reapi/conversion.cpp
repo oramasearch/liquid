@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "reapi/conversion.hpp"
 
 #include <algorithm>

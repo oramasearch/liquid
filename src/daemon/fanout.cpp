@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "daemon/fanout.hpp"
 
 #include <algorithm>

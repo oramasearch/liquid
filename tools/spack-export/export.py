@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+
 """Export a pinned Spack package closure as spack-export/1 JSON."""
 
 from __future__ import annotations

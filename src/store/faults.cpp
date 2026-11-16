@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "faults.hpp"
 
 #include <atomic>

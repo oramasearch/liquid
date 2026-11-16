@@ -18,6 +18,7 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 | [`guides/`](guides/) | Executable user workflows for a first repository, existing builds, encryption, [packaging ordinary files](guides/project-from-files.md), and [package resolution](guides/resolve-packages.md). |
 | [`api/README.md`](api/README.md) | Server components and their public wire surfaces, including admission, scheduler, worker, and node store. |
 | [`build/`](build/README.md) | Local and continuous-integration build verification, indexed below. |
+| [`security/`](security/README.md) | Threat models for liquid's trust boundaries: assets, actors, must-nevers with where each is enforced and its test, and the defects found; first [delegation and multiplayer sessions](security/delegation-threat-model.md). |
 | [`releases/`](releases/README.md) | One page per tagged release and how a release is cut; [`v0.1.0`](releases/v0.1.0.md) is the first and lists every implemented feature and command; [`v0.2.0`](releases/v0.2.0.md) is the current one. |
 
 ## Library
@@ -57,7 +58,7 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
-| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, platform coverage, and named backend conformance with direct core calibration and Linux libfuse proof still owed. |
+| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs and read-only mutation refusal, FUSE mounts, the request queue, full materialisation, platform coverage, and named backend conformance with direct core calibration and Linux libfuse proof still owed. |
 | [`library/vfs-conformance-proof.md`](library/vfs-conformance-proof.md) | Nine-case direct core calibration, deliberate wrong-size failure, native suite results, and outstanding Linux libfuse proof. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
 | [`library/drive.md`](library/drive.md) | Issues #195, #235, and #258's persisted three-tree reconciliation, per-repository CRDT actors, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
@@ -77,7 +78,7 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 | [`library/workers.md`](library/workers.md) | Scheduler and worker protocol, bounded requeue, TAAP result identity, configuration, control endpoints, and deployment shape. |
 | [`library/node-store.md`](library/node-store.md) | Per-node shared chunk storage, metadata-only image mounts, listener boundaries, accounting, budgets, and eviction. |
 | [`library/reapi-codec.md`](library/reapi-codec.md) | Dependency-free protobuf wire encoding, the REAPI v2.3 structs, native record conversion, hash selection, and pinned reference fixtures. |
-| [`library/reapi.md`](library/reapi.md) | REAPI client and server RPCs, the remote cache tier, configuration and CLI, public API map, and NativeLink, BuildBarn, and Bazel proof. |
+| [`library/reapi.md`](library/reapi.md) | REAPI client and server RPCs, bounded resumable ByteStream uploads, the remote cache tier, configuration and CLI, public API map, and NativeLink, BuildBarn, and Bazel proof. |
 | [`library/self-host.md`](library/self-host.md) | The liquid-on-liquid build, fixed-root CMake configuration, cache assertions, and bootstrap output comparison. |
 | [`library/provenance.md`](library/provenance.md) | Automatic result provenance: canonical TAAP storage, the exact SLSA v1 mapping, verification, and in-toto/DSSE export. |
 | [`library/policy.md`](library/policy.md) | Build-input policy: path and toolchain scopes, verified attestation quorums, refusal and warning behavior, and cache isolation. |
@@ -135,5 +136,7 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 |---|---|
 | [`build/local.md`](build/local.md) | Building liquid on a workstation: prerequisites, configure, build, test, run, install, options, and the documentation checks. |
 | [`build/socket-fixtures.md`](build/socket-fixtures.md) | Unix-domain socket limits, bounded temporary fixtures, cleanup, and deep-worktree verification. |
+| [`build/linux-container.md`](build/linux-container.md) | The full suite in an unprivileged Linux container: run-time capability probes, the tests that skip and why, and every Linux failure classified (#348). |
+| [`build/hardening.md`](build/hardening.md) | Release hardening flags, sanitizer builds over every C and C++ source, the libFuzzer harnesses, how to run them locally and on the BuildKit lane, and the recorded runs. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, toolchains, the documentation-site job, and the local Linux container proof. |
 | [`build/phase-2-exit-lane-audit.md`](build/phase-2-exit-lane-audit.md) | Why the Phase 2 exit (#299) has not been demonstrated: each candidate machine checked for a FUSE mount, on 2026-09-08 and 2026-10-12, with commands, output and the decision needed. |

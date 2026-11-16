@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED GIT_EXECUTABLE OR NOT DEFINED FIXTURE OR NOT DEFINED MEASURE OR NOT DEFINED ROOT)
   message(FATAL_ERROR "merge measurement arguments are missing")
 endif()

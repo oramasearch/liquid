@@ -164,7 +164,7 @@ depend on them.
 
 - **CRDT history compaction.** The largest unresolved risk. What does archival of old
   operation history look like, and what is lost?
-- ~~RocksDB vs LMDB~~ **Resolved: neither** (Steve, 2026-09-03): liquid owns its index.
+- ~~RocksDB vs LMDB~~ **Resolved: neither** (2026-09-03): liquid owns its index.
 - ~~Boost.Capy vs stdexec~~ **Resolved:** Capy for coroutines, Corosio for networking,
   matching Zetta and oramacore-cpp.
 - **Where the Automerge/chunk-store boundary sits exactly** for very large trees:

@@ -1,9 +1,16 @@
+// SPDX-License-Identifier: MIT
+
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <unistd.h>
 
 #include "identity/taap.hpp"
 #include "liquid/admission.hpp"
@@ -92,7 +99,7 @@ auto policy_for(const liquid::attestation& statement) -> liquid::admission_polic
             .exempt_namespaces = {"kube-system"},
             .attestation_source = "/store",
             .log = {.mode = liquid::admission_log_mode::verify,
-                    .lake = "http://lake.example",
+                    .lake = "https://lake.example",
                     .trust = {.identity = {.taap_id = "taap:1:ed25519:fixture-log",
                                            .algorithm = "ed25519",
                                            .public_key = std::vector<std::byte>(32)},
@@ -153,6 +160,17 @@ TEST(AdmissionPolicy, refuses_an_invalid_verify_url) {
     auto decoded = liquid::decode_admission_policy(*encoded);
     ASSERT_FALSE(decoded);
     EXPECT_EQ(decoded.error().context, "log.lake");
+}
+
+TEST(AdmissionPolicy, refuses_plain_http_to_a_remote_log) {
+    auto policy = policy_for(signed_image());
+    policy.log.lake = "http://lake.example";
+    auto encoded = liquid::encode_admission_policy(policy);
+    ASSERT_TRUE(encoded) << encoded.error().message;
+    auto decoded = liquid::decode_admission_policy(*encoded);
+    ASSERT_FALSE(decoded);
+    EXPECT_EQ(decoded.error().context, "log.lake");
+    EXPECT_NE(decoded.error().message.find("loopback"), std::string::npos);
 }
 
 TEST(AdmissionPolicy, preserves_an_omitted_checkpoint_age_bound) {
@@ -298,6 +316,48 @@ TEST(AdmissionReview, applies_all_image_decisions_without_assumption) {
     records.available = false;
     policy.mode = liquid::admission_mode::attestation;
     EXPECT_EQ(review(policy, records, verifier).reason, "attestation source unavailable");
+}
+
+// liquid#383: the policy names the issuer, but a server without the issuer's identity chain cannot
+// bind that name to the signing key, so the image is refused as signed by an unknown identity.
+TEST(AdmissionReview, refuses_an_issuer_whose_identity_chain_is_unknown) {
+    const auto* previous = std::getenv("LIQUID_HOME");
+    const auto restore = previous ? std::optional<std::string>{previous} : std::nullopt;
+    const auto issuer_home = std::filesystem::temp_directory_path() /
+                             ("liquid-admission-issuer-" + std::to_string(::getpid()));
+    const auto server_home = std::filesystem::temp_directory_path() /
+                             ("liquid-admission-server-" + std::to_string(::getpid()));
+    std::error_code code;
+    std::filesystem::remove_all(issuer_home, code);
+    std::filesystem::remove_all(server_home, code);
+    setenv("LIQUID_HOME", issuer_home.c_str(), 1);
+    auto statement = signed_image();
+    auto policy = policy_for(statement);
+    auto records = source{};
+    records.values = {statement};
+    auto verifier = log{};
+
+    setenv("LIQUID_HOME", server_home.c_str(), 1);
+    const auto refused = review(policy, records, verifier);
+    EXPECT_FALSE(refused.allowed);
+    EXPECT_EQ(refused.reason, "issuer identity unknown");
+    ASSERT_EQ(refused.considered.size(), 1U);
+    EXPECT_EQ(refused.considered.front().rule_id, "attestation.unknown_signer");
+
+    setenv("LIQUID_HOME", issuer_home.c_str(), 1);
+    auto chain = liquid::load_identity_chain(statement.issuer.taap_id);
+    ASSERT_TRUE(chain) << chain.error().message;
+    setenv("LIQUID_HOME", server_home.c_str(), 1);
+    ASSERT_TRUE(liquid::trust_identity_chain(*chain));
+    EXPECT_TRUE(review(policy, records, verifier).allowed);
+
+    if (restore) {
+        setenv("LIQUID_HOME", restore->c_str(), 1);
+    } else {
+        unsetenv("LIQUID_HOME");
+    }
+    std::filesystem::remove_all(issuer_home, code);
+    std::filesystem::remove_all(server_home, code);
 }
 
 } // namespace

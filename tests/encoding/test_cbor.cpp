@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "encoding/cbor.hpp"
 
 #include <cctype>
@@ -90,6 +92,30 @@ TEST(Cbor, rejects_noncanonical_and_unsupported_input) {
     EXPECT_FALSE(cbor::decode(hex("a2616202616101")));
     EXPECT_FALSE(cbor::decode(hex("0000")));
     EXPECT_FALSE(cbor::decode(hex("61ff")));
+}
+
+auto nested_arrays(std::size_t depth) -> std::vector<std::byte> {
+    // depth one-element arrays around the integer 0: 81 81 ... 81 00.
+    auto output = std::vector<std::byte>(depth, std::byte{0x81});
+    output.push_back(std::byte{0x00});
+    return output;
+}
+
+// liquid #407: the fuzzer exhausted the stack with nested one-element arrays, two bytes a level.
+TEST(Cbor, bounds_nesting_depth) {
+    EXPECT_TRUE(cbor::decode(nested_arrays(128)));
+    const auto too_deep = cbor::decode(nested_arrays(129));
+    ASSERT_FALSE(too_deep);
+    EXPECT_NE(too_deep.error().message.find("nesting"), std::string::npos);
+    EXPECT_FALSE(cbor::decode(nested_arrays(1'000'000)));
+    // Maps nest too: {0: {0: ... 0}}.
+    auto maps = std::vector<std::byte>{};
+    for (auto level = 0; level < 200; ++level) {
+        maps.push_back(std::byte{0xa1});
+        maps.push_back(std::byte{0x00});
+    }
+    maps.push_back(std::byte{0x00});
+    EXPECT_FALSE(cbor::decode(maps));
 }
 
 } // namespace

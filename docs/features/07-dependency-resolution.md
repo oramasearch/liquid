@@ -177,8 +177,8 @@ implemented in [configuration-language.md](../library/configuration-language.md)
   Silicon macOS host: 80 ms cold and 81 ms for a one-root solve with all prior concretisations
   offered for reuse, at load averages `{ 36.85 42.59 47.28 }`. The implementation currently
   grounds each call independently; [`resolution.md`](../library/resolution.md) records the method.
-- ~~**Whether to vendor Clingo or implement the solver.**~~ **Resolved by Steve on 2026-09-05
-  (liquid-bridge decision 20): implement liquid's own CDCL solver behind the internal concretizer
+- ~~**Whether to vendor Clingo or implement the solver.**~~ **Resolved on 2026-09-05:
+  implement liquid's own CDCL solver behind the internal concretizer
   interface; do not vendor Clingo.**
 - ~~**How to seed the package repository.**~~ **Resolved by issue #75: export a digest-pinned
   Spack checkout through Spack's own Python API, then import its versioned JSON into canonical

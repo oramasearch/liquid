@@ -18,14 +18,24 @@ implementation exposes a C ABI v1 descriptor to `builtin.hpp`; `registry.cpp` re
 descriptor through the same `format_codec::linked` path used by statically linked external modules.
 
 A codec must bound every size and offset before reading or allocating, honour the registry entry,
-depth, and byte limits, and report unsupported objects explicitly. It may not add a format vendor's
+depth, and byte limits, and report unsupported objects explicitly. A limit reported as `errc::unsupported` leaves a nested
+member opaque instead of failing the unpack. A codec that decodes its own
+members calls `format_registry::global().unpack` on the same thread; `registry.cpp` keeps the
+outermost unpack's budgets in a thread-local expansion, so that call draws on them and is not
+expanded further (liquid#438). It may not add a format vendor's
 library or expose third-party types. Synchronous codec work called from a coroutine runs through
 `runtime::offload`.
+A codec must bound every size and offset before reading or allocating, comparing a length read from
+the input with the bytes left (`size > end - position`) rather than adding it to the position, where
+a wide length wraps (liquid #477). It must honour the registry entry, depth, and byte limits, and
+report unsupported objects explicitly. It may not add a format vendor's library or expose third-
+party types. Synchronous codec work called from a coroutine runs through `runtime::offload`.
 
 Every new codec adds a real fixture and passes the common cases in `tests/formats/`: recognition,
 unpack, canonicalisation, logical comparison, every truncation boundary, recursion limits, and a
-byte-identical repack assertion whenever recognition reports Tier 1. Supported and unsupported
-subsets belong in `docs/library/formats.md` in the same change.
+byte-identical repack assertion whenever recognition reports Tier 1. HDF5 bounds filter pipeline
+counts to 32 before decoding datasets so chunk-mask shifts stay within 32 bits (liquid #486).
+Supported and unsupported subsets belong in `docs/library/formats.md` in the same change.
 
 `deb/`, `rpm/`, and `apk/` contain the Tier A writers and bounded round-trip readers. Issue #80
 adds each format's four native lifecycle-script locations and exposes payload bytes and modes for

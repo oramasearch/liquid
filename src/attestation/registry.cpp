@@ -1,9 +1,21 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/attestation.hpp"
 
+#include <atomic>
+#include <cstdint>
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <ranges>
+#include <span>
+#include <string>
+#include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 
@@ -141,7 +153,9 @@ attestation_profile_registry::attestation_profile_registry()
                          field("may_lease", attestation_field_type::boolean, true),
                          field("depth_remaining", attestation_field_type::unsigned_integer, true),
                          field("model", attestation_field_type::text, false),
-                         field("dispatcher", attestation_field_type::text, true)},
+                         field("dispatcher", attestation_field_type::text, true),
+                         field("not_after", attestation_field_type::unsigned_integer, true),
+                         field("repository", attestation_field_type::text, true)},
                         {attestation_subject_kind::actor},
                         attestation_status_kind::revocable,
                         std::chrono::hours{1}),
@@ -411,23 +425,41 @@ verify_attestation(const attestation& value, const attestation_verification_opti
     if (!body) {
         return attestation_verification{false, body.error().message};
     }
-    auto signature = verify(value.issuer, "attestation", *body, *signed_value);
+    auto signature =
+        options.issuer_chain.empty()
+            ? verify(value.issuer, "attestation", *body, *signed_value)
+            : verify(value.issuer, options.issuer_chain, "attestation", *body, *signed_value);
     if (!signature || !*signature) {
-        return attestation_verification{
-            false, signature ? "invalid attestation signature" : signature.error().message};
+        return attestation_verification{false,
+                                        signature ? "invalid attestation signature"
+                                                  : signature.error().message,
+                                        !signature && is_unknown_signer(signature.error())};
     }
     auto schema = attestation_profile_registry::global().validate(value);
     if (!schema) {
         return attestation_verification{false, schema.error().message};
     }
     const auto* profile = attestation_profile_registry::global().find(value.profile);
+    // The clock never runs behind the newest signed time this process has accepted (L-35,
+    // liquid#417): a clock rolled back cannot revive an attestation that has already expired. A
+    // caller-supplied `now` (tests, a replayed evaluation) is used as given.
+    static auto clock_floor = std::atomic<std::int64_t>{0};
+    const auto system_now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
     const auto now =
         options.now == std::chrono::sys_seconds{}
-            ? std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now())
+            ? std::max(system_now,
+                       std::chrono::sys_seconds{std::chrono::seconds{clock_floor.load()}})
             : options.now;
     if (profile->status_policy.kind == attestation_status_kind::max_age &&
         (value.at > now || now - value.at > profile->status_policy.maximum_age)) {
         return attestation_verification{false, "attestation is stale"};
+    }
+    // Only a time already past on this clock raises the floor: a future-dated attestation must not
+    // move it ahead and make every current one look stale.
+    if (options.now == std::chrono::sys_seconds{} && value.at <= system_now) {
+        const auto seen = static_cast<std::int64_t>(value.at.time_since_epoch().count());
+        for (auto floor = clock_floor.load(); seen > floor && !clock_floor.compare_exchange_weak(floor, seen);) {
+        }
     }
     if (profile->status_policy.kind == attestation_status_kind::revocable) {
         if (!options.status) {
@@ -507,22 +539,44 @@ result<void> validate_delegation(const attestation& value, const attestation* pa
         !parent_lease || !child_depth || !parent_depth) {
         return std::unexpected(invalid("delegation attributes are incomplete"));
     }
+    // Containment over the glob language sessions match (`*` and `?` never cross `/`, `**` does),
+    // decided conservatively (liquid#517): a child scope is admitted only when it equals a parent
+    // scope, the parent scope is `**`, or the parent scope is `P/**` and the child starts with
+    // `P/`. Every other pair is refused, even one that might be contained, because a prefix of a
+    // pattern with `*` or `?` says nothing about the paths it matches.
     const auto within = [](std::string_view child, std::string_view ancestor) {
         if (child == ancestor || ancestor == "**") {
             return true;
         }
-        const auto wildcard = ancestor.find_first_of("*?");
-        if (wildcard == std::string_view::npos) {
+        constexpr auto recursive = std::string_view{"/**"};
+        if (!ancestor.ends_with(recursive)) {
             return false;
         }
-        const auto prefix = ancestor.substr(0, wildcard);
-        return child.starts_with(prefix);
+        const auto directory = ancestor.substr(0, ancestor.size() - recursive.size() + 1);
+        return directory.size() > 1 && child.starts_with(directory);
     };
     for (const auto& child : *child_scopes) {
         if (std::ranges::none_of(*parent_scopes,
                                  [&](const auto& ancestor) { return within(child, ancestor); })) {
             return std::unexpected(invalid("sub-delegation broadens path scopes"));
         }
+    }
+    // The chain is linked (liquid#517): the child is issued by the agent the parent delegates to,
+    // for the same repository, no earlier than the parent and ending no later than it.
+    auto issuer_subject = delegation_subject(value.issuer);
+    if (!issuer_subject || issuer_subject->alg != parent->subject.alg ||
+        issuer_subject->bytes != parent->subject.bytes) {
+        return std::unexpected(invalid("sub-delegation is not issued by its parent's subject"));
+    }
+    const auto* child_repository = std::get_if<std::string>(attribute(value, "repository"));
+    const auto* parent_repository = std::get_if<std::string>(attribute(*parent, "repository"));
+    if (!child_repository || !parent_repository || *child_repository != *parent_repository) {
+        return std::unexpected(invalid("sub-delegation names another repository"));
+    }
+    const auto* child_end = std::get_if<std::uint64_t>(attribute(value, "not_after"));
+    const auto* parent_end = std::get_if<std::uint64_t>(attribute(*parent, "not_after"));
+    if (!child_end || !parent_end || value.at < parent->at || *child_end > *parent_end) {
+        return std::unexpected(invalid("sub-delegation is not within its parent's validity"));
     }
     if ((*child_publish && !*parent_publish) || (*child_lease && !*parent_lease)) {
         return std::unexpected(invalid("sub-delegation broadens authority"));
@@ -531,6 +585,92 @@ result<void> validate_delegation(const attestation& value, const attestation* pa
         return std::unexpected(invalid("sub-delegation does not reduce depth_remaining"));
     }
     return {};
+}
+
+result<digest> delegation_subject(const actor& agent) {
+    if (agent.taap_id.empty()) {
+        return std::unexpected(invalid("delegation agent has no TAAP id"));
+    }
+    return hash(
+        algorithm::blake3,
+        std::span{reinterpret_cast<const std::byte*>(agent.taap_id.data()), agent.taap_id.size()});
+}
+
+result<void> check_delegation_window(const attestation& value, std::chrono::sys_seconds now) {
+    const auto found = std::ranges::find(
+        value.attributes, std::string_view{"not_after"}, &attestation_attribute::name);
+    const auto* seconds =
+        found == value.attributes.end() ? nullptr : std::get_if<std::uint64_t>(&found->value);
+    if (!seconds) {
+        return std::unexpected(invalid("delegation has no not_after"));
+    }
+    constexpr auto latest = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    if (*seconds > latest) {
+        return std::unexpected(invalid("delegation not_after is out of range"));
+    }
+    const auto not_after =
+        std::chrono::sys_seconds{std::chrono::seconds{static_cast<std::int64_t>(*seconds)}};
+    if (not_after <= value.at) {
+        return std::unexpected(invalid("delegation not_after is not after its issue time"));
+    }
+    if (not_after - value.at > delegation_maximum_lifetime) {
+        return std::unexpected(invalid("delegation lifetime exceeds the maximum"));
+    }
+    if (value.at > now + delegation_clock_skew) {
+        return std::unexpected(
+            error{errc::unauthorized, "delegation is issued in the future", "delegation/1"});
+    }
+    if (now >= not_after) {
+        return std::unexpected(error{errc::unauthorized, "delegation has expired", "delegation/1"});
+    }
+    return {};
+}
+
+delegation_status_resolver local_delegation_status() {
+    return [](const attestation&, const digest& id) -> result<attestation_status> {
+        const auto path = trust_file_path("delegation-revocations");
+        const auto checked_at =
+            std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+        auto code = std::error_code{};
+        if (!std::filesystem::exists(path, code)) {
+            if (code) {
+                return std::unexpected(
+                    error{errc::io, "cannot read delegation revocations", path.string()});
+            }
+            return attestation_status{.revoked = false, .checked_at = checked_at};
+        }
+        auto input = std::ifstream{path};
+        if (!input) {
+            return std::unexpected(
+                error{errc::io, "cannot read delegation revocations", path.string()});
+        }
+        auto revoked = false;
+        auto line = std::string{};
+        while (std::getline(input, line)) {
+            auto entry = std::string_view{line};
+            if (const auto comment = entry.find('#'); comment != std::string_view::npos) {
+                entry = entry.substr(0, comment);
+            }
+            constexpr auto blank = std::string_view{" \t\r\n"};
+            const auto first = entry.find_first_not_of(blank);
+            if (first == std::string_view::npos) {
+                continue;
+            }
+            entry = entry.substr(first, entry.find_last_not_of(blank) - first + 1);
+            auto listed = parse_digest(entry);
+            if (!listed) {
+                return std::unexpected(error{errc::invalid_argument,
+                                             "delegation revocation is not a digest",
+                                             path.string()});
+            }
+            revoked = revoked || (listed->alg == id.alg && listed->bytes == id.bytes);
+        }
+        if (input.bad()) {
+            return std::unexpected(
+                error{errc::io, "cannot read delegation revocations", path.string()});
+        }
+        return attestation_status{.revoked = revoked, .checked_at = checked_at};
+    };
 }
 
 } // namespace liquid

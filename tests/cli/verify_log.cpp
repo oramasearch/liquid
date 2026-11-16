@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/select.h>
@@ -26,6 +28,7 @@
 #include "liquid/hash.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/transparency.hpp"
 #include "objects/records.hpp"
 
 namespace {
@@ -87,6 +90,7 @@ auto signed_reproducibility(liquid::digest subject, liquid::signer& signer) -> l
 }
 
 struct log_fixture {
+    liquid::transparency::log_trust trust;
     json identity;
     json configuration;
     json checkpoint;
@@ -124,6 +128,7 @@ auto make_log_fixture(std::span<const std::byte> entry, bool tampered) -> log_fi
         proof["audit_path"].push_back(std::string(64, '0'));
     }
     return {
+        .trust = checkpoint.trust,
         .identity = {{"taap_id", checkpoint.trust.identity.taap_id},
                      {"public_key",
                       liquid::test::admission::base64url(checkpoint.trust.identity.public_key)}},
@@ -269,6 +274,21 @@ auto invoke(const std::string& url, liquid::digest attestation, bool require_log
         });
 }
 
+// Writes the operator's pin for `url` into $LIQUID_HOME/trust/transparency/ (liquid#389).
+// A port the kernel hands out again would find an earlier case's pin, so that pin is removed.
+void pin(const std::string& url, const liquid::transparency::log_trust& trust) {
+    auto path = liquid::transparency::log_trust_path(url);
+    if (!path) {
+        throw std::runtime_error(path.error().message);
+    }
+    std::error_code code;
+    std::filesystem::remove(*path, code);
+    auto saved = liquid::runtime::block_on(liquid::transparency::save_log_trust(url, trust));
+    if (!saved) {
+        throw std::runtime_error(saved.error().message);
+    }
+}
+
 } // namespace
 
 auto main() -> int {
@@ -312,23 +332,49 @@ auto main() -> int {
                 throw std::runtime_error("local-only verification failed");
             }
             {
-                auto server = local_log{make_log_fixture(*selected_bytes, false)};
+                auto fixture = make_log_fixture(*selected_bytes, false);
+                const auto trust = fixture.trust;
+                auto server = local_log{std::move(fixture)};
+                if (invoke(server.url(), *selected_id) != 1) {
+                    throw std::runtime_error("an unpinned log was trusted");
+                }
+                pin(server.url(), trust);
                 if (invoke(server.url(), *selected_id) != 0) {
                     throw std::runtime_error("valid required inclusion failed");
                 }
             }
             {
-                auto server = local_log{make_log_fixture(*missing_bytes, false)};
+                // The log reports no witnesses and threshold 0; the pin requires one witness.
+                auto fixture = make_log_fixture(*selected_bytes, false);
+                auto trust = fixture.trust;
+                trust.configuration.witnesses = {{"https://witness.example/checkpoint",
+                                                  liquid::transparency::hash{std::byte{1}}}};
+                trust.configuration.witness_threshold = 1;
+                auto server = local_log{std::move(fixture)};
+                pin(server.url(), trust);
+                if (invoke(server.url(), *selected_id) != 1) {
+                    throw std::runtime_error("the log's lower witness threshold was trusted");
+                }
+            }
+            {
+                auto fixture = make_log_fixture(*missing_bytes, false);
+                const auto trust = fixture.trust;
+                auto server = local_log{std::move(fixture)};
+                pin(server.url(), trust);
                 if (invoke(server.url(), *selected_id) != 1) {
                     throw std::runtime_error("missing required inclusion did not fail");
                 }
             }
             {
-                auto server = local_log{make_log_fixture(*selected_bytes, true)};
+                auto fixture = make_log_fixture(*selected_bytes, true);
+                const auto trust = fixture.trust;
+                auto server = local_log{std::move(fixture)};
+                pin(server.url(), trust);
                 if (invoke(server.url(), *selected_id) != 1) {
                     throw std::runtime_error("tampered required inclusion did not fail");
                 }
             }
+            pin("http://127.0.0.1:1", make_log_fixture(*selected_bytes, false).trust);
             if (invoke("http://127.0.0.1:1", *selected_id) != 1) {
                 throw std::runtime_error("unavailable required inclusion did not fail");
             }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "encoding/cbor.hpp"
 
 #include <algorithm>
@@ -186,9 +188,17 @@ class decoder {
         case 3:
             return read_text(*argument);
         case 4:
-            return read_array(*argument);
-        case 5:
-            return read_map(*argument);
+        case 5: {
+            // Arrays and maps recurse. A hostile input of nested one-element arrays would
+            // otherwise exhaust the stack in two bytes per level (liquid #407).
+            if (depth_ == maximum_depth) {
+                return std::unexpected(failure("nesting is deeper than 128 levels"));
+            }
+            ++depth_;
+            auto nested = major == 4 ? read_array(*argument) : read_map(*argument);
+            --depth_;
+            return nested;
+        }
         default:
             return std::unexpected(failure("unsupported major type"));
         }
@@ -261,12 +271,16 @@ class decoder {
         return value{std::move(result)};
     }
 
+    static constexpr std::size_t reserve_cap = 1024;
+
     auto read_array(std::uint64_t length) -> result<value> {
         if (length > input_.size() - position_) {
             return std::unexpected(failure("array length exceeds input"));
         }
         auto result = value::array{};
-        result.reserve(static_cast<std::size_t>(length));
+        // A length is bounded by the bytes left, but each item is a value many times a byte's
+        // size: reserve a small amount and let the vector grow as items decode (liquid#404).
+        result.reserve(std::min<std::size_t>(static_cast<std::size_t>(length), reserve_cap));
         for (std::uint64_t i = 0; i < length; ++i) {
             auto item = read();
             if (!item)
@@ -281,7 +295,7 @@ class decoder {
             return std::unexpected(failure("map length exceeds input"));
         }
         auto result = value::map{};
-        result.reserve(static_cast<std::size_t>(length));
+        result.reserve(std::min<std::size_t>(static_cast<std::size_t>(length), reserve_cap));
         auto previous = std::vector<std::byte>{};
         for (std::uint64_t i = 0; i < length; ++i) {
             const auto start = position_;
@@ -303,8 +317,11 @@ class decoder {
         return value{std::move(result)};
     }
 
+    static constexpr std::size_t maximum_depth = 128;
+
     std::span<const std::byte> input_;
     std::size_t position_{0};
+    std::size_t depth_{0};
 };
 
 } // namespace

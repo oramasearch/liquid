@@ -2,11 +2,16 @@
 
 `test_scheduler.cpp` pins the private worker protocol's schedule payload and empty idle response,
 action-digest deduplication, recorded-size-class placement, and the one-requeue rule after a
-worker lease expires. The scheduler and protocol sources are compiled into the test executable so
+worker lease expires. `WorkerAuthentication.*` (liquid #416) creates separate TAAP identities in
+their own `LIQUID_HOME` fixtures and checks that an untrusted worker, a trusted identifier signed by
+another key, an unsigned request, a replayed or stale request, a guessed token, and a result signed
+by another key are refused, and that the worker's lease check refuses an unsigned, foreign,
+tampered, or replayed lease. The scheduler and protocol sources are compiled into the test executable so
 private symbols remain outside the public ABI in static and shared builds.
 
-`run-docker-proof.sh <build-directory>` builds the scheduler and worker images, starts two
-host-network workers, runs the slow output fixture locally and remotely, checks identical output
+`run-docker-proof.sh <build-directory>` builds the scheduler and worker images, creates an identity
+for the scheduler and each worker in its own volume, pins each side's document on the other, starts
+two host-network workers, runs the slow output fixture locally and remotely, checks identical output
 digests, and then kills the active worker. The surviving worker must finish the single requeue and
 the scheduler metrics must report exactly one retry. `client-proof.sh` runs inside the prescribed
 privileged `liquid-linux-ci` image and verifies that `why --json` records the remote cost decision.

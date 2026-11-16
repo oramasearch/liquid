@@ -45,6 +45,54 @@ keys remain local. Combining `--document` with `--json` or rotation returns a us
 The public `signer::document()` accessor supplies the stored signed document to the existing codec
 ([`identity.md`](identity.md)).
 
+**Signer attribution (#383).** Verification fails closed: a signer's name is bound to a key only by
+that identity's document chain, which must start at the initial document named after its own key.
+`verify(actor, ...)` reads the chain from the local identity store and returns an unknown-signer
+error when there is none; `verify(actor, chain, ...)` takes a carried chain. Sync carries every
+author's chain as an `identity` frame and stores it before checking signatures; `liquid identity show
+--chain` and `liquid identity trust` move a chain by hand. Release approval, hot update, build
+policy, admission, worker results, and the build cache all refuse an unknown signer
+([`identity.md`](identity.md#how-a-verifier-obtains-and-trusts-another-persons-chain)). Every
+decision that trusts an identity requires that chain (Steve, 2026-11-14; #429). A signature with no
+chain is reported by `check_signature` as signed by an unverified key, `repository::drips()` and
+`repository::log()` mark such records `identity_verified == false`, and `liquid log` shows them as
+`signed by an unverified key`, never as the name they claim
+([`identity.md`](identity.md#every-decision-that-trusts-an-identity-requires-a-verified-chain)).
+Path history, operation records, line attribution and change attribution carry the same flag, so
+`liquid blame`, `history`, `ops`, `why` and `wrap` show an unverified author the same way, and
+their JSON carries `"identity_verified"` (#508). The sync push rate limit is charged to the
+authenticated pusher, never to a record's claimed author (#508).
+**FIDO2 assertion bytes (#81).** FIDO2 EdDSA and ES256 signatures are verified over
+`authenticatorData || clientDataHash`, the bytes CTAP2 authenticators sign; the earlier
+double-hashed form is rejected. Proof is independent OpenSSL vectors and protocol-conforming doubles;
+no physical authenticator run exists yet ([`identity.md`](identity.md)).
+
+**Compromised keys (#391).** A key named in a compromise declaration verifies no signature through
+`verify`: its `signed_at` is the signer's own claim and can be backdated. `verify_with_trusted_time`
+accepts one only with an RFC 3161 token or RFC 4998 evidence record over the signature that a
+caller-trusted TSA dates before the declaration. No record format carries such evidence yet, so
+every signature by a declared-compromised key is refused today
+([`identity.md`](identity.md#rotation)).
+
+**Identity key custody (#402).** Every identity file is created owner-only and atomically (mode
+0600 through `open(O_CREAT|O_EXCL|O_NOFOLLOW)`, or an owner-only DACL on Windows, then a rename).
+A new software identity seals its wrapping key under a passphrase (`LIQUID_IDENTITY_PASSPHRASE_FILE`
+or a terminal prompt), the macOS Keychain, or a key custody URI (default: `keychain` on macOS,
+`passphrase` elsewhere); a clear `.wrapping.key`, which leaves the key protected only by file
+permissions, is written only for explicit `file` custody. Older identities keep loading;
+`liquid identity show` reports and warns about their custody, and `liquid identity custody --to`
+migrates them ([`identity.md`](identity.md#how-the-software-signing-key-is-protected-at-rest-liquid-402)).
+A headless Linux host such as a Lake pod names a passphrase file (`identity_custody_options::passphrase_file`
+or `LIQUID_IDENTITY_PASSPHRASE_FILE`); liquid refuses it unless the opened file is regular, owned
+by the effective user or root, and owner-only. TPM custody for pods is a later option
+([`identity.md`](identity.md#headless-linux-hosts-lake-pods)).
+
+**Release trust root (#384).** `verify_release` takes a `release_trust` held outside the
+repository: the policy's issuer must be listed (`$LIQUID_HOME/trust/release-policy-issuers` for
+`liquid release verify`) and verify through its identity chain, and the policy's subject must be
+the repository being released. A missing or empty issuer list refuses every policy
+([`release-approval.md`](release-approval.md#trust-root)).
+
 **Public API.** The public error, digest, identity document codec, signature decoder, and release
 approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers
 ([`api-map.md`](api-map.md), [`hash-agility.md`](hash-agility.md), [`identity.md`](identity.md),
@@ -68,11 +116,27 @@ stored bytes; repacking rebases delta chains and garbage collection retains thei
 bases ([`store.md`](store.md), [`gc.md`](gc.md)). A long-running owner opens with
 `store_options::exclusive_owner`: one handle owns a disk root across processes, and a successor
 waits up to `owner_wait` for a draining or killed predecessor to release it (liquid #321,
-[`store.md`](store.md#process-ownership-and-hand-off)). A shared-store repository's own state
+[`store.md`](store.md#process-ownership-and-hand-off)). Without an owner, several processes (the
+checkout daemon, the CLI, an IDE) write one disk root safely: each mutation takes the root's write
+lock and reloads what another process published first, temporaries are unique per call, opening
+writes nothing, and an index whose manifest names a missing run is rebuilt from the packs and
+recorded in `recoveries.log`, which `liquid status` prints (liquid #526,
+[`store.md`](store.md#several-writers-without-an-owner)). Repository documents are still replaced
+whole by each process, so two processes saving one repository at once can drop each other's drips
+from the published document. A repository handle's own leases name their holder process, are
+released when the handle ends, and are collected by the next open when their process has ended,
+so a checkout keeps only its live handles' leases; `liquid status` prints the count (liquid #527,
+[`gc.md`](gc.md)). A shared-store repository's own state
 (`LIQUID_REPO`, `LIQUID_JOURNAL`, session state, and replication cursors) is backend keys under
 `repositories/<id-hash>/`, so a backend with no local root holds the whole repository; create is
 exclusive through `store_backend::put_if_absent` (liquid #326,
-[`store.md`](store.md#repository-state-through-the-backend)). A store on a backend without a local
+[`store.md`](store.md#repository-state-through-the-backend)). A checkpoint's journal removal and
+a session's state removal on publish or discard end with a barrier, so what the operation
+acknowledged is durable when it returns (liquid #343). `store_backend` states its ordering
+contract between barriers: a crash may keep any subset of one interval's writes, each key's own
+writes in order, and the store depends on nothing stronger; the in-memory backend's subset crash
+mode checks the store, repository and session crash suites against it (liquid #344,
+[`store.md`](store.md#ordering-between-barriers)). A store on a backend without a local
 root takes the same ownership through an injected `store_options::owner` whose grant carries a
 fence: the backend's fenced view sends it with every mutation, `put_if_absent` included, so the
 remote refuses a stale holder, and a lost grant refuses every later mutation with `errc::locked`
@@ -111,7 +175,8 @@ snapshots to daemon targets without advancing their drip cursors ([`locks.md`](l
 **Capture, scanning, and attestations.** Capture subscriptions, default-blocking secret scanning,
 the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`, structured
 `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, `release_policy/1`,
-and `release_approval/1`, and repository redaction are implemented
+and `release_approval/1`, and repository redaction are implemented. JWT detection uses linear work
+and constant auxiliary storage even with repeated invalid prefixes (liquid #440)
 ([`capture.md`](capture.md), [`secret-scanning.md`](secret-scanning.md),
 [`attestations.md`](attestations.md), [`release-approval.md`](release-approval.md)).
 
@@ -122,13 +187,36 @@ historical diff. Whole-file encryption remains the fallback
 
 **Git.** `liquid import git` preserves reachable local Git history and its identity mapping;
 `liquid export git` writes a standalone Git repository and reports compatibility losses
-([`git-interop.md`](git-interop.md)).
+([`git-interop.md`](git-interop.md)). Object inflation and delta reconstruction are bounded
+per read, including cross-pack reference bases; nonprogressing offset bases and excessive
+delta depth are rejected (#443).
+Limits are 4 GiB per object/program/result, 1,024 delta links, and twice the final payload size
+plus 64 MiB of decoded/reconstructed bytes per read.
 
 **Sync and review.** Repository push and pull, signed metadata exchange, missing-object
 negotiation, the public sync server with change and graph-derived per-reference authorization,
-mixed and atomic push outcomes, and the shared HTTP/1.1 client, `serve sync` adapter, and lake
+mixed and atomic push outcomes, bounded client retries of a `503` or `429` that carries
+`Retry-After`, and the shared HTTP/1.1 client, `serve sync` adapter, and lake
 forge review client with its polling event stream and installable double are implemented
-([`sync.md`](sync.md), [`forge-client.md`](forge-client.md)).
+([`sync.md`](sync.md), [`forge-client.md`](forge-client.md)). HTTPS verifies against
+`SSL_CERT_FILE` or OpenSSL's default trust store, on macOS too (liquid #368).
+Chunk uploads are bounded by a 64 MiB
+decoded-size budget per request that counts repeated frames, and are stored one decoded frame at a
+time (liquid#435).
+Send rejects any missing-object
+response containing a digest outside the current offered root closure before any upload
+(liquid #446).
+Issue #420 confirms that no
+trust-controlling repository configuration (the REAPI remote and its TLS, key and header settings,
+the hot-update restart hook, policy, deployment, TUF state) travels with clone, sync or composition,
+and makes checkout-local paths (`LIQUID_REPO`, `.liquid/`, `.liquid-store/` and liquid's other
+state directories) impossible to import into a tree or to write from a peer's tree
+([`sync.md`](sync.md#trust-configuration-stays-with-the-checkout-that-set-it)).
+Uploads wait in a quota-bounded
+quarantine and enter the store only when a push that reaches them is authorized; a refused push
+leaves nothing behind, and flow admission spends an author's budget only for items signed by that
+author. `serve sync` binds loopback by default and refuses any other address without TLS and a
+bearer token or client CA (#403).
 
 **Drive.** Issue #195 adds the persisted three-tree drive client, named concurrent conflict values,
 interrupted-transfer resume, per-reference refusal reporting, stable-node path history and restore,
@@ -139,9 +227,18 @@ available-offline, and excluded path state; pin and unpin commands; xattrs; poli
 offline-aware hydration; queued-write and hydration-debt status; and GNOME Files and Dolphin badge
 providers. Issue #247 adds `liquid clone` over the same client, including first-pull identity
 adoption, persisted remote configuration, full plain-checkout materialization, and stable JSON
-output ([`drive.md`](drive.md), [`../cli/README.md`](../cli/README.md)).
+output ([`drive.md`](drive.md), [`../cli/README.md`](../cli/README.md)). Issue #423 makes filesystem
+ingestion skip symlinks and pin regular-file sources through no-follow descriptor walks on macOS
+and Linux; unsupported platforms refuse ingestion.
 
 **VFS.** Full materialisation writes a plain directory; lazy mounts use libfuse3 on Linux and
+optional macFUSE on macOS ([`vfs.md`](vfs.md)). Tree entry names are validated at decode, encode,
+repository writes, Git import and both materialisers, and materialisation creates entries
+exclusively without following symbolic links (liquid #386,
+[`object-model.md`](object-model.md#records-in-the-store)).
+**VFS.** Read-only mounts and immutable `deps/` paths refuse setting and removing Drive xattrs
+with `EROFS`, retain persisted settings, and report denied writes with the caller PID (#445).
+Full materialisation writes a plain directory; lazy mounts use libfuse3 on Linux and
 optional macFUSE on macOS ([`vfs.md`](vfs.md)).
 
 **Transparency and trust.** Repository metadata retains verified Lake transparency checkpoints:
@@ -151,7 +248,13 @@ full or partial tile is reauthenticated through its parents to the selected chec
 tile bytes receive the same complete walk, and consistency verification completes that walk before
 it requests a proof. HTTP log source construction reports invalid URLs through the public
 result model; legacy request operations retain the validation error. `log scan`, `log consistency`,
-and `log verify` reject malformed URLs locally with exit 2 (liquid #289).
+and `log verify` reject malformed URLs locally with exit 2 (liquid #289), and plain `http://` is
+refused unless the host is loopback. The log's key, witness set, and witness threshold come only
+from a pin the caller supplies, never from the log: the CLI reads it from
+`$LIQUID_HOME/trust/transparency/` and refuses when none exists, a pinned threshold cannot be
+lowered by the log, a key change is refused, and cosignatures from unpinned witnesses do not count.
+`liquid log trust <log-url> [--confirm <fingerprint>]` is the explicit, confirmed first-use pin
+(liquid #389).
 Complete transparency inclusion verification checks signed checkpoints, witness quorum, tiles, and
 proofs before log mode accepts a record. Strict DER, CMS, and X.509 parsing plus verification-only
 RSA and ECDSA validate RFC 3161 checkpoint timestamps and RFC 4998 renewal chains against
@@ -203,6 +306,10 @@ unchanged CMake, Autotools, Make, or compilation-database project in one observe
 output-producing tool processes into cached actions. Before execution it looks up signed results by
 candidate key, validates every observed manifest path against the current input tree, and reports
 the first differing input on a miss. The on-disk action index rebuilds from its leased store root.
+The exec-time hook revalidates conditional inputs by BLAKE3-256 and reads only a plan at liquid's
+own location whose bytes hash to the digest liquid passed (#401). Process keys are BLAKE3-256 over
+executable, working directory and argv, and a saved wrap state from before that change is ignored
+and rebuilt (#449).
 
 **Verification.** `liquid verify` re-executes cached actions in fresh sandboxes, compares exit
 status and every output digest, signs a `reproducibility/1` attestation, and permanently
@@ -215,7 +322,9 @@ samples on the shared runtime by default.
 `wrap --input <name>=<result|tree>` and direct named inputs mount upstream bytes read-only below
 `deps/<name>/`; an identical normalised upstream tree stops the downstream cascade. Directory
 modes, `ar` headers, and Python bytecode are normalised before storage, with the rule set bound
-into the sandbox digest. `wrap --install-prefix` stages a canonical `bin/lib/include/share` install
+into the sandbox digest. Output collection opens each path with `O_NOFOLLOW` and fails an action
+whose declared outputs contain a symbolic link or special file before reading it; normalised bytes
+go to a parent-owned staged copy, never back into the output (liquid #425). `wrap --install-prefix` stages a canonical `bin/lib/include/share` install
 tree with relative ELF or Mach-O lookup paths. Publication rejects embedded sandbox or install
 prefixes and absolute binary or package-metadata paths; an explicit waiver is retained in result
 diagnostics ([`relocation.md`](relocation.md)).
@@ -252,11 +361,25 @@ model input ([`distribution.md`](distribution.md)). The dependency-free protobuf
 messages, and native tree/action/result conversions are implemented
 ([`reapi-codec.md`](reapi-codec.md)). The Corosio REAPI client provides CAS, ByteStream,
 ActionCache, and Execution RPCs; `wrap` and `build --profile` use its validated remote cache tier,
-and `liquid serve reapi` exposes liquid's CAS and ActionCache ([`reapi.md`](reapi.md)). Liquid's
+and `liquid serve reapi` exposes liquid's CAS and ActionCache ([`reapi.md`](reapi.md)); an
+ActionCache action digest must be lowercase hexadecimal of its algorithm's length before it names a
+file, and entries are never opened through a symbolic link (liquid #428). The HTTP/2
+transport under both enforces the limits it advertises (concurrent streams, header list and table
+sizes, frame size, flow control) and closes on rapid reset, CONTINUATION, PING and SETTINGS floods
+([`http2.md`](http2.md), liquid#412). The server reads each request one bounded message at a time
+and refuses a message over 5 MiB with `RESOURCE_EXHAUSTED` (#451). Both REAPI listeners bound
+retained ByteStream uploads by size, total allocated capacity, count and idle expiry and active
+Write deadlines; failed Writes release their buffers (liquid #444). It binds loopback by default
+and refuses any other address unless it has TLS and a bearer token or a client CA; a configured
+token is required, compared in constant time, on every RPC (#415). `liquid scheduler` applies the same listener rules (#520). Liquid's
 action-digest scheduler and TAAP-signed worker fleet are implemented, including one bounded requeue
 after worker loss, size-class placement from #18's recorded decision, REAPI Execution and
 ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces
-([`workers.md`](workers.md)).
+([`workers.md`](workers.md)). The scheduler and workers authenticate each other with pinned TAAP
+identity documents (`--trust-worker`, `--trust-scheduler`): every worker request and every lease
+is signed and replay-checked, lease tokens are 128 random bits, and a result is accepted only under
+the leased worker's pinned key (liquid #416). The standard REAPI services and `Submit` remain
+unauthenticated.
 
 **Node store.** The per-node runtime chunk store is implemented with metadata-only image receipt,
 reference-counted read-only VFS mounts, shared-chunk reuse counters, logical byte-budget eviction,
@@ -317,7 +440,9 @@ outside libliquid, and the native liquify plugin descriptor accepts a versioned 
 and attribution event callback table ([`frontends.md`](frontends.md)). The bundled tree-sitter fallback fetches 49
 exact-commit grammars under archive and per-file SHA-256 checks, registers their extensions, and
 discovers units from pinned tag queries where upstream supplies them; syntactic records and
-`liquid version --json` carry the grammar-lock digest. The distribution decision and inventory are
+`liquid version --json` carry the grammar-lock digest. A grammar can carry a locked, exact-text
+patch to a fetched file; the Swift scanner carries upstream's fix for a heap read past a
+zero-byte allocation (#462). The distribution decision and inventory are
 in [`grammars.md`](grammars.md). The Clang C++ module emits definition actions and assembles their
 outputs into a relocatable translation-unit object. A function-body edit therefore executes only
 that definition's new action; recorded header reads invalidate the definitions that use them.
@@ -337,7 +462,10 @@ and `liquid symbols <path>` ([`symbols.md`](symbols.md)).
 patch and restart records, the versioned `liquid-hot` cooperative C runtime for macOS arm64 and
 Linux x86_64, sandboxed restart hooks, reconstructible base-plus-patch status, and a drip-driven
 daemon target. Tier 2 verifies the #27 descriptors referenced by both signed results and otherwise
-returns the tier-3 restart outcome ([`hot-update.md`](hot-update.md)). Issue #305 gives the tier-1
+returns the tier-3 restart outcome ([`hot-update.md`](hot-update.md)). A patch is delivered only
+when its signer is in the configured hot-update signer set (`$LIQUID_HOME/trust/hot-update-signers`
+for the CLI, the repository's own identity for the daemon) and verifies through its identity chain;
+a missing or empty set refuses every patch (#388). Issue #305 gives the tier-1
 demo a scoped, bounded socket path and makes overlong runtime endpoints report the native limit
 and path ([socket fixtures](../build/socket-fixtures.md)).
 
@@ -357,7 +485,8 @@ attributed operation for whole-edit undo. The bundled tree-sitter frontend expos
 and `liquid edit` previews or applies through the checkout daemon ([`edit.md`](edit.md)).
 
 **Daemon lifecycle and fan-out** are implemented on macOS and Linux. The CLI starts one locked
-process per checkout on first daemon-backed use and attaches over framed canonical CBOR. The
+process per checkout on first daemon-backed use and attaches over framed canonical CBOR, on a
+socket in a private per-user directory that refuses other users by peer credentials (#397). The
 daemon owns capture, maps each drip to the changed graph inputs, processes build, search,
 collaborator, and lake hooks in order with durable per-target cursors, reports lag through
 `liquid status`, exits when idle, and persists its graph on shutdown. Resident graph values use a
@@ -399,7 +528,33 @@ and non-executing pickle codecs through a versioned C module ABI. Format trees d
 repository and CLI container diffs, archive entries use `!/` paths in search, and Tier 1 and Tier 2
 entries are retained as deduplicated blobs beside the verbatim container. Uncompressed tar has a
 deterministic writer, while hard or unsupported format surfaces retain honest tiers and opaque
+reasons ([`formats.md`](formats.md)). The Parquet and PDF readers charge every allocation sized by the file, and
+the bytes they decompress, to one byte budget per unpack before making it (liquid #433).
+One unpack's depth, byte and entry budgets bound every codec
+it reaches, including the package and document codecs that decode their own members through the
+registry (liquid#438).
+HDF5 rejects filter pipelines longer than the 32-bit
+chunk mask before decoding any dataset layout (liquid #486).
+The RPM reader charges the header strings it copies and its
+The RPM reader charges the header strings it copies and its
+decoded payload to one byte budget per read (liquid #473).
+RPM reads reject truncated cpio name and file padding before copying members or accepting the
+trailer, and check signature-header padding without wrapping (liquid #439).
 reasons ([`formats.md`](formats.md)).
+Mach-O inspection caps each symbol name at 64 KiB and charges retained names and records to the
+registry caller's byte budget, or 16 MiB for other callers; exhaustion preserves partial facts
+and all consumers report truncation. ABI comparisons and relocation approval fail closed for
+incomplete inspection (liquid #475).
+
+PE names have a 64 KiB length cap, offset
+deduplication, and one allowance for retained names and records; capped names or exhausted budgets
+produce partial, truncated results (liquid #474).
+
+ELF name copies and their records share one cumulative inspection allowance, including section,
+symbol, version, dynamic-path, and DWARF names and generated signatures. A 64 KiB name cap or an
+exhausted allowance stops collection before copying and reports truncation (liquid #479).
+Safetensors charges tensor bytes cumulatively before copying
+and truncates at the byte or entry limit, including for overlapping ranges (liquid #476).
 
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository
@@ -425,6 +580,8 @@ Apple notarisation proof ([`projection.md`](projection.md#unsigned-projection-an
 Debian, RPM, and Alpine lifecycle scripts. Their digests bind to projection and SBOM records;
 ownership checks detect conflicting paths, explicit replacements derive package relationships,
 and install/list/rollback use atomic projected-tree generations with interruption recovery.
+Staging never follows a symbolic link out of the generation, and intent links are created after
+every intent's directories, users and groups (liquid #385).
 Digest-pinned base and overlay trees also produce OSTree commits and bootc OCI layouts, with
 separate commit and image digests. Projection is distinct from the Phase 7 boot workflow
 ([`projection.md`](projection.md)).
@@ -460,6 +617,16 @@ conflict; an opt-in Linux subset exercises configured builds and relocation
 Liquid #84 adds an operator-control-plane deployment client with digest-pinned interim OCI images,
 named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
 
+## Build hardening, sanitizers and fuzzing
+
+Liquid #407 hardens every build by default (stack protector, stack clash and control-flow
+protection where supported, standard library assertions, PIE, full RELRO on Linux, and
+`_FORTIFY_SOURCE=3` in optimised builds), adds `-DLIQUID_SANITIZE=<list>` covering the C sources
+and every dependency, and adds eleven libFuzzer harnesses under `fuzz/` for the sync framing,
+object records, drips, CBOR, identity documents, HTTP/1, HTTP/2, the manifest and lock records,
+Git objects and protobuf. Their first runs found five defects, fixed in the same change
+(#457 to #461). How to run them and the recorded runs: [`../build/hardening.md`](../build/hardening.md).
+
 ## Known limits in one place
 
 - The action-result memory cache tier remains separate work.
@@ -468,11 +635,37 @@ named environments, status readback, and rollback ([`deploy.md`](deploy.md)).
 - Windows returns a documented unsupported result for the daemon until Corosio provides
   named-pipe transport, and for `wrap`, `verify`, and `replay`.
 - Lazy mounts, `wrap`, `verify`, and `replay` need libfuse3 on Linux and macFUSE on macOS.
+- A signer is attributed only through an identity chain the verifier holds (#383). Peers built
+  before #383 send no identity frames, so their records arrive as unknown signers until their
+  chain is trusted by hand. History signed before #448 by an identity whose chain was never kept
+  is listed as signed by an unverified key and satisfies no policy; it is not migrated (#452). An
+  identity that recovered from a compromise without its old key's
+  signature is trusted elsewhere only by `liquid identity trust --accept-compromise-rotation`.
+- Signatures by a key later declared compromised are refused even when made before the
+  declaration (#391): no signing path requests an RFC 3161 token and no drip, change, approval or
+  attestation record carries one, and the CLI configures no TSA roots.
+- A host without a terminal, a passphrase file or another custody cannot create a software
+  identity until `LIQUID_IDENTITY_KEY_CUSTODY` is set (#402); `file` is the explicit opt-in for
+  file-permission-only protection. Linux has no Secret Service custody (no D-Bus client), and the
+  macOS Keychain custody has no automated test.
+- Delegated sessions answer revocation only from the caller's resolver; the CLI's is the local
+  list `$LIQUID_HOME/trust/delegation-revocations`, until Lake serves delegation status. An
+  intermediate link of a delegation chain verifies only when its issuer's identity chain is in this
+  machine's identity store. See
+  [`../security/delegation-threat-model.md`](../security/delegation-threat-model.md).
+- `liquid push` and `liquid pull` cannot present a TLS client certificate, so they reach a
+  `serve sync --client-ca` listener only through another client; `--token-file` works with them.
+  Sync flow budgets are per author, so replaying an author's genuinely signed records still spends
+  that author's budget (#403).
+- A REAPI client CA file must hold a single certificate: the vendored Corosio TLS context loads only the
+  first certificate of a CA file.
 - The executable-aware delta algorithm id is reserved and unused.
 - The data-branch reflink fast path requires local cluster control metadata.
 - The projection page has no recorded credentialed Apple notarisation proof; image booting is
   outside the projection implementation.
 - Tier B source projection is Debian-only; other distribution source-policy formats are deferred.
-- The open decisions are listed in `CLAUDE.md` under *Decisions*; the licence for liquid and
-  liquify is not yet chosen
-  ([liquid-bridge #2](https://github.com/oramasearch/liquid-bridge/issues/2)).
+- liquid is released under the MIT licence.
+- Fuzz harnesses have short recorded runs only; the 24 CPU-hour runs are
+  [#464](https://github.com/oramasearch/liquid/issues/464), harnesses for the remaining parsers
+  [#463](https://github.com/oramasearch/liquid/issues/463), and the tree-sitter-swift scanner's
+  out-of-bounds read under AddressSanitizer [#462](https://github.com/oramasearch/liquid/issues/462).

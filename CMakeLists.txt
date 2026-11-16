@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 cmake_minimum_required(VERSION 3.28)
 
 # liquid is C++26. Capy/Corosio (when they arrive) need Clang 17+, so prefer a
@@ -40,7 +42,7 @@ if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT LIQUID_USE_SYSTEM_COMPILER)
   endif()
 endif()
 
-project(liquid VERSION 0.2.0 LANGUAGES C CXX
+project(liquid VERSION 0.3.0 LANGUAGES C CXX
         DESCRIPTION "liquid — version control, build, packages, artifacts and runtime in one program")
 
 file(READ
@@ -52,6 +54,10 @@ configure_file(
   "${CMAKE_CURRENT_BINARY_DIR}/generated/debian_path_packages.hpp"
   @ONLY)
 
+# Hardening (on by default), sanitizers and libFuzzer coverage for every C and C++ target,
+# dependencies included. Must precede the first dependency; see docs/build/hardening.md.
+include(cmake/Hardening.cmake)
+
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -62,6 +68,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(LIQUID_BUILD_CLI   "Build the liquid command-line binary" ON)
 option(LIQUID_BUILD_TESTS "Build the test suite" ${PROJECT_IS_TOP_LEVEL})
 option(LIQUID_BUILD_BENCH "Build optional benchmarks" OFF)
+option(LIQUID_BUILD_FUZZERS "Build libFuzzer harnesses (Clang only)" OFF)
 option(LIQUID_BUILD_FRONTENDS "Build bundled frontend modules" ON)
 option(LIQUID_SELF_HOST   "Configure a network-free liquid wrap build step" OFF)
 option(BUILD_SHARED_LIBS  "Build libliquid as a shared library" OFF)
@@ -105,8 +112,12 @@ endif()
 set(BOOST_INCLUDE_LIBRARIES
   json url assert config core mp11 system throw_exception type_traits winapi)
 set(BOOST_ENABLE_CMAKE ON)
+# Every fetched dependency is pinned to its content (L-28, liquid#408): a tag or a URL alone can be
+# moved or replaced upstream. A tarball carries its SHA-256 (the release asset's published digest),
+# a git source the commit its tag named when it was pinned.
 FetchContent_Declare(boost_core_libs
   URL https://github.com/boostorg/boost/releases/download/boost-1.91.0-1/boost-1.91.0-1-cmake.tar.xz
+  URL_HASH SHA256=cc5dc5006ecbdf0051f90979be31b4eee5987d9ae14ae9fb9c03cfa43fa3cdad
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(boost_core_libs)
@@ -153,7 +164,7 @@ endif()
 
 FetchContent_Declare(blake3_source
   GIT_REPOSITORY https://github.com/BLAKE3-team/BLAKE3.git
-  GIT_TAG        1.8.7
+  GIT_TAG        f3149ec5bb5449af877ba20377a11008ff499fa2 # 1.8.7
   SOURCE_SUBDIR  c/liquid-no-upstream-cmake)
 FetchContent_MakeAvailable(blake3_source)
 
@@ -217,8 +228,7 @@ set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(zstd_source
   GIT_REPOSITORY https://github.com/facebook/zstd.git
-  GIT_TAG        v1.5.7
-  GIT_SHALLOW    TRUE
+  GIT_TAG        f8745da6ff1ad1e7bab384bd1f9d742439278e99 # v1.5.7
   SOURCE_SUBDIR  build/cmake)
 FetchContent_MakeAvailable(zstd_source)
 
@@ -243,6 +253,14 @@ if(LIQUID_BUILD_FRONTENDS)
     ${LIQUID_GRAMMAR_INCLUDES})
   target_compile_features(liquid_frontend_syntax PRIVATE c_std_11 cxx_std_26)
   target_compile_definitions(liquid_frontend_syntax PRIVATE TREE_SITTER_HIDE_SYMBOLS)
+  # Grammar scanners define `void *tree_sitter_<name>_external_scanner_create()` and their parser.c
+  # declares it `(void)`; the runtime calls it through `void *(*)(void)`. C17 makes the two
+  # compatible, but -fsanitize=function compares the unprototyped type exactly and reports every
+  # scanner. The check is turned off for this third-party C only (liquid #407).
+  if(LIQUID_SANITIZE_UNDEFINED)
+    target_compile_options(liquid_frontend_syntax PRIVATE
+      $<$<COMPILE_LANGUAGE:C>:-fno-sanitize=function>)
+  endif()
   set_target_properties(liquid_frontend_syntax PROPERTIES
     EXPORT_NAME detail_frontend_syntax
     POSITION_INDEPENDENT_CODE ON
@@ -356,7 +374,49 @@ set_target_properties(liquid_monocypher PROPERTIES
   C_VISIBILITY_PRESET hidden
   POSITION_INDEPENDENT_CODE ON)
 
-add_library(liquid-wrap-hook SHARED src/sandbox/wrap_hook.c)
+# The wrap plan reader and the BLAKE3 condition check (liquid#401), shared by the preloaded
+# hook and libliquid so both sides hash and parse the plan the same way.
+add_library(liquid_wrap_plan_objects OBJECT src/sandbox/wrap_plan.c)
+target_include_directories(liquid_wrap_plan_objects PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${blake3_source_SOURCE_DIR}/c)
+set_target_properties(liquid_wrap_plan_objects PROPERTIES
+  C_EXTENSIONS OFF
+  C_VISIBILITY_PRESET hidden
+  POSITION_INDEPENDENT_CODE ON)
+target_compile_features(liquid_wrap_plan_objects PRIVATE c_std_99)
+
+# The hook is preloaded into uninstrumented build tools, so it cannot depend on a sanitizer
+# runtime (liquid #407). In a sanitizer build the wrap plan reader and BLAKE3 objects libliquid
+# uses are instrumented, so the hook gets its own copies compiled without a runtime.
+if(LIQUID_SANITIZE)
+  add_library(liquid_wrap_hook_plan_objects OBJECT src/sandbox/wrap_plan.c)
+  target_include_directories(liquid_wrap_hook_plan_objects PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${blake3_source_SOURCE_DIR}/c)
+  target_compile_features(liquid_wrap_hook_plan_objects PRIVATE c_std_99)
+  add_library(liquid_wrap_hook_blake3_objects OBJECT
+    $<TARGET_PROPERTY:liquid_blake3_objects,SOURCES>)
+  target_include_directories(liquid_wrap_hook_blake3_objects SYSTEM PRIVATE
+    ${blake3_source_SOURCE_DIR}/c)
+  target_compile_definitions(liquid_wrap_hook_blake3_objects PRIVATE
+    $<TARGET_PROPERTY:liquid_blake3_objects,COMPILE_DEFINITIONS>)
+  target_compile_features(liquid_wrap_hook_blake3_objects PRIVATE c_std_99)
+  set_target_properties(liquid_wrap_hook_plan_objects liquid_wrap_hook_blake3_objects PROPERTIES
+    C_EXTENSIONS OFF
+    C_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON)
+  liquid_no_sanitizer_runtime(liquid_wrap_hook_plan_objects liquid_wrap_hook_blake3_objects)
+  add_library(liquid-wrap-hook SHARED src/sandbox/wrap_hook.c
+    $<TARGET_OBJECTS:liquid_wrap_hook_plan_objects>
+    $<TARGET_OBJECTS:liquid_wrap_hook_blake3_objects>)
+else()
+  add_library(liquid-wrap-hook SHARED src/sandbox/wrap_hook.c
+    $<TARGET_OBJECTS:liquid_wrap_plan_objects>)
+  target_link_libraries(liquid-wrap-hook PRIVATE liquid_blake3)
+endif()
+target_include_directories(liquid-wrap-hook PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+liquid_no_sanitizer_runtime(liquid-wrap-hook)
 set_target_properties(liquid-wrap-hook PROPERTIES
   OUTPUT_NAME liquid-wrap-hook
   C_VISIBILITY_PRESET hidden
@@ -383,6 +443,7 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(liquid-read-guard src/sandbox/read_guard.c)
   target_link_options(liquid-read-guard PRIVATE -static)
+  liquid_no_sanitizer_runtime(liquid-read-guard)
   target_compile_features(liquid-read-guard PRIVATE c_std_99)
 endif()
 
@@ -554,23 +615,29 @@ add_library(libliquid
   src/identity/custody/common.cpp
   src/identity/custody/gcp_kms.cpp
   src/identity/custody/http.cpp
+  src/identity/custody/keychain.cpp
   src/identity/custody/lake.cpp
   src/identity/custody/shamir.cpp
   src/identity/custody/tpm.cpp
   src/identity/keys/keys.cpp
   src/identity/keys/hid.cpp
   src/identity/taap.cpp
+  src/fs/contained.cpp
   src/install/faults.cpp
   src/install/install.cpp
   src/install/records.cpp
   src/identity/threshold.cpp
+  src/identity/trust.cpp
   src/import/spack.cpp
   src/node_store.cpp
   src/node_store/service.cpp
   src/crypto/crypto.cpp
   src/net/http_client.cpp
+  src/net/listener.cpp
+  src/net/retry_after.cpp
   src/crypto/signature.cpp
   src/object.cpp
+  src/objects/entry_name.cpp
   src/objects/records.cpp
   src/protobuf/wire.cpp
   src/projection/helm.cpp
@@ -596,8 +663,11 @@ add_library(libliquid
   src/reapi/client.cpp
   src/reapi/messages.cpp
   src/reapi/remote_client.cpp
+  src/reapi/action_cache.cpp
   src/reapi/server.cpp
+  src/reapi/uploads.cpp
   src/serve/http.cpp
+  src/workers/auth.cpp
   src/workers/protocol.cpp
   src/workers/control.cpp
   src/workers/scheduler.cpp
@@ -615,6 +685,7 @@ add_library(libliquid
   src/repository/transfer.cpp
   src/runtime/runtime.cpp
   src/sandbox/environment.cpp
+  $<TARGET_OBJECTS:liquid_wrap_plan_objects>
   src/scan/detectors.cpp
   src/search/index.cpp
   src/search/repository.cpp
@@ -633,7 +704,9 @@ add_library(libliquid
   src/store/pack.cpp
   src/store/references.cpp
   src/store/store_impl.cpp
+  src/store/holder.cpp
   src/store/subject_index.cpp
+  src/store/write_lock.cpp
   src/sync/codec.cpp
   src/sync/endpoint.cpp
   src/sync/server.cpp
@@ -661,6 +734,14 @@ elseif(WIN32)
 endif()
 target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 add_library(liquid::liquid ALIAS libliquid)
+# An instrumented static archive needs the sanitizer runtime wherever it is linked, so the
+# installed package carries the link flags to consumers (tests/consumer builds one).
+if(LIQUID_SANITIZE)
+  foreach(LIQUID_SANITIZER IN LISTS LIQUID_SANITIZE)
+    target_link_options(libliquid INTERFACE -fsanitize=${LIQUID_SANITIZER})
+    target_link_options(liquid-hot INTERFACE -fsanitize=${LIQUID_SANITIZER})
+  endforeach()
+endif()
 set_target_properties(libliquid PROPERTIES
   OUTPUT_NAME liquid            # libliquid.a / libliquid.dylib / libliquid.so
   EXPORT_NAME liquid            # find_package(liquid) → liquid::liquid
@@ -714,10 +795,11 @@ else()
 endif()
 if(WIN32)
   target_compile_definitions(libliquid PRIVATE LIQUID_HAVE_PCSC=1)
-  target_link_libraries(libliquid PRIVATE bcrypt hid setupapi tbs winscard)
+  target_link_libraries(libliquid PRIVATE advapi32 bcrypt hid setupapi tbs winscard)
 elseif(APPLE)
   target_compile_definitions(libliquid PRIVATE LIQUID_HAVE_PCSC=1)
-  target_link_libraries(libliquid PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework PCSC")
+  target_link_libraries(libliquid PRIVATE "-framework CoreFoundation" "-framework IOKit" "-framework PCSC"
+                        "-framework Security")
 elseif(UNIX)
   find_library(LIQUID_PCSC_LIBRARY pcsclite)
   if(LIQUID_PCSC_LIBRARY)
@@ -964,7 +1046,7 @@ if(LIQUID_BUILD_TESTS)
   # do not appear in liquid's build output where they read as ours.
   FetchContent_Declare(googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        v1.17.0
+    GIT_TAG        52eb8108c5bdec04579160ae17225d66034bd723 # v1.17.0
     SYSTEM)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
@@ -989,6 +1071,9 @@ if(LIQUID_BUILD_TESTS)
   endforeach()
   enable_testing()
   add_subdirectory(tests)
+endif()
+if(LIQUID_FUZZ)
+  add_subdirectory(fuzz)
 endif()
 
 # Optional benchmarks have their own dependencies and never enter the default build.

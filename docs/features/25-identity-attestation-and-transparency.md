@@ -36,7 +36,9 @@ system reduces to.
 `delegation/1` is implemented by liquid #30. Its required attributes are scoped path globs,
 independent publish and lease capabilities, remaining delegation depth, and dispatcher; `model`
 is optional. Validation permits only attenuation, and session drips carry the delegation digest
-and agent actor in their signed version-3 body while older records remain decodable.
+and agent actor in their signed version-3 body while older records remain decodable. The threat
+model for delegation and the sessions that act under it, with the defects still open (#514 to
+#517), is [`../security/delegation-threat-model.md`](../security/delegation-threat-model.md).
 
 `scan_result/1` is implemented for local capture in Phase 1; its canonical record and verification
 rules are in [`../library/secret-scanning.md`](../library/secret-scanning.md#scan_result1).
@@ -213,7 +215,7 @@ conversation those are *more* credible references than "blockchain," not less. P
 it as a blockchain invites "what is your consensus mechanism?", and the answer is that
 it does not need one.
 
-You get every property Steve asked for. The accurate name is the better one.
+You get every property that was asked for. The accurate name is the better one.
 
 ## Witnessing is the primary defence — not anchoring
 
@@ -358,7 +360,11 @@ Feedback to the protocol owner:
   revocation evidence, renewing archive timestamps before the old protection weakens, and
   rehashing all prior evidence before the hash algorithm breaks. RFC 4998 Evidence Record
   Syntax is the relevant standard. This matters because liquid's history is meant to
-  outlive the keys that signed it.
+  outlive the keys that signed it. `evidence_record::verify` holds each renewal to that rule
+  (L-37, liquid#390). Archive timestamp *n*+1 must be issued no earlier than timestamp *n*, and
+  no later than the end of *n*'s signing certificate. No timestamp may lie more than five minutes in
+  the future. So a token backdated with an expired or compromised TSA key cannot be laundered by
+  an honest renewal.
 - **TAAP's own maturity.** It is a draft with unresolved questions, and liquid would be
   its first significant implementation. That is an opportunity and a risk, and the risk
   is that the protocol changes under liquid.

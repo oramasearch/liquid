@@ -10,4 +10,6 @@ signing. Persisted hardware descriptors contain custody, algorithm, credential o
 and public key. They never contain a hardware private key.
 
 No vendor hardware library crosses this boundary. Operating-system HID and PC/SC adapters supply
-production transports, while TAAP verification remains software-only.
+production transports, while TAAP verification remains software-only. A FIDO2 assertion is
+verified over `authenticatorData || clientDataHash`, the bytes CTAP2 authenticators sign
+([`docs/library/identity.md`](../../../docs/library/identity.md)).

@@ -5,22 +5,27 @@
 ## Synopsis
 
 ```text
-liquid scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]
+liquid scheduler --listen <address> --trust-worker <path> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>] [--tls-cert <path> --tls-key <path>] [--token-file <path>] [--client-ca <path>]
 ```
 
 ## Description
 
-Serve CAS, ActionCache, Execution, and the liquid worker lease queue.
+Serve CAS, ActionCache, Execution, and a signed worker lease queue for trusted workers. A listener off loopback requires TLS and --token-file or --client-ca.
 
 ## Options
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
 | `--listen` | `<address>` | Select the REAPI and worker listener. | none |
+| `--trust-worker` | `<path>` | Trust a worker identity document, or a directory of them; repeatable. | none |
 | `--control-listen` | `<address>` | Select the control listener. | 127.0.0.1:8080 |
 | `--store` | `<path>` | Select the scheduler store directory. | platform cache |
 | `--instance` | `<name>` | Select the scheduler instance. | empty |
 | `--lease-ms` | `<count>` | Set the worker lease duration. | configured value |
+| `--tls-cert` | `<path>` | Read the listener TLS certificate chain from this file. | none |
+| `--tls-key` | `<path>` | Read the listener TLS private key from this file. | none |
+| `--client-ca` | `<path>` | Require a client certificate signed by this CA (mutual TLS). | none |
+| `--token-file` | `<path>` | Require on every request the bearer token in this owner-only file. | none |
 
 ## Availability
 
@@ -29,7 +34,7 @@ available
 ## Examples
 
 ```sh
-liquid scheduler --listen 0.0.0.0:50051
+liquid scheduler --listen 127.0.0.1:50051 --trust-worker /etc/liquid/workers
 ```
 
 ## Exit status

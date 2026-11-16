@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -91,6 +93,75 @@ TEST(VfsMaterialise, reproduces_repository_and_selected_prefix) {
     EXPECT_FALSE(std::filesystem::exists(prefix_path.path() / "README.txt"));
     EXPECT_EQ(read_text(prefix_path.path() / "first.txt"), "first\n");
     EXPECT_EQ(read_text(prefix_path.path() / "nested/second.bin"), std::string("second\0", 7));
+}
+
+auto folds_case(const std::filesystem::path& directory) -> bool {
+    auto code = std::error_code{};
+    std::filesystem::create_directories(directory, code);
+    {
+        auto output = std::ofstream{directory / "case-probe"};
+    }
+    return std::filesystem::exists(directory / "CASE-PROBE", code);
+}
+
+// liquid #386: a working-tree entry whose name is not one safe component is refused by the
+// materialiser itself, and nothing is written outside the target.
+TEST(VfsMaterialise, refuses_entry_names_that_escape_the_target) {
+    for (const auto* name : {"..", "../escaped", "/etc/escaped", "a\\b", ".git", ".GIT"}) {
+        temporary_tree repository_path;
+        temporary_tree workspace;
+        auto opened = liquid::runtime::block_on(liquid::repository::create(repository_path.path()));
+        ASSERT_TRUE(opened) << opened.error().message;
+        auto repository = std::move(*opened);
+        ASSERT_TRUE(liquid::runtime::block_on(repository.write("placeholder", bytes("x\n"))));
+        ASSERT_TRUE(liquid::repository_detail::testing::rename_working_entry(
+            repository, "placeholder", name));
+        const auto target = workspace.path() / "checkout" / "target";
+        auto materialised = liquid::runtime::block_on(liquid::vfs::materialise(repository, target));
+        ASSERT_FALSE(materialised) << "accepted " << name;
+        EXPECT_EQ(materialised.error().code, liquid::errc::corrupt);
+        EXPECT_FALSE(std::filesystem::exists(workspace.path() / "checkout" / "escaped"));
+        EXPECT_TRUE(std::filesystem::is_empty(target));
+    }
+}
+
+TEST(VfsMaterialise, repository_writes_refuse_reserved_entry_names) {
+    temporary_tree repository_path;
+    auto opened = liquid::runtime::block_on(liquid::repository::create(repository_path.path()));
+    ASSERT_TRUE(opened) << opened.error().message;
+    auto repository = std::move(*opened);
+    for (const auto* path : {".git/hooks/post-checkout", "src/.Git/config", "a\\b", "GIT~1/x"}) {
+        auto written = liquid::runtime::block_on(repository.write(path, bytes("#!/bin/sh\n")));
+        ASSERT_FALSE(written) << "accepted " << path;
+        EXPECT_EQ(written.error().code, liquid::errc::invalid_argument);
+    }
+    EXPECT_TRUE(liquid::runtime::block_on(repository.write(".gitignore", bytes("build/\n"))));
+    EXPECT_TRUE(liquid::runtime::block_on(repository.write(".github/x.yml", bytes("x\n"))));
+}
+
+TEST(VfsMaterialise, names_that_collide_on_this_filesystem_are_refused) {
+    temporary_tree repository_path;
+    temporary_tree checkout_path;
+    temporary_tree probe_path;
+    auto opened = liquid::runtime::block_on(liquid::repository::create(repository_path.path()));
+    ASSERT_TRUE(opened) << opened.error().message;
+    auto repository = std::move(*opened);
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("README", bytes("upper\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("Readme", bytes("mixed\n"))));
+    // U+00E9 precomposed and decomposed: equal on a normalisation-insensitive filesystem.
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("caf\xc3\xa9", bytes("nfc\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(repository.write("cafe\xcc\x81", bytes("nfd\n"))));
+    const auto insensitive = folds_case(probe_path.path());
+    auto materialised =
+        liquid::runtime::block_on(liquid::vfs::materialise(repository, checkout_path.path()));
+    if (insensitive) {
+        ASSERT_FALSE(materialised);
+        EXPECT_EQ(materialised.error().code, liquid::errc::already_exists);
+        return;
+    }
+    ASSERT_TRUE(materialised) << materialised.error().message;
+    EXPECT_EQ(read_text(checkout_path.path() / "README"), "upper\n");
+    EXPECT_EQ(read_text(checkout_path.path() / "Readme"), "mixed\n");
 }
 
 TEST(VfsHydration, fetches_only_chunks_covering_the_requested_range) {

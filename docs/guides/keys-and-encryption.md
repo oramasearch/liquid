@@ -14,7 +14,13 @@ liquid identity show --document
 ```
 
 The output is only unpadded base64url canonical CBOR, with no newline. This works without a
-repository and creates a software identity if one does not exist. `--document` cannot be combined
+repository and creates a software identity if one does not exist. A new software key is sealed
+under a passphrase you are asked for (or that `LIQUID_IDENTITY_PASSPHRASE_FILE` names), or under the
+macOS Keychain; `LIQUID_IDENTITY_KEY_CUSTODY` chooses another custody, and `file` leaves the key
+protected only by file permissions. On a host with no terminal, such as a container, point
+`LIQUID_IDENTITY_PASSPHRASE_FILE` at a file only you can read (mode `0600` or `0400`, owned by
+you); liquid refuses any other file. `liquid identity custody` shows which one holds yours and
+`liquid identity custody --to passphrase` moves an older identity off file permissions. `--document` cannot be combined
 with `--json` or `rotate`; those combinations report a usage error and exit 2. See the
 [identity guide](../library/identity.md) for the document and verification contract.
 

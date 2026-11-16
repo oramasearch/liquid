@@ -16,6 +16,25 @@ materialized plain checkout through the same client.
 `--watch` attaches to the checkout daemon, whose drive target runs the same client after captured
 filesystem drips. Lake's web drive is separate consumer work.
 
+## Filesystem sources (liquid #423)
+
+Drive skips symbolic links, including file links whose targets are inside the synchronized folder.
+It synchronizes ordinary files only. A link replacing a synchronized file supplies no new content;
+device and hydration state may retain the prior repository value. The link target's bytes are
+never staged.
+
+On macOS and Linux, staging walks each relative source path from a folder descriptor using
+`openat` with `O_NOFOLLOW` on every component. It rejects traversal and non-regular files, opens
+leaves without blocking on FIFOs, and keeps the file descriptor alive through store streaming and
+the write-through reread. Those reads use `/dev/fd/<descriptor>`, so replacing a file or parent
+after open cannot redirect ingestion. If a walked path becomes unsafe before open, sync returns
+an error before pushing. Other platforms return `unsupported` for filesystem ingestion until an
+equivalent protected read is available. There is no Drive option to dereference links.
+
+The source tests exercise bootstrap and subsequent sync through an HTTP sync server, direct
+staging with unsafe paths, and file and parent replacement after open. They check that dummy host
+credential bytes are absent from the remote store.
+
 ## Device states and settings
 
 Every path resolves to exactly one device state. Rules are stored under the local repository's
@@ -149,6 +168,11 @@ remain in the tree; rebuilding status does not itself count as resolution.
 
 Pull imports signed repository and tree metadata into the remote view and registers content chunks
 against a retained `sync_endpoint`; payload bytes remain remote until policy or a read needs them.
+Checkout-local paths (`LIQUID_REPO`, `LIQUID_JOURNAL`, `.liquid/`, `.liquid-store/`,
+`.liquid-build/`, `.liquid-data/`, `.liquid-wrap-cache/`, `.liquid-capture-cookie-*`) are dropped
+from every flattened tree and are never written to the folder, so a peer's tree cannot replace the
+repository marker, the store, or release policy (liquid #420,
+[sync.md](sync.md#trust-configuration-stays-with-the-checkout-that-set-it)).
 Reconciliation then applies repository operations. Pinned files and online-only files at or below
 the threshold are published to the synchronized folder. Larger online-only paths remain virtual
 placeholders in the FUSE namespace, and later full walks retain their repository entries while

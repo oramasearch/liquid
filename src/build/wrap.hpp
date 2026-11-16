@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include <filesystem>
@@ -5,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "liquid/build.hpp"
 
@@ -35,3 +38,13 @@ phase2_toolchain(repository& source,
                                                               std::chrono::sys_seconds observed_at);
 
 } // namespace liquid::build
+
+namespace liquid::build_detail {
+
+// The process keys (64 lowercase hex digits) of the actions saved in the wrap state file at
+// `state`, in order. A state written before format version 2, whose keys were 64-bit FNV-1a,
+// reads as empty, so the next run rebuilds it (liquid#449).
+[[nodiscard]] LIQUID_EXPORT liquid::result<std::vector<std::string>>
+saved_wrap_action_keys(const std::filesystem::path& state);
+
+} // namespace liquid::build_detail

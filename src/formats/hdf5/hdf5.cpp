@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/builtin.hpp"
 
 #include <algorithm>
@@ -472,6 +474,10 @@ private:
         }
         const auto version = std::to_integer<std::uint8_t>(source.data[0]);
         const auto count = std::to_integer<std::uint8_t>(source.data[1]);
+        // A chunk's 32-bit mask has one bit per filter in either pipeline encoding.
+        if (count > std::numeric_limits<std::uint32_t>::digits) {
+            return std::unexpected(failure("HDF5 filter pipeline exceeds 32 filters"));
+        }
         auto position = version == 1 ? std::size_t{8} : std::size_t{2};
         auto output = std::vector<filter>{};
         for (auto index = std::uint8_t{}; index < count; ++index) {
@@ -908,7 +914,9 @@ private:
             return std::unexpected(name_size.error());
         }
         position += length_size;
-        if (position + *name_size > source.data.size()) {
+        // An 8-byte name length can be near 2^64, so compare against the bytes left rather than
+        // adding it to the position, where the sum would wrap.
+        if (position > source.data.size() || *name_size > source.data.size() - position) {
             return std::unexpected(failure("truncated link name"));
         }
         auto name = std::string{reinterpret_cast<const char*>(source.data.data() + position),

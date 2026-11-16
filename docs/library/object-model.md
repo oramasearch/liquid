@@ -86,6 +86,20 @@ concretised_spec/1 { v:1, kind:"concretised_spec", name, version, variants, comp
                      dependencies:[{name,type,target,virtual}…], patches, reasons }
 ```
 
+**Tree entry names are single safe path components** (liquid #386). A name is refused when it is
+empty, `.` or `..`; contains `/`, `\` or NUL; or is a spelling of `.git` that Git, macOS or Windows
+treats as `.git`: any letter case, with HFS+ ignorable code points (U+200C to U+200F, U+202A to
+U+202E, U+206A to U+206F, U+FEFF) removed, with trailing dots or spaces, followed by a `:` stream
+name, or the short name `GIT~1`. The rule is applied in four places: `decode_tree` refuses such a
+record as `errc::corrupt`; `encode(tree)` and every repository write path refuse it as
+`errc::invalid_argument`; the Git tree parser refuses it during `liquid import git`; and both
+materialisers (`vfs::materialise` and the build materialiser) check every name again before they
+touch the filesystem. The materialisers also create each entry exclusively and never follow a
+symbolic link, so two names that a case- or normalisation-insensitive filesystem treats as one
+(`README` and `Readme` on APFS, or precomposed and decomposed `é`) fail with
+`errc::already_exists` instead of one overwriting the other. The rule lives in
+`src/objects/entry_name.hpp`; the no-follow writes in `src/fs/contained.hpp`.
+
 The query graph uses its own store directory and atomic text `ROOT`. Query keys and dependency
 keys are canonical CBOR; dependencies retain read order. Query values are separate store objects,
 so opening the graph loads root and node metadata while value bytes remain shallow until demand.

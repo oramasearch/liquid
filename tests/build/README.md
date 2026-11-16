@@ -12,8 +12,14 @@ The SBOM finalization bound publishes 24 producer actions and gives one final ac
 `test_content.cpp` covers canonical output-tree paths and modes plus read-only named dependency
 folding. `test_normalise.cpp` proves two `ar` headers with different owner, group, mode, and time
 normalise identically, timestamp-form Python bytecode becomes one payload-addressed form, fixed-root
-binary and text kinds are unchanged, and tree modes preserve only portable executability. The
-provenance tests also enumerate the stored signed input/output claim.
+binary and text kinds are unchanged, and tree modes preserve only portable executability. Its
+output-collection cases (liquid #425) prove that a symbolic link to a host file, a linked declared
+output or parent directory at any depth, and a FIFO fail collection without reading or rewriting
+the target or staging anything; that escaping declared paths are refused; and that regular outputs
+are staged and normalised while the action's own copy stays untouched. On Linux,
+`Build.output_symlink_fails_before_its_host_target_is_read_or_rewritten` runs an action that links
+`out/payload.pyc` to a host sentinel and requires the action to fail with the sentinel unchanged.
+The provenance tests also enumerate the stored signed input/output claim.
 `test_conflicts.cpp` proves that reaching a conflict entry fails materialisation with its path and
 digest while a tree containing only the unaffected input materialises normally.
 
@@ -167,3 +173,12 @@ environment, and policy-bound candidate keys.
 zero-byte unused results, exact chunk-range hydration and cache reuse, on-demand materialisation,
 tri-state availability, and metadata-only consumption by a consecutive remote result. The Linux
 executor fixture marks one action eligible and verifies `/etc/hostname` is refused and reported.
+
+`test_wrap_plan.cpp` covers what the wrap hook trusts (liquid#401): two inputs with the same
+FNV-1a value no longer satisfy each other's conditional row, a condition in the old FNV-1a form is
+a miss, a plan is read only when its bytes hash to the digest liquid passed, and a shared or linked
+plan is refused. For the process key (liquid#449) it checks that two command lines whose old
+FNV-1a keys collide get different BLAKE3-256 keys and that a row for one is not a hit for the other,
+that each part of a key is hashed with its length, that a row with a key in any other form never
+hits, and that a saved wrap state without the version-2 line is ignored. On macOS it preloads the real hook into `wrap_probe.c` and checks that the tool
+runs unless a bound, private plan beside the mount matches.

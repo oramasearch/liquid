@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -305,6 +307,46 @@ TEST(Repository, import_tree_uses_one_drip_only_for_changed_files) {
     const auto after = repository.status();
     ASSERT_TRUE(after) << after.error().message;
     EXPECT_EQ(after->pending_drips, before->pending_drips);
+}
+
+// Checkout-local state is never repository content (liquid #420). Release policy under `.liquid/`,
+// a repository marker, the store, and build, wrap and data-branch state stay out of the tree even
+// when a caller's `!` pattern asks for them, so a push can never hand them to a clone.
+TEST(Repository, import_tree_never_records_checkout_local_state) {
+    temporary_repository location;
+    const auto source = location.path() / "source";
+    write_file(source / "kept.txt", content("kept"));
+    write_file(source / "LIQUID_REPO", content("marker"));
+    write_file(source / "LIQUID_JOURNAL", content("journal"));
+    write_file(source / ".liquid" / "release" / "policy.cbor", content("policy"));
+    write_file(source / ".liquid-store" / "objects", content("store"));
+    write_file(source / ".liquid-build" / "tests" / "local.test", content("test"));
+    write_file(source / ".liquid-data" / "actions" / "local", content("data"));
+    write_file(source / ".liquid-wrap-cache" / "key" / "state", content("wrap"));
+    write_file(source / ".liquid-capture-cookie-1", content("cookie"));
+    auto created =
+        liquid::runtime::block_on(liquid::repository::create(location.path() / "target"));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+
+    auto options = liquid::import_options{};
+    options.ignore_patterns = {"!.liquid/**", "!LIQUID_REPO", "!.liquid-build/**"};
+    const auto imported = liquid::runtime::block_on(repository.import_tree(source, options));
+    ASSERT_TRUE(imported) << imported.error().message;
+    EXPECT_EQ(imported->files_seen, 1U);
+    const auto kept = liquid::runtime::block_on(repository.read("kept.txt"));
+    ASSERT_TRUE(kept) << kept.error().message;
+    EXPECT_EQ(text(*kept), "kept");
+    for (const auto* path : {"LIQUID_REPO",
+                             "LIQUID_JOURNAL",
+                             ".liquid/release/policy.cbor",
+                             ".liquid-store/objects",
+                             ".liquid-build/tests/local.test",
+                             ".liquid-data/actions/local",
+                             ".liquid-wrap-cache/key/state",
+                             ".liquid-capture-cookie-1"}) {
+        EXPECT_FALSE(liquid::runtime::block_on(repository.read(path))) << path;
+    }
 }
 
 TEST(Repository, import_tree_preserves_file_identity_and_records_removals) {
@@ -1301,8 +1343,12 @@ TEST(RepositoryLocks, concurrent_offline_locks_reconcile_as_a_conflict_value) {
     ASSERT_TRUE(peer) << peer.error().message;
     ASSERT_TRUE(liquid::runtime::block_on(peer->lock("models/catalog.bin", "peer rebuild")));
     ASSERT_TRUE(liquid::runtime::block_on(source->lock("models/catalog.bin", "source rebuild")));
+    // The source exports from its own identity home, so its author chain travels with the drips
+    // and the peer can verify them (liquid#383).
+    identity_home.set(first_home);
     const auto items = exported_items(*source);
     ASSERT_TRUE(items) << items.error().message;
+    identity_home.set(second_home);
     auto imported = liquid::runtime::block_on(peer->import_drips(*items));
     ASSERT_TRUE(imported) << imported.error().message;
 

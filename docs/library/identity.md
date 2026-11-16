@@ -21,7 +21,9 @@ software keys remain on the client, and FIDO2 and PIV keys remain on their token
 existing identity does not ask the token to sign again or change the identity.
 
 `--document --json` is refused with a clear usage error on stderr and exit 2. `--document` applies
-only to `show`; using it with `rotate` also returns exit 2. Ordinary text and JSON summaries retain
+only to `show`; using it with `rotate` also returns exit 2. `--chain` prints the whole chain instead
+of the current document, for `liquid identity trust` on another machine (see
+[below](#how-a-verifier-obtains-and-trusts-another-persons-chain)). Ordinary text and JSON summaries retain
 their existing behavior. After a rotation, export returns the current successor document.
 
 The output matches [lake's sign-up identity contract](https://github.com/oramasearch/lake/blob/main/docs/api/identity.md):
@@ -88,21 +90,167 @@ on disk.
 `{ key_fingerprint_base32, declared_at, reason? }`: the fingerprint is unpadded uppercase base32
 of SHA-512/256 over the key's canonical public-key object, `declared_at` is an RFC 3339 UTC time,
 and `reason` is optional. A successor may omit the old-key signature only when its own
-`compromised_keys` names the predecessor key. A signature from that key at or after `declared_at`
-is invalid; one made before it is valid but the resulting `verified_identity` reports compromised
-history.
+`compromised_keys` names the predecessor key, and the resulting `verified_identity` reports
+compromised history.
+
+A key named in a compromise declaration verifies **no** signature through `verify`, whatever the
+signature's `signed_at` says (liquid #391). `signed_at` is chosen by the signer, so whoever holds
+the compromised key can set it before `declared_at`; comparing the two, as liquid did before #391,
+let a thief backdate signatures. Such a signature is accepted only by `verify_with_trusted_time`,
+and only when its `signature_timestamp` evidence proves by third-party time that it existed strictly
+before `declared_at`: an RFC 3161 TimeStampToken, or an RFC 4998 evidence record whose initial
+archive timestamp covers it, with a message imprint of SHA-256 over the signature bytes, verified
+by liquid's TSA verifier ([transparency](transparency.md)) against timestamp-authority roots the
+caller supplies. `trusted_signature_time` returns that time. A signature made before the compromise
+without such evidence is refused: re-sign the artifact with the new key, or timestamp signatures
+when they are made. Signatures by a key that was never declared compromised need no evidence.
+
+What is not wired yet: no signing path requests an RFC 3161 token, and no record format (drip,
+change, release approval, attestation) carries one beside its signature, so today every signature
+by a declared-compromised key is refused. The CLI configures no timestamp-authority roots. A
+transparency-log inclusion proof cannot serve as trusted time: liquid's checkpoints carry no
+integrated time. Test: `Identity.BackdatedSignatureByCompromisedKeyIsRefused` (stored and carried
+chain, invalid evidence) and `TransparencyTimestamp.SignatureTrustedTimeComesOnlyFromVerifiedEvidence`
+(the evidence check against the TSA fixture).
 
 Documents are retained as canonical CBOR at
 `$LIQUID_HOME/identity/<identity-fingerprint>/documents/NNN.cbor`; the legacy current-document
-path is updated to the newest document for local compatibility. `verify_chain` checks stored-byte
-links, stable identifiers, timestamps, declarations, and the required signatures, then returns the
-current key set. `verify(actor, ...)` resolves a non-current signing key through that local chain.
+path is updated to the newest document for local compatibility. `verify_chain` checks that the
+initial document's identifier is derived from its own key, then stored-byte links, stable
+identifiers, timestamps, declarations, and the required signatures, and returns the current key
+set. `verify(actor, ...)` resolves a non-current signing key through the stored chain.
 
 A verifier that holds only an old document can validate that document and signatures made with its
 key, but cannot identify a successor or its current key without receiving or resolving the chain.
 When presented a normal successor, it can prove old-key continuity. A compromise successor proves
 that the new key signed the declaration, but cannot prove continuity of control through the omitted
-old-key signature; that claim remains subject to verifier policy.
+old-key signature, so it is accepted only by the decision described below.
+
+## How a verifier obtains and trusts another person's chain
+
+A signature proves only that some key signed. Attribution needs one more fact: that the key belongs
+to the identity the record names. libliquid binds a name to a key in exactly one way, through that
+identity's document chain (liquid#383).
+
+- **The root of trust is the identifier itself.** A TAAP identifier is the fingerprint of the
+  identity's initial key, so the initial document proves its own name: `verify_chain` and
+  `verify_document` refuse an initial document whose `taap_id` and `fingerprint` are not derived
+  from its own key (`identity_chain_identifier_not_derived_from_key`). Every later key is bound by a
+  rotation signed by the key it replaces.
+- **`verify(actor, artifact_type, body, signature)` reads the chain from this machine's identity
+  store** (`$LIQUID_HOME/identity/<fingerprint>/documents/`), keyed by the name in `actor.taap_id`.
+  The store holds the local identity's own chain and every chain accepted by
+  `trust_identity_chain`. The actor's `public_key`, `fingerprint` and `key_fingerprint` are not
+  trusted. **With no stored chain the result is the unknown-signer error, never `true`.** Its code
+  is `errc::unauthorized`, so a caller that refuses every error stays closed;
+  `is_unknown_signer(error)` lets a caller say "unknown signer" rather than "bad signature". A
+  stored chain that does not contain the signing key gives `signing key is not in the identity
+  chain`. The name is validated as `taap:1:<algorithm>:<52 base32 characters>` before it is used as
+  a path.
+- **`verify(actor, chain, artifact_type, body, signature)` verifies against a chain the caller
+  supplies**, for example one carried with a request. It requires the chain to start at the
+  initial document, to name the same identity as `actor.taap_id`, and every rotation to carry the
+  replaced key's signature.
+- **`trust_identity_chain(chain, options)` stores a verified chain.** A chain already stored may only
+  be extended: a chain whose documents differ from the stored ones is a fork and is refused with
+  `errc::conflict`, and a shorter prefix changes nothing. Rotations beyond what is already stored
+  must be signed by the key they replace; a rotation that only declares the old key compromised is
+  signed by its new key alone, so anyone could write one for any public initial document. It is
+  accepted only with `accept_compromise_rotation`, an out-of-band decision that sync never makes.
+  The local identity's own compromise rotations are already in its store.
+- **`load_identity_chain(taap_id)` returns a stored chain**, and `encode_identity_chain` /
+  `decode_identity_chain` carry one as a canonical CBOR array of complete documents, oldest first.
+- **`verify_key_signature(key, ...)`** checks a signature against a key and nothing else. It is for a
+  key the caller itself bound to a name, such as a session key it minted and stored; it is never a
+  substitute for a chain.
+
+### Every decision that trusts an identity requires a verified chain
+
+Steve decided on 2026-11-14 (liquid#429, liquid#452): every decision that trusts an identity
+requires a verified identity chain, and a signature verified only against the key a record carries
+never satisfies one. The TAAP fingerprint is computed from the key *and* the identity document's
+metadata (`created_at`, `key_label`, custody), which a record's actor does not carry, so the record
+key alone can never be bound to the `taap_id` it claims. The decisions, and the chain-required
+check each one uses:
+
+| Decision | Where | Check |
+|---|---|---|
+| Approved and attestation issuers | `src/attestation/registry.cpp` | `verify_attestation`: `verified` is set only through a chain |
+| The admission issuer pin | `src/admission/review.cpp` | `verify_attestation`; an unchained issuer is `attestation.unknown_signer` |
+| Approved builders and policy counts | `src/build/policy.cpp` | `verify_attestation` |
+| Distinct release signers | `src/identity/threshold.cpp` | `verify_attestation`; an unchained signer is listed in `unknown_signers` and not counted |
+| Build provenance | `src/build/provenance.cpp` | `verify` and `verify_attestation` |
+| Authors of imported drips and changes | `src/repository/repository_impl.cpp` (`import_synced_*`) | `verify`; an unchained author is refused |
+
+A signature with no chain is reported, never trusted: **`check_signature(actor, ...)`** returns a
+`signature_check` whose `identity_verified` is set only when a chain binds the name to the signing
+key, exactly as `verify` requires. With no stored chain it falls back to the record's own key and
+reports `signature_valid` with `identity_verified == false`: the record was *signed by an unverified
+key* (`unverified_signer_label`). It is for display only. A known chain that lacks the signing key,
+or a bad signature, is still an error.
+
+`repository::drips()` and `repository::log()` set `drip::identity_verified` and
+`change::identity_verified` this way, and `liquid log` (with or without `--drips`, text and JSON)
+shows an unverified author as `signed by an unverified key`, never as the name the record claims.
+
+Every other record that names an author carries the same flag (liquid#508), set from the change or
+drip it came from:
+
+| Record | Set from | Shown by |
+|---|---|---|
+| `path_history_entry::identity_verified` | the change (`repository::history`) | `liquid history <path>` |
+| `operation_record::identity_verified` | see below (`repository::operations`) | `liquid ops`, `liquid log --ops` |
+| `line_attribution::identity_verified` | the operation that wrote the line, or the change when no operation is recorded (`repository::attribution`, also over the daemon) | `liquid blame` |
+| `change_attribution::identity_verified` | the drip that records the write | `liquid why`, `liquid wrap` |
+
+An operation record carries no signature of its own. It is verified when the **local identity**
+recorded it: this machine holds the key that signs the journal's drips. An operation attributed to
+**anyone else** is verified only when a drip that records it (same author, operation and time) is
+signed by that author's key and the signature checks against an identity chain. A repository opened
+from a home that holds no chain for its author therefore shows that author's operations, lines and
+writes as unverified.
+
+Every CLI command prints an author through one helper, `shown_signer` in `src/cli/signer.hpp`,
+which returns the `taap_id` only when `identity_verified` is set and `unverified_signer_label`
+otherwise. JSON output also carries `"identity_verified": true|false` beside the author.
+
+**History signed before liquid#448** by an identity whose chain was never kept (for example by an
+earlier lake pod's per-pod identity) is shown as signed by an unverified key and cannot satisfy any
+policy. It is not migrated: Steve decided on 2026-10-23 that repository data so far is test data
+and the affected repositories may be deleted (liquid#452).
+
+A chain reaches a verifier in one of three ways:
+
+| Path | How |
+|---|---|
+| **Sync** | Every exported drip and change author's stored chain travels as an `identity` frame ahead of the records it signs ([sync.md](sync.md#metadata-stream)). The receiver verifies it, stores it with `trust_identity_chain`, and only then checks the signatures. A sender relays every chain it holds, so a chain reaches a third machine; the repository also keeps each author's chain in its metadata, so a restarted process with a new home still sends it. An author whose chain the sender does not hold is sent without one, and the receiver refuses that author's records as an unknown signer. |
+| **By hand** | `liquid identity show --chain` prints the whole chain as unpadded base64url; `liquid identity trust <chain>` (or `-` for standard input) verifies and stores it on another machine. This is how a release verifier, an admission server, a worker scheduler, or a build-policy checker learns the identities it should accept. |
+| **With the request** | A service that receives a chain with each request, such as lake's TAAP sign-in, passes it to `verify(actor, chain, ...)` or `attestation_verification_options::issuer_chain`. |
+
+Trusting a chain answers *who signed*, not *whether that signer may do this*. Chains arrive by sync
+from anyone who writes the repository, so a held chain is never an authorization. Decisions that
+must not be controlled by a repository take their allow-list from this machine's trust files
+(below); build policy and admission policy already name the identities they accept.
+
+### Local trust files
+
+A trust anchor that a repository can never supply lives under the liquid home, in
+`$LIQUID_HOME/trust/<name>` (else `$HOME/.liquid/trust/<name>`). Nothing there is read from a
+repository, a clone, a sync peer or a log. `trust_file_path(name)` names the file and
+`load_trusted_identities(name)` reads it: one TAAP identity id per line, blank lines and text after
+`#` ignored, a repeated id kept once, and a line with two values refused. **A missing or empty file
+is an `errc::unauthorized` error naming the file to create**, so a command that needs one fails
+closed until the operator writes it. The library APIs that use these lists take them as explicit
+parameters, so lake, liquify and other libliquid callers pass their own; the `liquid` binary loads
+them from these files.
+
+| File | Who it lists | Used by |
+|---|---|---|
+| `trust/hot-update-signers` | Identities whose signed patch `liquid hot-update apply` and `status` accept | [hot-update.md](hot-update.md#who-may-sign-a-patch) (liquid#388) |
+| `trust/release-policy-issuers` | Identities allowed to issue the release policy `liquid release verify` accepts | [release-approval.md](release-approval.md#trust-root) (liquid#384) |
+
+Each listed identity must also have its chain in the identity store (`liquid identity trust`): the
+list says who may act, the chain proves that a signature is theirs.
 
 `signer::rotate_to(custody, compromise?)` selects `software`, `fido2`, or `piv:9c`. The successor
 document includes the custody name, changes `key_algorithm` and `key_fingerprint`, and otherwise
@@ -124,7 +272,28 @@ For FIDO2, liquid sets `clientDataHash = SHA-256(TAAP signed bytes)`. The authen
 signs `authenticatorData || SHA-256(clientDataHash)`. The TAAP signature object therefore adds
 `authenticator_data_base64` and `client_data_hash_base64`. Verification rebuilds the TAAP signed
 bytes, checks the carried client hash, reconstructs the assertion input, and verifies Ed25519 or
-P-256 entirely in software. This additional signature-object reading is recorded as protocol
+P-256 entirely in software. This additional signature-object reading is sent as protocol feedback, because TAAP §6.7 currently specifies only a direct signature byte string.
+For FIDO2, liquid sets `clientDataHash = SHA-256(TAAP signed bytes)` in CTAP2
+`authenticatorGetAssertion`. The authenticator signs `authenticatorData || clientDataHash`, the
+32 client bytes exactly as sent and not hashed again
+([WebAuthn Level 2 §6.3.3](https://www.w3.org/TR/webauthn-2/#sctn-op-get-assertion) step 11,
+[CTAP 2.2 authenticatorGetAssertion](https://fidoalliance.org/specs/fido-v2.2-ps-20250714/fido-client-to-authenticator-protocol-v2.2-ps-20250714.html#authenticatorGetAssertion)).
+`fido2-eddsa` is Ed25519 over that message directly (RFC 8032); `fido2-es256` is ECDSA P-256 with
+SHA-256 over it, DER-encoded. The TAAP signature object therefore adds `authenticator_data_base64`
+and `client_data_hash_base64`. Verification rebuilds the TAAP signed bytes, checks that the carried
+client hash is their SHA-256, checks that `authenticatorData` begins with SHA-256 of the rpId
+`liquid` and has the user-present flag (WebAuthn §7.2 steps 15-16), concatenates `authenticatorData || clientDataHash`, and verifies
+Ed25519 or P-256 entirely in software.
+
+Before liquid#81 was fixed, the verifier and the test doubles used
+`authenticatorData || SHA-256(clientDataHash)`, a form no real authenticator produces. A signature
+from a physical token therefore never verified, and the only records in that form were made by the
+in-process doubles. **Compatibility policy:** the double-hashed form is rejected, with no fallback
+or migration; a FIDO2 identity created before the fix must be re-signed by rotating again with the
+token attached. `test_hardware_keys.cpp` carries independent vectors built with OpenSSL from the
+specifications (both algorithms, each purpose) and checks that the double-hashed form fails. No
+physical authenticator has yet been run against either algorithm; that evidence stays open on
+liquid#81. This additional signature-object reading is recorded as protocol
 feedback on [liquid-bridge #8](https://github.com/oramasearch/liquid-bridge/issues/8#issuecomment-5562172800),
 because TAAP §6.7 currently specifies only a direct signature byte string.
 
@@ -137,14 +306,134 @@ performs no device I/O.
 
 Identities live at `$LIQUID_HOME/identity` or `~/.liquid/identity`. `<fingerprint>.key` holds the
 encrypted active private key, `<fingerprint>.pub` the active public key, and
-`<fingerprint>.identity.cbor` the current document. The owner-only local wrapping-key provider and
-software private key are never logged; `signer` wipes its secret material on destruction.
-Hardware `.key` records contain only the public credential descriptor needed to find the token key
-again.
+`<fingerprint>.identity.cbor` the current document. The wrapping key and software private key are
+never logged; `signer` wipes its secret material on destruction. Hardware `.key` records contain
+only the public credential descriptor needed to find the token key again.
+
+### How the software signing key is protected at rest (liquid #402)
+
+A software `<fingerprint>.key` is sealed (XChaCha20-Poly1305) under a random 32-byte **wrapping
+key**. What protects the signing key is therefore whatever holds the wrapping key, its
+**custody**:
+
+| Custody | Where the wrapping key is | What an attacker who reads the identity directory needs |
+|---|---|---|
+| `passphrase` | `.wrapping.sealed`, sealed under an Argon2i key (64 MiB, 3 passes) derived from a passphrase | the passphrase |
+| `keychain` (macOS) | `.wrapping.sealed`, sealed under a random key held in the login Keychain (service `dev.liquid.custody`, not synchronised) | access to the unlocked Keychain as the user |
+| a key custody URI (`tpm:pcrs=0,7`, `age:...`, `aws-kms:...`, `gcp-kms:...`, `azure-kv:...`, `lake:...`) | `.wrapping.sealed`, sealed by that provider ([encryption](encryption.md)) | what that provider requires |
+| `file` | `.wrapping.key`, **in clear**, beside the key | nothing more: **the signing key is protected only by file permissions** |
+
+The custody is chosen when the identity is created: `identity_custody_options::custody`, else
+`LIQUID_IDENTITY_KEY_CUSTODY`, else `keychain` on macOS and `passphrase` elsewhere. A passphrase is
+read from the file named by `identity_custody_options::passphrase_file`, else by
+`LIQUID_IDENTITY_PASSPHRASE_FILE` (it must be owner-only, see below; one trailing newline is
+dropped), else from the injected `identity_custody_options::passphrase` source; the CLI
+installs a source that prompts on the terminal without echo. A passphrase is never taken from a
+command-line argument. With no passphrase available, creation fails with `errc::unauthorized` and
+writes no key. A wrong passphrase fails the same way. The signer keeps the unsealed wrapping key in
+memory, as it keeps the signing key, so a rotation in the same process does not ask again.
+
+`file` custody is an explicit opt-in for headless hosts and test runs that have no terminal and no
+other custody; the test suite sets `LIQUID_IDENTITY_KEY_CUSTODY=file` for every test process. It is
+what every identity created before #402 has. Such identities keep loading unchanged, `liquid
+identity show` reports `wrapping_key_custody=file` and `file_permissions_only=true` and prints a
+warning, and `liquid identity custody --to <custody>` (`migrate_local_identity_custody`) seals the
+existing wrapping key under another custody and deletes `.wrapping.key`. The signing key and the
+identity documents do not change. Deleting a file does not erase its old blocks from the device;
+treat a key that was ever in `file` custody on a shared or lost disk as exposed and rotate it.
+Moving away from `keychain` leaves the Keychain item in place.
+
+Every identity file (key, public key, documents, wrapping key, trusted chains) is written whole
+under a random temporary name created with `open(O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)`,
+synced, and renamed into place, so it never exists with a wider mode and a crash leaves either the
+old file or the new one. On Windows the temporary file is created by `CreateFileW` with a protected
+DACL granting full control to the current user only (`D:P(A;;FA;;;<user SID>)`) and moved into
+place with `MoveFileExW`. The identity directory is set to mode 0700 on POSIX. A clear
+`.wrapping.key` or a passphrase file with any group or other permission bit is refused.
+
+Linux has no desktop-keystore custody yet: the Secret Service is a D-Bus API, and liquid has no
+D-Bus client. Passphrase or TPM custody are the Linux choices.
+
+#### Headless Linux hosts (Lake pods)
+
+A host with no terminal and no Keychain, such as a Lake pod, uses `passphrase` custody with a
+**passphrase file**. The host names it with `identity_custody_options::passphrase_file` (a library
+caller such as Lake sets it before the first `local_signer()`), or with
+`LIQUID_IDENTITY_PASSPHRASE_FILE` (the CLI). The option wins over the variable, and both win over a
+terminal prompt. liquid opens the file and checks the opened file itself, so it cannot be swapped
+between the check and the read:
+
+- it must be a regular file (a directory, FIFO or device is refused);
+- it must be owned by the effective user liquid runs as, or by root;
+- it must have no group or other permission bit (mode `0600` or `0400`);
+- it must be at most 64 KiB, and not empty after one trailing newline is dropped.
+
+Anything else is refused with `errc::unauthorized`, and no identity is created: liquid never falls
+back to `file` custody. A symbolic link is followed, because a Kubernetes Secret volume presents
+each key as a link into its projected data, and the checks apply to the file the link reaches. A
+Secret volume therefore needs `defaultMode: 0400` (or `0600`), and a pod that sets `fsGroup` on that
+volume makes the file group-readable, which is refused. Rendering the file and the variable is the
+deployment's job (for Lake, the Orama operator), never a hand edit on a pod. On Windows the mode is
+not checked.
+
+The passphrase file is as sensitive as the key it unlocks: whoever can read both the identity
+directory and the passphrase file can sign as the identity. Keep them on different volumes, so a
+copy of the identity volume alone (a backup, a snapshot) does not carry the passphrase.
+
+**TPM is a later option** for these hosts. A `tpm:` custody URI already seals the wrapping key to a
+TPM, but a pod has no TPM of its own: it would need the node's TPM, or a virtual TPM, exposed to the
+pod, and the identity would then be bound to that node. When that exists, a pod moves with
+`migrate_local_identity_custody("tpm:...")` (`liquid identity custody --to tpm:...`) without
+changing its signing key.
+
+Tests: `IdentityCustody.KeyFilesNeverExistWithAWiderMode`,
+`IdentityCustody.FileCustodyIsReportedAsFilePermissionsOnly`,
+`IdentityCustody.PassphraseCustodyStoresNoClearWrappingKey`,
+`IdentityCustody.PassphraseFileMustBeOwnerOnly`,
+`IdentityCustody.PassphraseFileOptionCreatesAHeadlessIdentity`,
+`IdentityCustody.PassphraseFileLinkIsCheckedAtItsTarget`,
+`IdentityCustody.PassphraseFileMustBeASmallRegularFile`,
+`IdentityCustody.InjectedPassphraseSourceIsAskedOnce`,
+and `IdentityCustody.FileCustodyMigratesToPassphrase`. The Keychain provider has no automated test:
+it needs an unlocked login Keychain.
+
+Creating the local identity is atomic
+([#349](https://github.com/oramasearch/liquid/issues/349)). `local_signer` reads and creates it
+under an exclusive lock on `identity/.lock` (`flock`, `LockFileEx` on Windows), which excludes other
+threads of the process as well as other processes and is dropped by the operating system if its
+holder dies. The new identity's document is signed before the lock is taken, so the locked section
+has no suspension point. Every file is written to a temporary file unique to its writer, flushed
+with `fsync`, then renamed into place. `.wrapping.key` is created with `link`, which never replaces
+a key that is there: a writer that loses reads the winner's key. `<fingerprint>.pub` is written
+last, so a reader that finds it finds a complete identity. Concurrent first uses therefore all end
+with one identity that every later call can open; the losers discard the key they made. The tests
+`Identity.ConcurrentFirstUsesInThreadsCreateOneReadableIdentity` (8 threads, 20 rounds) and
+`Identity.ConcurrentFirstUsesInProcessesCreateOneReadableIdentity` (8 `liquid identity show`
+processes, 10 rounds) check it. Rotation does not take the lock; it writes its files the same
+atomic way.
 
 `verify(actor, artifact_type, canonical_body, signature)` is synchronous. It returns `true` for a
-valid signature, `false` for an unsigned record, and `errc::unauthorized` for invalid signed data.
-`verify_document` checks the self-signature. Drips and changes use the same verification rules.
+valid signature by a key in the named identity's stored chain, `false` for an unsigned record,
+`errc::unauthorized` for invalid signed data, and the unknown-signer error (also
+`errc::unauthorized`) when no chain for the name is stored. `verify_document` checks the
+self-signature, and for an initial document that its identifier is derived from its key. Drips,
+changes, results, and attestations use the same verification rules.
+
+Verification against tests: `Identity.SignerNameWithoutAChainDoesNotVerify` signs with one key while
+naming another identity and gets an unknown signer, then shows that trusting the named identity's
+real chain does not make the other key verify. `Identity.InitialDocumentMustBeNamedAfterItsOwnKey`,
+`Identity.ChainTravelsAndIsTrustedOnlyByExtension`, `Identity.ForkedChainIsRefused`,
+`Identity.CompromiseOnlyRotationIsNotTrustedFromAnotherMachine`, and `Identity.SignerNameIsNotAPath`
+cover the rules above; `Sync.drip_signed_by_one_key_naming_another_identity_is_refused` and
+`Sync.author_identity_chain_travels_with_its_drips` cover sync. For liquid#429,
+`Identity.SignatureWithoutAChainIsReportedAsAnUnverifiedKey` covers `check_signature`,
+`Sync.change_signed_by_one_key_naming_another_identity_is_refused` covers a forged change author on
+import, `Sync.history_without_its_authors_chain_is_listed_as_unverified` covers the listing, and
+`ReleaseApproval.self_signed_approvals_naming_listed_signers_do_not_count` covers the release
+threshold. For liquid#508, `Sync.attribution_surfaces_report_an_author_no_chain_verifies_as_unverified`
+covers path history, operation records, line attribution and change attribution;
+`Daemon.attribution_query_crosses_the_wire` covers the daemon wire; and the `cli-unverified-author`
+CLI test covers `log`, `history`, `ops` and `blame` output, text and JSON.
 
 ## CRDT commit metadata
 
@@ -160,4 +449,4 @@ and timestamp again so the reconstructed automerge change hash is identical.
 On the development machine, 1,000 canonical drip-body signatures averaged **198,234 ns** each,
 measured by `Identity.SigningCostMeasurement` in the Release build. Batching is deferred to #49.
 Actor subjects support Ed25519, P-256, and the two FIDO2 assertion forms. Object subjects await
-liquid-bridge #1; delegation and session keys remain separate work.
+the protocol change that specifies them; delegation and session keys remain separate work.

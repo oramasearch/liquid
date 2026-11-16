@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/x509.hpp"
 
 #include <algorithm>
