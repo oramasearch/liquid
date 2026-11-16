@@ -3,12 +3,22 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <string>
+#include <thread>
 #include <utility>
+#include <vector>
+
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include "encoding/cbor.hpp"
 #include "identity/taap.hpp"
@@ -350,6 +360,30 @@ auto open_signer_in(const std::filesystem::path& home) -> liquid::signer {
 
 } // namespace
 
+// liquid#349: creating the local identity must be atomic. Several first uses at once against an
+// empty identity directory must all end with the same identity, and it must stay readable: no
+// overwritten `.wrapping.key` that leaves the sealed key unopenable, no second `.pub`, no partly
+// written file.
+namespace {
+
+auto expect_one_readable_identity(const std::filesystem::path& home, const std::string& expected)
+    -> void {
+    auto public_keys = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(home / "identity")) {
+        const auto name = entry.path().filename().string();
+        EXPECT_FALSE(name.ends_with(".tmp")) << "temporary file left behind: " << name;
+        if (entry.path().extension() == ".pub") {
+            ++public_keys;
+        }
+    }
+    EXPECT_EQ(public_keys, 1);
+    auto reopened = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    EXPECT_EQ(reopened->identity().taap_id, expected);
+}
+
+} // namespace
+
 // liquid#383: a signer name is bound to a key only through that name's identity chain. A
 // signature by key B that claims to be identity A must not verify where A's chain is unknown.
 TEST(Identity, SignerNameWithoutAChainDoesNotVerify) {
@@ -615,3 +649,93 @@ TEST(Identity, SignerNameIsNotAPath) {
     std::error_code code;
     std::filesystem::remove_all(home, code);
 }
+
+TEST(Identity, ConcurrentFirstUsesInThreadsCreateOneReadableIdentity) {
+    constexpr auto rounds = 20;
+    constexpr auto threads = 8;
+    for (auto round = 0; round < rounds; ++round) {
+        const auto home =
+            liquid::test::fixture_path("liquid-identity-race-threads-" + std::to_string(round));
+        set_identity_home(home);
+        auto identities = std::vector<std::string>(threads);
+        auto failures = std::vector<std::string>(threads);
+        auto ready = std::atomic<int>{0};
+        auto workers = std::vector<std::thread>{};
+        for (auto index = 0; index < threads; ++index) {
+            workers.emplace_back([&, index] {
+                ready.fetch_add(1);
+                while (ready.load() < threads) {
+                    std::this_thread::yield();
+                }
+                auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
+                if (signer) {
+                    identities[index] = signer->identity().taap_id;
+                } else {
+                    failures[index] = signer.error().message;
+                }
+            });
+        }
+        for (auto& worker : workers) {
+            worker.join();
+        }
+        for (auto index = 0; index < threads; ++index) {
+            ASSERT_TRUE(failures[index].empty())
+                << "round " << round << " thread " << index << ": " << failures[index];
+            EXPECT_EQ(identities[index], identities.front()) << "round " << round;
+        }
+        expect_one_readable_identity(home, identities.front());
+        std::error_code code;
+        std::filesystem::remove_all(home, code);
+    }
+}
+
+#if defined(LIQUID_CLI) && !defined(_WIN32)
+TEST(Identity, ConcurrentFirstUsesInProcessesCreateOneReadableIdentity) {
+    constexpr auto rounds = 10;
+    constexpr auto processes = 8;
+    for (auto round = 0; round < rounds; ++round) {
+        const auto home =
+            liquid::test::fixture_path("liquid-identity-race-processes-" + std::to_string(round));
+        set_identity_home(home);
+        const auto outputs =
+            liquid::test::fixture_path("liquid-identity-race-outputs-" + std::to_string(round));
+        std::error_code code;
+        std::filesystem::remove_all(outputs, code);
+        std::filesystem::create_directories(outputs);
+        auto children = std::vector<pid_t>{};
+        for (auto index = 0; index < processes; ++index) {
+            const auto output = outputs / (std::to_string(index) + ".txt");
+            const auto child = ::fork();
+            if (child == 0) {
+                const auto descriptor =
+                    ::open(output.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600);
+                if (descriptor < 0 || ::dup2(descriptor, STDOUT_FILENO) < 0 ||
+                    ::dup2(descriptor, STDERR_FILENO) < 0) {
+                    std::_Exit(126);
+                }
+                ::execl(LIQUID_CLI, LIQUID_CLI, "identity", "show", static_cast<char*>(nullptr));
+                std::_Exit(127);
+            }
+            ASSERT_GT(child, 0);
+            children.push_back(child);
+        }
+        auto identities = std::vector<std::string>{};
+        for (auto index = 0; index < processes; ++index) {
+            auto status = 0;
+            ASSERT_EQ(::waitpid(children[index], &status, 0), children[index]);
+            auto input = std::ifstream{outputs / (std::to_string(index) + ".txt")};
+            const auto text = std::string{std::istreambuf_iterator<char>{input}, {}};
+            ASSERT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0)
+                << "round " << round << " process " << index << ": " << text;
+            ASSERT_TRUE(text.starts_with("id=")) << text;
+            identities.push_back(text.substr(3, text.find('\n') - 3));
+        }
+        for (const auto& identity : identities) {
+            EXPECT_EQ(identity, identities.front()) << "round " << round;
+        }
+        expect_one_readable_identity(home, identities.front());
+        std::filesystem::remove_all(home, code);
+        std::filesystem::remove_all(outputs, code);
+    }
+}
+#endif
