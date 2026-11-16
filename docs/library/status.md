@@ -165,7 +165,8 @@ plus 64 MiB of decoded/reconstructed bytes per read.
 
 **Sync and review.** Repository push and pull, signed metadata exchange, missing-object
 negotiation, the public sync server with change and graph-derived per-reference authorization,
-mixed and atomic push outcomes, and the shared HTTP/1.1 client, `serve sync` adapter, and lake
+mixed and atomic push outcomes, bounded client retries of a `503` or `429` that carries
+`Retry-After`, and the shared HTTP/1.1 client, `serve sync` adapter, and lake
 forge review client with its polling event stream and installable double are implemented
 ([`sync.md`](sync.md), [`forge-client.md`](forge-client.md)). HTTPS verifies against
 `SSL_CERT_FILE` or OpenSSL's default trust store, on macOS too (liquid #368).

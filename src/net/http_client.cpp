@@ -33,7 +33,9 @@ auto perform_request(http_request request) -> runtime::task<http_response> {
         co_return std::unexpected(
             http_error(response.error().code, response.error().message, request.url.host));
     }
-    co_return http_response{.status = response->status, .body = std::move(response->body)};
+    co_return http_response{.status = response->status,
+                            .body = std::move(response->body),
+                            .headers = std::move(response->headers)};
 }
 
 } // namespace liquid::net_detail

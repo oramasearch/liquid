@@ -41,6 +41,8 @@ struct http_request {
 struct http_response {
     unsigned status{};
     std::vector<std::byte> body;
+    /// Response header fields in arrival order (for example `Retry-After`).
+    std::vector<std::pair<std::string, std::string>> headers;
 };
 
 inline auto http_error(errc code, std::string message, std::string context = {}) -> error {

@@ -3,6 +3,7 @@
 #include "liquid/sync.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -12,7 +13,9 @@
 #include <boost/http.hpp>
 
 #include "encoding/cbor.hpp"
+#include "http1/client.hpp"
 #include "net/http_client.hpp"
+#include "net/retry_after.hpp"
 #include "repository/sync_access.hpp"
 #include "sync/codec.hpp"
 
@@ -128,26 +131,63 @@ auto endpoint_target(const net_detail::parsed_url& url, std::string_view suffix)
     return output;
 }
 
+// The wait a refusal asks for before the same request is sent again, or nothing when the refusal
+// is not a retry signal. Only 503 (the peer's store is briefly unavailable, for example while lake
+// hands a workspace store over during a rollout) and 429 (a rate limit) count, and only with a
+// `Retry-After` header: every other status, and either one without the header, is returned as it
+// was before retries existed.
+auto requested_wait(const net_detail::http_response& response)
+    -> std::optional<std::chrono::milliseconds> {
+    if (response.status != 503 && response.status != 429) {
+        return std::nullopt;
+    }
+    const auto header = http1::header_value(response.headers, "Retry-After");
+    if (header.empty()) {
+        return std::nullopt;
+    }
+    return net_detail::parse_retry_after(header, std::chrono::system_clock::now());
+}
+
+// Send one sync request, and send it again after the peer's `Retry-After` wait when it is refused
+// with 503 or 429, until it is answered otherwise, `retry_attempts` sends are spent, or the next
+// wait would pass `retry_budget`. Every sync request is safe to repeat: find-missing, pull and
+// chunk reads change nothing; a chunk upload is content-addressed, so a repeat stores the same
+// bytes under the same digest; and a push refused with 503 or 429 was not applied (lake refuses
+// the whole batch before import, and liquid's flow control rejects it before import), so sending
+// it again cannot apply it twice.
 auto endpoint_request(const net_detail::parsed_url& url,
-                      std::string_view bearer,
+                      const sync_endpoint_options& options,
                       boost::http::method method,
                       std::string target,
                       std::string_view content_type,
                       std::span<const std::byte> body) -> runtime::task<net_detail::http_response> {
-    auto response = co_await net_detail::perform_request(net_detail::http_request{
-        .method = method == boost::http::method::get ? net_detail::http_method::get
-                                                     : net_detail::http_method::post,
-        .url = url,
-        .target = std::move(target),
-        .bearer = std::string{bearer},
-        .content_type = std::string{content_type},
-        .body = {body.begin(), body.end()},
-    });
-    if (!response) {
-        co_return std::unexpected(
-            sync_error(response.error().code, response.error().message, "sync endpoint"));
+    auto waited = std::chrono::milliseconds{};
+    for (auto attempt = 1U;; ++attempt) {
+        auto response = co_await net_detail::perform_request(net_detail::http_request{
+            .method = method == boost::http::method::get ? net_detail::http_method::get
+                                                         : net_detail::http_method::post,
+            .url = url,
+            .target = target,
+            .bearer = options.bearer_token,
+            .content_type = std::string{content_type},
+            .body = {body.begin(), body.end()},
+        });
+        if (!response) {
+            co_return std::unexpected(
+                sync_error(response.error().code, response.error().message, "sync endpoint"));
+        }
+        const auto wait = requested_wait(*response);
+        if (!wait || attempt >= options.retry_attempts || *wait > options.retry_budget - waited) {
+            co_return std::move(*response);
+        }
+        waited += *wait;
+        if (wait->count() > 0) {
+            auto [delay_error] = co_await runtime::delay(*wait);
+            if (delay_error) {
+                co_return std::move(*response);
+            }
+        }
     }
-    co_return std::move(*response);
 }
 
 auto reference_outcomes(std::span<const sync_item> sent, std::span<const sync_ref_outcome> received)
@@ -210,7 +250,7 @@ runtime::task<std::vector<digest>> sync_endpoint::find_missing(std::string insta
         co_return std::unexpected(encoded.error());
     }
     auto response = co_await endpoint_request(impl_->url,
-                                              impl_->options.bearer_token,
+                                              impl_->options,
                                               boost::http::method::post,
                                               endpoint_target(impl_->url, "/sync/find-missing"),
                                               content_type,
@@ -231,12 +271,8 @@ runtime::task<std::uint64_t> sync_endpoint::read_range(std::string instance,
     static_cast<void>(instance);
     auto target = endpoint_target(impl_->url, "/sync/chunks/") + to_string(blob) +
                   "?offset=" + std::to_string(offset) + "&length=" + std::to_string(output.size());
-    auto response = co_await endpoint_request(impl_->url,
-                                              impl_->options.bearer_token,
-                                              boost::http::method::get,
-                                              std::move(target),
-                                              content_type,
-                                              {});
+    auto response = co_await endpoint_request(
+        impl_->url, impl_->options, boost::http::method::get, std::move(target), content_type, {});
     if (!response) {
         co_return std::unexpected(response.error());
     }
@@ -259,7 +295,7 @@ sync_endpoint::write(std::string instance, digest blob, std::vector<std::byte> c
         co_return std::unexpected(frame.error());
     }
     auto response = co_await endpoint_request(impl_->url,
-                                              impl_->options.bearer_token,
+                                              impl_->options,
                                               boost::http::method::post,
                                               endpoint_target(impl_->url, "/sync/chunks"),
                                               content_type,
@@ -308,7 +344,7 @@ runtime::task<sync_report> sync_endpoint::push(repository& source) {
         co_return std::unexpected(encoded.error());
     }
     auto response = co_await endpoint_request(impl_->url,
-                                              impl_->options.bearer_token,
+                                              impl_->options,
                                               boost::http::method::post,
                                               endpoint_target(impl_->url, "/sync/push"),
                                               content_type,
@@ -359,7 +395,7 @@ runtime::task<sync_report> sync_endpoint::pull(repository& destination) {
         co_return std::unexpected(request.error());
     }
     auto response = co_await endpoint_request(impl_->url,
-                                              impl_->options.bearer_token,
+                                              impl_->options,
                                               boost::http::method::post,
                                               endpoint_target(impl_->url, "/sync/pull"),
                                               content_type,
@@ -396,7 +432,7 @@ runtime::task<sync_report> sync_endpoint::pull_metadata(repository& destination)
         co_return std::unexpected(request.error());
     }
     auto response = co_await endpoint_request(impl_->url,
-                                              impl_->options.bearer_token,
+                                              impl_->options,
                                               boost::http::method::post,
                                               endpoint_target(impl_->url, "/sync/pull"),
                                               content_type,

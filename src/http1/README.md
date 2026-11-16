@@ -10,6 +10,9 @@ uses OpenSSL's default trust store (the paths the linked OpenSSL was built with,
 default store (liquid#368) every verified HTTPS request failed, rendered on macOS as
 `unspecified system_category error`; `tests/test_forge.cpp` covers the default store, a bundle,
 and the failure message.
+`SSL_CERT_FILE` selects an explicit PEM trust bundle; otherwise it uses the platform trust paths.
+A `response` carries its status, body and every header field in arrival order; `header_value`
+finds one by name, case-insensitively (repository sync reads `Retry-After` this way).
 
 `server.cpp` adapts accepted Corosio sockets, optionally through `openssl_stream`, to the vendored
 `oramasearch/http` parser and router. Admission and worker control listeners use this adapter, so
