@@ -253,7 +253,7 @@ record, with the limits of each area, is the
   near-duplicate compression, garbage collection that explains what it keeps, and a
   deterministic crash simulator. [Store](docs/library/store.md), [collection](docs/library/gc.md)
 - **Working trees two ways**: a plain directory, or a lazy mount that fetches a file's bytes
-  when it is read. [VFS](docs/library/vfs.md)
+  when it is read, with read-only protection for Drive policy changes. [VFS](docs/library/vfs.md)
 - **Diff and search inside files**: ZIP, tar, HDF5, Parquet, SQLite, PDF, office documents,
   notebooks, wheels, JARs and linked binaries, with bounded Mach-O and PE symbol inspection.
   notebooks, wheels, JARs and linked binaries, with bounded Mach-O symbol inspection.

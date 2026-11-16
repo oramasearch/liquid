@@ -2,6 +2,8 @@
 
 [`git/`](git/README.md) includes hand-written loose-object and pack fixtures for inflation
 limits, delta output bounds, and offset/reference chain progress (#443).
+`vfs/test_xattr_requests.cpp` checks the production FUSE attribute mutation handlers without a
+kernel mount: read-only and immutable paths refuse persistent Drive policy changes (liquid #445).
 
 Issue #2 regressions cover split ownership after source removal, retained historical bytes and
 identities, borrowed-store independence, nested history, and destination cleanup. `cli-split`

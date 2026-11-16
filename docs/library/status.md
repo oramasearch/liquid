@@ -167,6 +167,10 @@ optional macFUSE on macOS ([`vfs.md`](vfs.md)). Tree entry names are validated a
 repository writes, Git import and both materialisers, and materialisation creates entries
 exclusively without following symbolic links (liquid #386,
 [`object-model.md`](object-model.md#records-in-the-store)).
+**VFS.** Read-only mounts and immutable `deps/` paths refuse setting and removing Drive xattrs
+with `EROFS`, retain persisted settings, and report denied writes with the caller PID (#445).
+Full materialisation writes a plain directory; lazy mounts use libfuse3 on Linux and
+optional macFUSE on macOS ([`vfs.md`](vfs.md)).
 
 **Transparency and trust.** Repository metadata retains verified Lake transparency checkpoints:
 the public client verifies signed witness-quorum checkpoints, all entry and parent hash tiles,

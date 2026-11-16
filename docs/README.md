@@ -57,7 +57,7 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 | [`library/attestations.md`](library/attestations.md) | TAAP profile registry, typed schemas, freshness, status evidence, selective disclosure, and verification. |
 | [`library/secret-scanning.md`](library/secret-scanning.md) | Inline secret detection, repository exceptions, signed scan attestations, redaction, and measured cost. |
 | [`library/capture.md`](library/capture.md) | Change capture, write flow control, watcher recovery, coalescing, cursor delivery, and telemetry. |
-| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs, FUSE mounts, the request queue, full materialisation, platform coverage, and named backend conformance with direct core calibration and Linux libfuse proof still owed. |
+| [`library/vfs.md`](library/vfs.md) | Lazy and policy-driven chunk hydration, drive xattrs and read-only mutation refusal, FUSE mounts, the request queue, full materialisation, platform coverage, and named backend conformance with direct core calibration and Linux libfuse proof still owed. |
 | [`library/vfs-conformance-proof.md`](library/vfs-conformance-proof.md) | Nine-case direct core calibration, deliberate wrong-size failure, native suite results, and outstanding Linux libfuse proof. |
 | [`library/git-interop.md`](library/git-interop.md) | Git import/export mapping, compatibility limits, and verification. |
 | [`library/drive.md`](library/drive.md) | Issues #195, #235, and #258's persisted three-tree reconciliation, per-repository CRDT actors, path device states, pinning, hydration and offline policy, Linux desktop badges, conflicts, transfer resume, history, daemon watcher, and bounded scan state. |
