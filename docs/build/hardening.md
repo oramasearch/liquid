@@ -122,7 +122,7 @@ one check off on Darwin. Linux keeps both.
 
 [`tools/hardening/`](../../tools/hardening/README.md) runs the same configurations on linux/amd64
 (Ubuntu 24.04, Clang 19) through `buildctl`, with no Docker on the development machine. One run at
-a time: the BuildKit pod is shared with the other liquid and lake lanes.
+a time when the BuildKit instance is shared with other builds.
 
 ```sh
 # The whole suite under ASan and UBSan:
@@ -134,9 +134,9 @@ MODE=ctest tools/hardening/run.sh . release
 MODE=fuzz FUZZ_SECONDS=600 tools/hardening/run.sh . fuzz
 ```
 
-The ordinary release proof is liquid-bridge's Linux lane
-(`codex-work/build/liquid-linux-test/run-liquid-linux-tests.sh <checkout> <label>`), which builds
-`Release` with the default options, so it builds and tests the hardened binary.
+The ordinary Linux release proof (a `Release` build of every target from
+`tools/linux-ci/Dockerfile`, then `ctest`; [`linux-container.md`](linux-container.md)) uses the
+default options, so it builds and tests the hardened binary.
 
 ## Recorded runs
 
