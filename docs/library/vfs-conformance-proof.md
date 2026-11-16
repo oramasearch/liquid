@@ -130,8 +130,8 @@ failure appeared in this static run.
 The shared suite used a fresh maintenance database on the local PostgreSQL server:
 
 ```sh
-createdb -h 127.0.0.1 -U stevesperandeo liquid_issue301_proof_20260908_1906
-export LIQUID_TEST_POSTGRES_URL=postgresql://stevesperandeo@127.0.0.1:5432/liquid_issue301_proof_20260908_1906
+createdb -h 127.0.0.1 -U "$USER" liquid_issue301_proof_20260908_1906
+export LIQUID_TEST_POSTGRES_URL=postgresql://$USER@127.0.0.1:5432/liquid_issue301_proof_20260908_1906
 export CMAKE_BUILD_PARALLEL_LEVEL=6
 cmake -S . -B build-shared -G Ninja -DBUILD_SHARED_LIBS=ON
 cmake --build build-shared -j 6

@@ -112,7 +112,7 @@ all repositories in the store. `<id-hash>` is the hex BLAKE3 digest of the ident
 
 ## Repository state through the backend
 
-**Why (liquid #326, decision 54 / lake#512).** Lake keeps each workspace's store in the workspace
+**Why (liquid #326, lake#512).** Lake keeps each workspace's store in the workspace
 Zetta, through a remote `store_backend` over Zetta's object capability, and cannot mount the
 workspace's volume. Before this change a repository's own entry points were read, written and
 renamed with `std::filesystem` beside the store, so a store without a local root could hold the
@@ -565,7 +565,7 @@ streaming k-way merge over the mapped input records. It does not load all input 
 fanout and the bloom follows it, but a merge learns the count, fanout and bloom only after it has
 seen every record, because duplicate digests collapse. Compaction used to write a placeholder
 header and an empty bloom, append the records, and then rewrite the header at offset 0 and the bloom
-in place. Zetta's object storage, under lake's per-workspace stores (liquid-bridge decision 54),
+in place. Zetta's object storage, under lake's per-workspace stores,
 refuses that rewrite with `409 conflict`. Compaction now merges twice over the immutable inputs. The
 first merge writes nothing: it counts the records and fills the fanout and bloom. The second
 writes the finished run as a complete-object `put` of the header, then appends the bloom and the
@@ -770,7 +770,7 @@ registrations, with whatever chunks the source holds locally. The destination is
 to the source in content digests, and an object it holds is readable with the destination's own
 verification.
 
-**Why (decision 54, lake#380).** Lake moves each workspace's repositories from the space's disk
+**Why (lake#380).** Lake moves each workspace's repositories from the space's disk
 store into the workspace's own store, which lives on a remote backend over the workspace Zetta
 (liquid #326, #327). `replicate_from` does this between two instances over HTTP; the move needs it
 locally between two `store` handles, resumable and checkable before lake switches the repository

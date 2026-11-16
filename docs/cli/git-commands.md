@@ -4,8 +4,8 @@ liquid is the next generation of Git, and a person who knows Git should be able 
 commands. **Where Git has a command for the same thing, liquid uses Git's name, arguments and
 order.** A different name needs a reason, and the reason is recorded on this page.
 
-Steve, 2026-10-12: *"liquid should really not deviate from git commands without a good reason
-(e.g. git mv vs liquid move)"*.
+The rule: liquid does not deviate from git's commands without a good reason (for example,
+`git mv` rather than a `liquid move`).
 
 ## The same as Git
 

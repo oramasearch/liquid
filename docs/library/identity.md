@@ -177,9 +177,7 @@ For FIDO2, liquid sets `clientDataHash = SHA-256(TAAP signed bytes)`. The authen
 signs `authenticatorData || SHA-256(clientDataHash)`. The TAAP signature object therefore adds
 `authenticator_data_base64` and `client_data_hash_base64`. Verification rebuilds the TAAP signed
 bytes, checks the carried client hash, reconstructs the assertion input, and verifies Ed25519 or
-P-256 entirely in software. This additional signature-object reading is recorded as protocol
-feedback on [liquid-bridge #8](https://github.com/oramasearch/liquid-bridge/issues/8#issuecomment-5562172800),
-because TAAP §6.7 currently specifies only a direct signature byte string.
+P-256 entirely in software. This additional signature-object reading is sent as protocol feedback, because TAAP §6.7 currently specifies only a direct signature byte string.
 
 Device calls are blocking OS operations and run through `runtime::offload`. CTAP2 and PIV command
 layers are owned here; no libfido2 or OpenSC types cross the backend boundary. In-process doubles
@@ -224,4 +222,4 @@ and timestamp again so the reconstructed automerge change hash is identical.
 On the development machine, 1,000 canonical drip-body signatures averaged **198,234 ns** each,
 measured by `Identity.SigningCostMeasurement` in the Release build. Batching is deferred to #49.
 Actor subjects support Ed25519, P-256, and the two FIDO2 assertion forms. Object subjects await
-liquid-bridge #1; delegation and session keys remain separate work.
+the protocol change that specifies them; delegation and session keys remain separate work.

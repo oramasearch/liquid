@@ -27,7 +27,7 @@ against a parent. This is why:
 - History rewriting is the only tool for many operations, and it is destructive
   and coordination-hostile.
 
-## The specific thing Steve hates: you cannot merge two codebases
+## The specific limitation: you cannot merge two codebases
 
 This is a real, structural limitation, not a UX gap. `git merge` requires a common
 ancestor. Two independently developed repositories have none, so Git refuses

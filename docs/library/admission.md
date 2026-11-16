@@ -124,8 +124,7 @@ and authenticates the complete path on every decision.
 
 ### Authenticated checkpoint age
 
-[Bridge decision 37](https://github.com/oramasearch/liquid-bridge/blob/main/docs/decisions.md)
-adds `issued_at` to the `lake_checkpoint/1` body: a nonnegative integer number of seconds since
+The checkpoint format adds `issued_at` to the `lake_checkpoint/1` body: a nonnegative integer number of seconds since
 the Unix epoch, UTC. The field sits inside `checkpoint` in the HTTP response, alongside
 `tree_size` and `root_hash`. It is covered by the existing Ed25519 signature over
 `TAAP/1 lake_checkpoint/1`, one NUL byte, and the CBOR encoding of the complete body. The existing
@@ -148,7 +147,7 @@ age. A stale checkpoint does not replace the inspection cache. Old checkpoints l
 The log attests its own time. This protects against stale or replayed checkpoints, not against a
 log that lies about when it signed. Binding RFC 3161 time from an independent authority is the
 stronger option described in [transparency verification](transparency.md), and is outside this
-admission change under decision 37.
+admission change.
 
 ## Decision record and stream
 

@@ -28,9 +28,8 @@ tests are the regression contracts, not a claim that every external integration 
 
 Names, specifications, and research already have maintained homes in the
 [feature index](../features/README.md) and [research synthesis](../research/99-synthesis/README.md).
-The former “Where this sits” discussion is retained as historical project context in
-[the liquid/Metis/Zetta mapping](../features/23-metis-and-zetta.md); its withdrawn storage
-recommendation is not a current open decision. No live-service deployment claim is made here.
+The former “Where this sits” discussion was project context for the maintainers and is not
+kept here; its withdrawn storage recommendation is not a current open decision. No live-service deployment claim is made here.
 
 ## Historical design text
 

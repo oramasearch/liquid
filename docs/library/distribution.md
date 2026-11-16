@@ -1,7 +1,6 @@
 # Distribution: remote cache, remote execution, and delivery
 
-> Phase 3 of the plan ([`action-plan.md`](https://github.com/oramasearch/liquid-bridge/blob/main/docs/action-plan.md),
-> epic https://github.com/oramasearch/liquid/issues/35). Specification:
+> Phase 3 of the plan (epic https://github.com/oramasearch/liquid/issues/35). Specification:
 > [`features/06-distributed-execution.md`](../features/06-distributed-execution.md),
 > [`features/05-caching.md`](../features/05-caching.md) (the remote tier),
 > [`features/09-artifact-service.md`](../features/09-artifact-service.md) (deltas). This page is the
@@ -207,7 +206,7 @@ liquid owning its transport, which #63 (liquid's own scheduler and workers) need
 conformance proof is a real backend: the tests run NativeLink and BuildBarn in Docker and drive
 the Phase 2 fixture builds against them.
 
-**Decided (Steve, 2026-09-05; bridge decision 9): option 2.** The transport is built as two issues
+**Decided (2026-09-05): option 2.** The transport is built as two issues
 in parallel, #155 (HTTP/2 client and server with gRPC framing on Corosio) and #156 (protobuf wire
 codec and the REAPI v2 message set with the record conversions); #16 integrates them into the
 remote tier and the `remote_executor`, and proves conformance against NativeLink and BuildBarn in

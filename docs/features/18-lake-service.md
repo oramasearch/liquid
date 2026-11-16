@@ -147,9 +147,8 @@ differentiation is everything liquid attaches to it.**
 
 Enterprises increasingly cannot put models or training data on a public hub, and the
 self-hosted alternatives are a registry with none of the provenance. lake runs on the
-customer's own infrastructure ([13](13-deployment-runtime.md)) — which is Zetta's
-stated posture too ([23](23-metis-and-zetta.md)) — and provenance is exactly the Band B
-availability dimension Metis's theory identifies as binding.
+customer's own infrastructure ([13](13-deployment-runtime.md)) — as Zetta does — and
+provenance, knowing where every model and dataset came from, is what those alternatives lack.
 
 **Honest limits.** Xet's advantage is real but bounded: encrypted or recompressed
 artifacts dedup poorly, a checkout still materialises the full file, and HF's per-file
