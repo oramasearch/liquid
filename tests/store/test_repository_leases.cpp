@@ -128,10 +128,16 @@ TEST(RepositoryLeases, AThousandOpensLeaveNoMoreLeasesThanLiveHolders) {
     for (auto round = 0; round != 1000; ++round) {
         auto opened = liquid::runtime::block_on(liquid::repository::open(checkout, small_packs()));
         ASSERT_TRUE(opened) << "round " << round << ": " << opened.error().message;
-        auto written = liquid::runtime::block_on(
-            opened->write(round % 2 == 0 ? "a.txt" : "notes/c.txt",
-                          bytes_of("round " + std::to_string(round) + "\n")));
-        ASSERT_TRUE(written) << "round " << round << ": " << written.error().message;
+        // Every tenth handle also writes, alternating directories. Each write adds a change to its
+        // directory's document, which every later open loads and saves when it checkpoints, so a
+        // write in every round made the thousand opens quadratic (liquid#547). The leases are
+        // taken by the open either way.
+        if (round % 10 == 9) {
+            auto written = liquid::runtime::block_on(
+                opened->write(round / 10 % 2 == 0 ? "a.txt" : "notes/c.txt",
+                              bytes_of("round " + std::to_string(round) + "\n")));
+            ASSERT_TRUE(written) << "round " << round << ": " << written.error().message;
+        }
         // Two live handles: the keeper and this one.
         most_seen = std::max(most_seen, lease_files(checkout));
     }
@@ -143,12 +149,15 @@ TEST(RepositoryLeases, AThousandOpensLeaveNoMoreLeasesThanLiveHolders) {
     *keeper = liquid::repository{};
     EXPECT_EQ(lease_files(checkout), 0U);
 
-    // Every round's write is still there.
+    // The last write to each directory is still there.
     auto reopened = liquid::runtime::block_on(liquid::repository::open(checkout));
     ASSERT_TRUE(reopened) << reopened.error().message;
     auto read = liquid::runtime::block_on(reopened->read("notes/c.txt"));
     ASSERT_TRUE(read) << read.error().message;
     EXPECT_EQ(*read, bytes_of("round 999\n"));
+    auto read_root = liquid::runtime::block_on(reopened->read("a.txt"));
+    ASSERT_TRUE(read_root) << read_root.error().message;
+    EXPECT_EQ(*read_root, bytes_of("round 989\n"));
 }
 
 TEST(RepositoryLeases, LeasesOfOtherHostsAndOtherRepositoriesAreKept) {
