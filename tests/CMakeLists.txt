@@ -24,6 +24,7 @@ add_executable(liquid-tests
   test_error.cpp
   test_forge.cpp
   test_hash.cpp
+  test_ref_name.cpp
   test_hot_update.cpp
   http2/test_codecs.cpp
   http2/test_limits.cpp
@@ -1186,3 +1187,9 @@ add_test(NAME consumer-project-build
     -DLIQUID_CONSUMER_BUILD_TYPE=${CMAKE_BUILD_TYPE}
     -DLIQUID_CONSUMER_HAS_CLI=${LIQUID_BUILD_CLI}
     -P ${CMAKE_CURRENT_SOURCE_DIR}/consumer/run.cmake)
+
+# L-28 (liquid#408): every fetched dependency is pinned to a hash or a commit.
+add_test(NAME dependencies-pinned
+  COMMAND "${CMAKE_COMMAND}" -DLIQUID_SOURCE_DIR=${PROJECT_SOURCE_DIR}
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/pinned_dependencies.cmake")
+

@@ -27,6 +27,7 @@
 #include <poll.h>
 #include <sys/file.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -1572,10 +1573,16 @@ auto accept_request(int listener) -> result<std::optional<accepted_request>> {
         close_descriptor(connection);
         return std::optional<accepted_request>{};
     }
+    // One client never holds or stops the daemon (L-16, liquid#398): its request must arrive
+    // within the receive timeout, and a slow, truncated or oversize request drops that connection
+    // only. The service goes on accepting the next one.
+    constexpr auto request_timeout = timeval{.tv_sec = 5, .tv_usec = 0};
+    static_cast<void>(::setsockopt(
+        connection, SOL_SOCKET, SO_RCVTIMEO, &request_timeout, sizeof(request_timeout)));
     auto frame = read_frame(connection);
     if (!frame) {
         close_descriptor(connection);
-        return std::unexpected(frame.error());
+        return std::optional<accepted_request>{};
     }
     return std::optional<accepted_request>{{connection, std::move(*frame)}};
 }

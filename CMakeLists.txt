@@ -108,8 +108,12 @@ endif()
 set(BOOST_INCLUDE_LIBRARIES
   json url assert config core mp11 system throw_exception type_traits winapi)
 set(BOOST_ENABLE_CMAKE ON)
+# Every fetched dependency is pinned to its content (L-28, liquid#408): a tag or a URL alone can be
+# moved or replaced upstream. A tarball carries its SHA-256 (the release asset's published digest),
+# a git source the commit its tag named when it was pinned.
 FetchContent_Declare(boost_core_libs
   URL https://github.com/boostorg/boost/releases/download/boost-1.91.0-1/boost-1.91.0-1-cmake.tar.xz
+  URL_HASH SHA256=cc5dc5006ecbdf0051f90979be31b4eee5987d9ae14ae9fb9c03cfa43fa3cdad
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(boost_core_libs)
@@ -156,7 +160,7 @@ endif()
 
 FetchContent_Declare(blake3_source
   GIT_REPOSITORY https://github.com/BLAKE3-team/BLAKE3.git
-  GIT_TAG        1.8.7
+  GIT_TAG        f3149ec5bb5449af877ba20377a11008ff499fa2 # 1.8.7
   SOURCE_SUBDIR  c/liquid-no-upstream-cmake)
 FetchContent_MakeAvailable(blake3_source)
 
@@ -220,8 +224,7 @@ set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(zstd_source
   GIT_REPOSITORY https://github.com/facebook/zstd.git
-  GIT_TAG        v1.5.7
-  GIT_SHALLOW    TRUE
+  GIT_TAG        f8745da6ff1ad1e7bab384bd1f9d742439278e99 # v1.5.7
   SOURCE_SUBDIR  build/cmake)
 FetchContent_MakeAvailable(zstd_source)
 
@@ -970,7 +973,7 @@ if(LIQUID_BUILD_TESTS)
   # do not appear in liquid's build output where they read as ours.
   FetchContent_Declare(googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        v1.17.0
+    GIT_TAG        52eb8108c5bdec04579160ae17225d66034bd723 # v1.17.0
     SYSTEM)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)

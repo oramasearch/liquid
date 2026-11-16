@@ -9,7 +9,9 @@ tree into its project cache. One-shot commands run library operations through `r
 it imports regular files through `repository::import_tree`; the local-tree form of `import` uses
 the same path. `status`, `pause`, and `resume` attach to the checkout daemon, starting
 it on first use on macOS and Linux. That process owns watcher-backed capture and keeps running until
-its configured idle exit or `liquid daemon --shutdown`. Windows repository commands remain
+its configured idle exit or `liquid daemon --shutdown`. A client's request must arrive within 5
+seconds of connecting. A slow, truncated or oversize request closes that connection only, and the
+daemon goes on serving (L-16, liquid#398). Windows repository commands remain
 available, but daemon attachment returns the documented unsupported result because the current
 Corosio revision has no named-pipe transport.
 

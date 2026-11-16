@@ -25,6 +25,8 @@ CMake project is [`../library/libliquid.md`](../library/libliquid.md).
 - **Network access during configuration.** FetchContent fetches the pinned Boost core libraries,
   BLAKE3, Monocypher, zstd, GoogleTest, and the digest-pinned tree-sitter runtime and grammars
   (`LIQUID_GRAMMAR_MIRROR` names a mirror; see [`../library/grammars.md`](../library/grammars.md)).
+  Every one is pinned to its content (L-28, liquid#408): a tarball by `URL_HASH`, a git source by
+  the commit its tag named. The `dependencies-pinned` test fails on a tag, branch or unhashed URL.
   The private submodules need read access to `oramasearch/corosio`, `oramasearch/automerge-cpp`,
   `oramasearch/http`, and `oramasearch/oramacore-cpp`.
 
