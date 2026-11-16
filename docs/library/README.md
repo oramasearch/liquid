@@ -61,3 +61,5 @@ bytes already written, as Zetta's object storage requires (liquid #332).
 before decoding datasets (liquid #486).
 [Secret scanning](secret-scanning.md) documents the linear JWT walk and long-input regression
 coverage (liquid #440).
+[Linked-binary formats](formats.md#linked-binaries) records PE name length, cumulative allocation,
+and offset deduplication limits (liquid #474).

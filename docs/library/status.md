@@ -447,6 +447,10 @@ registry caller's byte budget, or 16 MiB for other callers; exhaustion preserves
 and all consumers report truncation. ABI comparisons and relocation approval fail closed for
 incomplete inspection (liquid #475).
 
+PE names have a 64 KiB length cap, offset
+deduplication, and one allowance for retained names and records; capped names or exhausted budgets
+produce partial, truncated results (liquid #474).
+
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository
 lookup ([executable guide](../guides/project-from-files.md)). Tier A package and image projection and Debian-only Tier B source projection are

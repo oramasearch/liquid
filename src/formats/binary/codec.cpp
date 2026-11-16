@@ -101,6 +101,15 @@ public:
             output.entries.push_back(std::move(*entry));
         }
         for (const auto& library : image->needed_libraries) {
+            if (inspect_budgeted_) {
+                const auto charge = sizeof(format_entry) + 8U + library.size();
+                if (charge > remaining) {
+                    output.truncated = true;
+                    output.limits.push_back("byte budget reached at imports");
+                    break;
+                }
+                remaining -= charge;
+            }
             auto entry = make_entry("imports/" + library, format_entry_kind::attribute, {});
             if (!entry) {
                 return std::unexpected(entry.error());
@@ -186,7 +195,7 @@ auto macho_module() -> const liquid_format_module_v1* {
 }
 
 auto pe_module() -> const liquid_format_module_v1* {
-    return module<binary::inspect_pe>(
+    return module<static_cast<reader>(binary::inspect_pe), binary::inspect_pe>(
         "pe", pe_extensions.data(), pe_extensions.size(), pe_magic.data(), pe_magic.size());
 }
 

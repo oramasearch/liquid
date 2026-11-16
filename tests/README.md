@@ -155,6 +155,9 @@ boundaries, nesting limits, RPM header strings charged to the byte budget, and a
 boundaries, nesting limits, RPM header strings charged to the byte budget, truncated RPM cpio
 name/file padding (including trailers), valid aligned payloads, and a dynamically
 loaded C11 module. The strict JSON and `.env` codecs
+boundaries, nesting limits, and a dynamically loaded C11 module. `liquid-pe-tests` exercises
+the shared PE inspector's name caps, offset deduplication, cumulative budgets, and partial-result
+truncation directly. The strict JSON and `.env` codecs
 used by
 structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,

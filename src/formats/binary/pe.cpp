@@ -3,7 +3,9 @@
 #include "formats/binary/pe.hpp"
 
 #include <algorithm>
+#include <array>
 #include <ranges>
+#include <set>
 
 namespace liquid::formats::binary {
 namespace {
@@ -44,21 +46,84 @@ auto fixed_text(std::span<const std::byte> bytes, std::uint64_t offset, std::uin
     return output;
 }
 
-auto c_text(std::span<const std::byte> bytes, std::uint64_t offset) -> std::optional<std::string> {
-    if (offset >= bytes.size()) {
-        return std::nullopt;
-    }
-    auto output = std::string{};
-    while (offset < bytes.size()) {
-        const auto value =
-            std::to_integer<unsigned char>(bytes[static_cast<std::size_t>(offset++)]);
-        if (value == 0) {
-            return output;
+enum class name_kind : std::size_t { install, exported, imported, coff };
+
+// Deduplicate before scanning or copying, and keep names and their output/cache records
+// charged for the whole inspection. Capped names and exhausted budgets preserve partial facts.
+class name_reader {
+public:
+    name_reader(std::span<const std::byte> bytes, image& output, std::uint64_t budget)
+        : bytes_(bytes), output_(output), remaining_(budget) {}
+
+    auto read(std::uint64_t offset, name_kind kind) -> std::optional<std::string> {
+        auto& offsets = offsets_[static_cast<std::size_t>(kind)];
+        if (exhausted_ || offsets.contains(offset)) {
+            return std::nullopt;
         }
-        output.push_back(static_cast<char>(value));
+        if (offset >= bytes_.size()) {
+            output_.truncated = true;
+            return std::nullopt;
+        }
+        const auto input = bytes_.subspan(static_cast<std::size_t>(offset));
+        const auto bounded = input.first(std::min(input.size(), maximum_length + 1));
+        const auto end = std::ranges::find(bounded, std::byte{});
+        auto length = std::min(static_cast<std::size_t>(end - bounded.begin()), maximum_length);
+        if (end == bounded.end()) {
+            output_.truncated = true;
+            // Preserve valid UTF-8 when the byte cap falls inside a code point.
+            if (input.size() > maximum_length) {
+                while (length != 0 &&
+                       (std::to_integer<unsigned char>(input[length]) & 0xc0U) == 0x80U) {
+                    --length;
+                }
+            }
+        }
+        return keep(offset, kind, bounded.first(length));
     }
-    return std::nullopt;
-}
+
+    // COFF evidence keeps its existing fixed-width/160-byte bounds and shares the allowance.
+    auto read_fixed(std::uint64_t offset, std::size_t width) -> std::optional<std::string> {
+        if (exhausted_ || offsets_[static_cast<std::size_t>(name_kind::coff)].contains(offset)) {
+            return std::nullopt;
+        }
+        if (offset > bytes_.size() || width > bytes_.size() - offset) {
+            output_.truncated = true;
+            return std::nullopt;
+        }
+        const auto input = bytes_.subspan(static_cast<std::size_t>(offset), width);
+        const auto end = std::ranges::find(input, std::byte{});
+        return keep(
+            offset, name_kind::coff, input.first(static_cast<std::size_t>(end - input.begin())));
+    }
+
+    auto exhausted() const -> bool {
+        return exhausted_;
+    }
+
+private:
+    auto keep(std::uint64_t offset, name_kind kind, std::span<const std::byte> name)
+        -> std::optional<std::string> {
+        // Charge the output record and conservative tree-node storage before either allocation.
+        const auto record = kind == name_kind::exported ? sizeof(symbol) : sizeof(std::string);
+        const auto charge = name.size() + record + sizeof(std::uint64_t) + 4 * sizeof(void*);
+        if (charge > remaining_) {
+            output_.truncated = true;
+            exhausted_ = true;
+            return std::nullopt;
+        }
+        remaining_ -= charge;
+        output_.symbol_bytes += charge;
+        offsets_[static_cast<std::size_t>(kind)].insert(offset);
+        return std::string{reinterpret_cast<const char*>(name.data()), name.size()};
+    }
+
+    static constexpr auto maximum_length = std::size_t{64} * 1024;
+    std::span<const std::byte> bytes_;
+    image& output_;
+    std::array<std::set<std::uint64_t>, 4> offsets_;
+    std::uint64_t remaining_;
+    bool exhausted_{};
+};
 
 auto architecture(std::uint16_t machine) -> std::string {
     switch (machine) {
@@ -106,6 +171,10 @@ auto code_rva(std::span<const pe_section> sections, std::uint32_t rva) -> bool {
 } // namespace
 
 auto inspect_pe(std::span<const std::byte> bytes) -> result<image> {
+    return inspect_pe(bytes, 16U * 1024U * 1024U);
+}
+
+auto inspect_pe(std::span<const std::byte> bytes, std::uint64_t symbol_budget) -> result<image> {
     if (bytes.size() < 0x40 || bytes[0] != std::byte{'M'} || bytes[1] != std::byte{'Z'}) {
         return std::unexpected(malformed("invalid DOS header"));
     }
@@ -159,21 +228,24 @@ auto inspect_pe(std::span<const std::byte> bytes) -> result<image> {
     for (const auto& value : sections) {
         output.sections.push_back(static_cast<const section&>(value));
     }
+    auto name_bytes = name_reader{bytes, output, symbol_budget};
     const auto symbol_offset = integer<std::uint32_t>(bytes, *pe_offset + 12).value_or(0);
     const auto symbol_count = integer<std::uint32_t>(bytes, *pe_offset + 16).value_or(0);
     const auto string_table = symbol_offset + static_cast<std::uint64_t>(symbol_count) * 18U;
-    for (auto index = std::uint32_t{};
-         index < symbol_count && output.symbol_names.size() < 256 &&
+    for (auto index = std::uint64_t{};
+         index < symbol_count && !name_bytes.exhausted() && output.symbol_names.size() < 256 &&
          symbol_offset + (static_cast<std::uint64_t>(index) + 1) * 18U <= bytes.size();
          ++index) {
         const auto at = symbol_offset + static_cast<std::uint64_t>(index) * 18U;
-        auto name = fixed_text(bytes, at, 8).value_or("");
+        auto name = std::optional<std::string>{};
         if (integer<std::uint32_t>(bytes, at).value_or(1) == 0) {
             const auto name_offset = integer<std::uint32_t>(bytes, at + 4).value_or(0);
-            name = fixed_text(bytes, string_table + name_offset, 160).value_or("");
+            name = name_bytes.read_fixed(string_table + name_offset, 160);
+        } else {
+            name = name_bytes.read_fixed(at, 8);
         }
-        if (!name.empty()) {
-            output.symbol_names.push_back(std::move(name));
+        if (name && !name->empty()) {
+            output.symbol_names.push_back(std::move(*name));
         }
         index += std::to_integer<unsigned char>(bytes[static_cast<std::size_t>(at + 17)]);
     }
@@ -200,7 +272,7 @@ auto inspect_pe(std::span<const std::byte> bytes) -> result<image> {
         const auto names_rva = integer<std::uint32_t>(bytes, *export_offset + 32).value_or(0);
         const auto ordinals_rva = integer<std::uint32_t>(bytes, *export_offset + 36).value_or(0);
         if (const auto name_offset = rva_offset(sections, name_rva)) {
-            output.install_name = c_text(bytes, *name_offset);
+            output.install_name = name_bytes.read(*name_offset, name_kind::install);
         }
         const auto functions = rva_offset(sections, functions_rva);
         const auto names = rva_offset(sections, names_rva);
@@ -212,7 +284,7 @@ auto inspect_pe(std::span<const std::byte> bytes) -> result<image> {
              name_count * 2ULL > bytes.size() - *ordinals)) {
             return std::unexpected(malformed("invalid PE export tables"));
         }
-        for (auto index = std::uint32_t{}; index < name_count; ++index) {
+        for (auto index = std::uint64_t{}; index < name_count && !name_bytes.exhausted(); ++index) {
             const auto symbol_name_rva =
                 integer<std::uint32_t>(bytes, *names + index * 4).value_or(0);
             const auto ordinal = integer<std::uint16_t>(bytes, *ordinals + index * 2).value_or(0);
@@ -222,7 +294,10 @@ auto inspect_pe(std::span<const std::byte> bytes) -> result<image> {
             const auto function_rva =
                 integer<std::uint32_t>(bytes, *functions + ordinal * 4).value_or(0);
             const auto name_offset = rva_offset(sections, symbol_name_rva);
-            auto name = name_offset ? c_text(bytes, *name_offset) : std::nullopt;
+            if (!name_offset) {
+                continue;
+            }
+            auto name = name_bytes.read(*name_offset, name_kind::exported);
             if (!name || name->empty()) {
                 continue;
             }
@@ -239,7 +314,7 @@ auto inspect_pe(std::span<const std::byte> bytes) -> result<image> {
     const auto [import_rva, import_size] = directory(1);
     if (import_rva != 0 && import_size != 0) {
         auto import_offset = rva_offset(sections, import_rva);
-        while (import_offset && *import_offset + 20 <= bytes.size()) {
+        while (import_offset && !name_bytes.exhausted() && *import_offset + 20 <= bytes.size()) {
             const auto original_thunk = integer<std::uint32_t>(bytes, *import_offset).value_or(0);
             const auto name_rva = integer<std::uint32_t>(bytes, *import_offset + 12).value_or(0);
             const auto first_thunk = integer<std::uint32_t>(bytes, *import_offset + 16).value_or(0);
@@ -247,7 +322,8 @@ auto inspect_pe(std::span<const std::byte> bytes) -> result<image> {
                 break;
             }
             if (const auto name_offset = rva_offset(sections, name_rva)) {
-                if (auto name = c_text(bytes, *name_offset)) {
+                auto name = name_bytes.read(*name_offset, name_kind::imported);
+                if (name) {
                     output.needed_libraries.push_back(std::move(*name));
                 }
             }
