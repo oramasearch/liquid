@@ -180,6 +180,20 @@ nested member reaches the depth or byte budget, unpack succeeds with `format_tre
 and a human-readable item in `format_tree::limits`; it never silently continues. This protects
 diff, search, and capture from hostile recursive archives.
 
+One unpack has one set of budgets. The outermost `format_registry::unpack` or `format_codec::unpack`
+on a thread opens them, and every codec it reaches receives only what is left: the remaining depth,
+decoded bytes, and entries. A codec that decodes its own members through the registry (a deb's or
+apk's `control.tar` and `data.tar`, a document's ZIP container) runs inside that unpack. Its call is
+decoded at the codec's own depth, checked against the remaining byte and entry budgets, and not
+expanded; the outermost walk expands the codec's entries once. A member decode may not decode
+members itself, so a package whose `control.tar` is another package fails with "format members nest
+inside format members" instead of recursing (liquid#438). When a nested codec reports
+`errc::unsupported`, the code the gzip, tar, ZIP, PDF, HDF5 and SQLite limits use, that member is
+left opaque with the codec's message as its reason and the unpack continues. Other nested errors
+still fail the unpack, including a deb or rpm whose zstd member would decode past what is left of
+the budget, which those readers report as `errc::corrupt`. The budgets are per thread, so a codec
+that hands work to another thread starts a separate unpack there.
+
 Nested paths use exactly one `!/` separator: `archive.zip!/inner/file.txt`. Further containers
 append another component, for example `outer.tar!/inner.zip!/file.txt`. Search hits use the same
 notation. The hit's blob digest is the logical entry digest, so identical contents share index

@@ -430,6 +430,9 @@ entries are retained as deduplicated blobs beside the verbatim container. Uncomp
 deterministic writer, while hard or unsupported format surfaces retain honest tiers and opaque
 reasons ([`formats.md`](formats.md)). The Parquet and PDF readers charge every allocation sized by the file, and
 the bytes they decompress, to one byte budget per unpack before making it (liquid #433).
+One unpack's depth, byte and entry budgets bound every codec
+it reaches, including the package and document codecs that decode their own members through the
+registry (liquid#438).
 
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository
