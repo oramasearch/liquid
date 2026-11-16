@@ -21,12 +21,12 @@
 #include <thread>
 #include <vector>
 
+#include "../temporary_directory.hpp"
 #include "liquid/remote.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "reapi/client.hpp"
 #include "reapi/messages.hpp"
-#include "temporary_directory.hpp"
 
 namespace {
 
