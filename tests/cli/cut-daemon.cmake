@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: MIT
 
+# Run with cmake -P: set the project's policies, so IN_LIST is an operator on CMake 3.x too (#364).
+cmake_minimum_required(VERSION 3.28)
+
 # liquid#528: `cut -m` records only the message, a message starting with `-` is refused, and
 # `daemon stop` / `daemon --shutdown` with no daemon running says so instead of a socket error.
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_CLI_ROOT)
