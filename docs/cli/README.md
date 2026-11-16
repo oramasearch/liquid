@@ -116,7 +116,7 @@ built binary under the build directory before CTest compares it with the committ
 | `facts` | `facts <list\|show\|export> [digest]` | Inspect or export configure facts. | available |
 | `provenance` | `provenance [--dsse] <result\|path>` | Print and verify build provenance. | available |
 | `project` | `project <oci\|deb\|rpm\|apk\|helm\|macos-pkg\|macos-dmg\|msix\|winget> <result\|install-tree\|installer> --name <name> --version <version> [--arch <arch>] [--out <dir>] [--identifier <id>] [--publisher <subject>] [--display-name <name>] [--executable <path>] [--entitlements <path>] [--installer-url <url>] [--json]` | Project a checked tree into a package or image, or an MSIX into winget manifests. Platform installers are unsigned and include a signing request. | available on the target platform; winget is portable |
-| `install` | `install <package\|install-tree> --root <dir> \| install --list --root <dir>` | Stage, apply, select, or list complete projected-tree generations. | available |
+| `install` | `install <package\|install-tree> --root <dir> \| install --list --root <dir>` | Stage, apply, select, or list complete projected-tree generations. It checks no package signature, like `dpkg -i`: install only what you trust (liquid#419). | available |
 | `rollback` | `rollback --root <dir>` | Atomically select the complete generation preceding the current one. | available |
 | `why` | `why <target> [--json]` | Explain the latest cache lookup and recorded execution decision for an output, action, or result. | available |
 | `why-slow` | `why-slow <target>` | Show the critical path to a build target. | available |

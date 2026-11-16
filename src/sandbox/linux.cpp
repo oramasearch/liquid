@@ -135,6 +135,17 @@ auto write_bootstrap(const launch_request& request,
     }
     stream << "/usr/bin/mount -t proc proc " << quote((request.sandbox_root / "proc").string())
            << "\n";
+    // The host's boot id identifies the machine and changes every boot, so an action that reads it
+    // is not reproducible across machines (L-36, liquid#414): it reads a fixed value instead.
+    const auto boot_id = script.parent_path() / "liquid-boot-id";
+    {
+        auto fixed = std::ofstream{boot_id, std::ios::binary | std::ios::trunc};
+        fixed << "00000000-0000-0000-0000-000000000000\n";
+        if (!fixed)
+            return std::unexpected(error{errc::io, "cannot write the sandbox boot id", boot_id.string()});
+    }
+    stream << "/usr/bin/mount --bind " << quote(boot_id.string()) << ' '
+           << quote((request.sandbox_root / "proc/sys/kernel/random/boot_id").string()) << "\n";
     if (request.remote_eligible) {
         stream << "/usr/bin/mount --bind " << quote(read_guard->string()) << ' '
                << quote(rooted("/liquid/read-guard").string()) << "\n";

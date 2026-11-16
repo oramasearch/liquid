@@ -6,6 +6,10 @@ and line number. Every accepted scanned drip references a signed `scan_result/1`
 Repository redaction replaces a path and makes the replaced blob digest unreadable before it
 returns.
 
+**What a pass means.** A scan that finds nothing says only that no detector matched. It does not
+mean the content holds no secret: a secret in a format no detector knows, or split across chunks,
+passes (liquid#419).
+
 **Why.** Automatic capture records writes that a developer might delete before naming a change.
 Scanning after append would therefore be too late. Diagnostics and attestations deliberately omit
 matched values so the scanner cannot become a second disclosure channel.
