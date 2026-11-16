@@ -19,6 +19,8 @@ the target or staging anything; that escaping declared paths are refused; and th
 are staged and normalised while the action's own copy stays untouched. On Linux,
 `Build.output_symlink_fails_before_its_host_target_is_read_or_rewritten` runs an action that links
 `out/payload.pyc` to a host sentinel and requires the action to fail with the sentinel unchanged.
+Like the other sandboxed action tests it needs FUSE, and skips with the probe's reason without it
+(liquid#549).
 The provenance tests also enumerate the stored signed input/output claim.
 `test_conflicts.cpp` proves that reaching a conflict entry fails materialisation with its path and
 digest while a tree containing only the unaffected input materialises normally.
