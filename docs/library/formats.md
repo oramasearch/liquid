@@ -183,6 +183,17 @@ same allowance. COFF evidence names retain their existing 160-byte and 256-recor
 share this allowance. These limits apply to registry recognition and unpacking, ABI extraction, and
 SBOM inspection through their shared PE reader.
 
+ELF section and symbol names, version definitions and requirements, dynamic library/search paths,
+and DWARF names and generated signatures share one cumulative inspection allowance (liquid #479).
+Each name is limited to 64 KiB. Collection stops before an oversized name or an unaffordable copy,
+retains earlier facts, and marks the result truncated. Copies and records are charged before
+allocation, including repeated string-table offsets, temporary metadata, and the second section
+name copy in the output. Generated DWARF signatures use the same length and byte limits.
+The default allowance is 16 MiB; registry unpacking supplies its byte budget and charges subsequent
+section data and entry paths against what remains. All ELF consumers use this inspector, including
+recognition, ABI extraction, SBOM inference, and relocation checks. Truncation reaches their existing
+partial-result handling and blocks ABI compatibility and relocation approval.
+
 ### PDF
 
 The PDF reader recognises indirect objects and simple stream objects, inflates `FlateDecode`,

@@ -196,7 +196,10 @@ every commit; one statement per line. A function collapsed onto one line is sent
 ### Before finishing: run all five
 When changing linked-binary symbol inspection, preserve the retained-byte and truncation contract
 When changing linked-binary name inspection, preserve the retained-byte and truncation contract
-in [`src/formats/binary/README.md`](src/formats/binary/README.md) across inspector and registry callers.
+When changing linked-binary symbol inspection, preserve the retained-byte and truncation contract
+When changing linked-binary name inspection, preserve the retained-byte and truncation contract
+in [`src/formats/binary/README.md`](src/formats/binary/README.md) across inspector and registry callers,
+including ELF section, symbol, version, dynamic-path, and DWARF name copies.
 
 ### Before finishing — run all five
 
