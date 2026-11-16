@@ -14,9 +14,14 @@ The wrap launcher installs `wrap_hook.c` only in the child sandbox: Linux bind-m
 `LD_PRELOAD`; macOS permits its path in the generated profile and injects
 `DYLD_INSERT_LIBRARIES`. The hook records process identity, parent, executable, normalized working
 directory, and argv, then exits a process early when its per-run plan entry is a validated hit.
-Conditional hit rows also carry the size and byte guard for previously invalidated inputs. The
-hook checks those inputs in the mounted working tree at process entry, after their producers have
-finished, and executes the process if any guard differs.
+Conditional hit rows also carry the size and BLAKE3-256 digest of previously invalidated inputs.
+The hook checks those inputs in the mounted working tree at process entry, after their producers
+have finished, and executes the process if either differs. `wrap_plan.c` (shared by the hook and
+libliquid) reads the plan only from liquid's own location (`/liquid/plan`, mounted read-only, on
+Linux; `<run>/plan` beside the mount and private to the user on macOS) and only when its bytes hash
+to `LIQUID_WRAP_PLAN_DIGEST`. `override.hpp` honours `LIQUID_WRAP_HOOK` and `LIQUID_READ_GUARD`
+only for files owned by the user or root that no one else can write (liquid#401; the rules are in
+`docs/library/build-engine.md`, "The wrap plan and what the hook trusts").
 The hook also records monotonic entry and exit values used for each wrapped action's execution
 phase and Chrome trace offset. A validated hit records its exit value before terminating early.
 Verification launches the recorded working directory in a newly materialised input snapshot and

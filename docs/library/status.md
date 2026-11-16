@@ -263,6 +263,9 @@ unchanged CMake, Autotools, Make, or compilation-database project in one observe
 output-producing tool processes into cached actions. Before execution it looks up signed results by
 candidate key, validates every observed manifest path against the current input tree, and reports
 the first differing input on a miss. The on-disk action index rebuilds from its leased store root.
+The exec-time hook revalidates conditional inputs by BLAKE3-256 and reads only a plan at liquid's
+own location whose bytes hash to the digest liquid passed (#401); process keys are still FNV-1a
+(#449).
 
 **Verification.** `liquid verify` re-executes cached actions in fresh sandboxes, compares exit
 status and every output digest, signs a `reproducibility/1` attestation, and permanently

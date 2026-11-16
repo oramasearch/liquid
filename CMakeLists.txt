@@ -362,7 +362,22 @@ set_target_properties(liquid_monocypher PROPERTIES
   C_VISIBILITY_PRESET hidden
   POSITION_INDEPENDENT_CODE ON)
 
-add_library(liquid-wrap-hook SHARED src/sandbox/wrap_hook.c)
+# The wrap plan reader and the BLAKE3 condition check (liquid#401), shared by the preloaded
+# hook and libliquid so both sides hash and parse the plan the same way.
+add_library(liquid_wrap_plan_objects OBJECT src/sandbox/wrap_plan.c)
+target_include_directories(liquid_wrap_plan_objects PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${blake3_source_SOURCE_DIR}/c)
+set_target_properties(liquid_wrap_plan_objects PROPERTIES
+  C_EXTENSIONS OFF
+  C_VISIBILITY_PRESET hidden
+  POSITION_INDEPENDENT_CODE ON)
+target_compile_features(liquid_wrap_plan_objects PRIVATE c_std_99)
+
+add_library(liquid-wrap-hook SHARED src/sandbox/wrap_hook.c
+  $<TARGET_OBJECTS:liquid_wrap_plan_objects>)
+target_include_directories(liquid-wrap-hook PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(liquid-wrap-hook PRIVATE liquid_blake3)
 set_target_properties(liquid-wrap-hook PROPERTIES
   OUTPUT_NAME liquid-wrap-hook
   C_VISIBILITY_PRESET hidden
@@ -625,6 +640,7 @@ add_library(libliquid
   src/repository/transfer.cpp
   src/runtime/runtime.cpp
   src/sandbox/environment.cpp
+  $<TARGET_OBJECTS:liquid_wrap_plan_objects>
   src/scan/detectors.cpp
   src/search/index.cpp
   src/search/repository.cpp
