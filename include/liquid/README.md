@@ -90,7 +90,8 @@ The optional checkpoint age bound distinguishes an omitted limit from an invalid
 positive limits use the authenticated log issuance time described in
 [`admission.md`](../../docs/library/admission.md).
 `identity.hpp` exposes algorithm- and custody-tagged actors, software and hardware key rotation,
-and TPM-capable key custody without exposing transport types. `release.hpp` exposes signed release
+and TPM-capable key custody without exposing transport types; `identity_custody_options` names the
+owner-only passphrase file a headless host uses. `release.hpp` exposes signed release
 policy and approval values plus distinct-identity threshold verification.
 `resolve.hpp` defines the package and concretised-spec records, pure spec parser and canonical
 codecs, coroutine-native universe loading and solving, and stable explanation values. The CDCL

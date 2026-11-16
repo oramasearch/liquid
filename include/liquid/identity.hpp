@@ -238,8 +238,11 @@ decode_identity_chain(std::span<const std::byte> encoded);
 // is sealed under a 32-byte wrapping key, and the wrapping key is itself held by one custody:
 //
 //   "passphrase"  sealed under an Argon2i key derived from a passphrase. The passphrase comes from
-//                 the file named by LIQUID_IDENTITY_PASSPHRASE_FILE (owner-only mode), else from
-//                 `passphrase` below (the CLI prompts on the terminal). Never from an argument.
+//                 the file named by `passphrase_file` below, else by
+//                 LIQUID_IDENTITY_PASSPHRASE_FILE, else from `passphrase` below (the CLI prompts
+//                 on the terminal). Never from an argument. This is the custody for a headless
+//                 Linux host such as a Lake pod: the host names a passphrase file and liquid
+//                 refuses it unless it is owner-only (see `passphrase_file`).
 //   "keychain"    a random key-encryption key in the macOS login Keychain (macOS only).
 //   a custody URI any URI `key_provider_from_uri` accepts, for example "tpm:pcrs=0,7".
 //   "file"        the wrapping key in clear in `.wrapping.key` beside the key file: the signing
@@ -254,6 +257,13 @@ struct LIQUID_EXPORT identity_custody_options {
     // Asked for the passphrase when no passphrase file is configured. `confirm` is true when a new
     // passphrase is being chosen, so an interactive source can ask twice.
     std::function<result<std::string>(bool confirm)> passphrase;
+    // The file that holds the passphrase, for a host with no terminal. It takes precedence over
+    // LIQUID_IDENTITY_PASSPHRASE_FILE and over `passphrase`. liquid opens it (following a symbolic
+    // link, as a Kubernetes Secret volume uses) and checks the opened file itself: it must be a
+    // regular file, owned by the effective user or by root, with no group or other permission bits
+    // (mode 0600 or 0400), and at most 64 KiB. Anything else is refused with errc::unauthorized and
+    // no identity is created. One trailing newline is dropped. On Windows the mode is not checked.
+    std::filesystem::path passphrase_file;
 };
 
 // Sets the process-wide custody options used by `identity_detail::local_signer`.

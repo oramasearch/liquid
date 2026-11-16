@@ -412,8 +412,10 @@ command transport.
 `test_identity_custody.cpp` covers how the local identity's signing key is held at rest
 (liquid#402): a watcher that stats every identity file during creation under a zero umask sees no
 mode but 0600, no temporary file is left, a passphrase-custody identity writes no clear wrapping
-key, a wrong, missing, or group-readable passphrase is refused, an injected passphrase source is
-asked once per signer, and a file-custody identity migrates to a sealed wrapping key. Because
+key, a wrong, missing, or group-readable passphrase is refused, a headless host's
+`passphrase_file` option creates an identity without a prompt and wins over the environment, a
+symbolic link is checked at the file it reaches, a directory, missing or oversized passphrase file
+is refused, an injected passphrase source is asked once per signer, and a file-custody identity migrates to a sealed wrapping key. Because
 tests run without a terminal, `ctest-environment.cmake` (read by ctest before any test runs) sets
 `LIQUID_IDENTITY_KEY_CUSTODY=file` for every test process; the custody tests set their own value.
 Running a test binary directly on a machine without an identity needs the same setting.

@@ -887,25 +887,11 @@ auto selected_custody(std::string requested) -> std::string {
     return requested;
 }
 
-auto read_passphrase_file(const std::filesystem::path& path) -> result<std::string> {
-#if !defined(_WIN32)
-    struct stat status{};
-    if (::stat(path.c_str(), &status) != 0) {
-        return std::unexpected(identity_error(
-            errc::unauthorized, "cannot read identity passphrase file", path.string()));
-    }
-    if ((status.st_mode & (S_IRWXG | S_IRWXO)) != 0) {
-        return std::unexpected(identity_error(errc::unauthorized,
-                                              "identity passphrase file must be owner-only (0600)",
-                                              path.string()));
-    }
-#endif
-    auto bytes = read_bytes(path);
-    if (!bytes) {
-        return std::unexpected(bytes.error());
-    }
-    auto text = std::string{reinterpret_cast<const char*>(bytes->data()), bytes->size()};
-    crypto_wipe(bytes->data(), bytes->size());
+// The largest passphrase file accepted; a passphrase is a line, never a document.
+constexpr auto passphrase_file_limit = std::size_t{64} * 1024;
+
+// Drops one trailing newline (LF or CRLF) and refuses an empty passphrase.
+auto passphrase_text(std::string text, const std::filesystem::path& path) -> result<std::string> {
     if (text.ends_with('\n')) {
         text.pop_back();
     }
@@ -919,17 +905,96 @@ auto read_passphrase_file(const std::filesystem::path& path) -> result<std::stri
     return text;
 }
 
+// Reads the identity passphrase from a file. On POSIX the checks are made on the opened file, not
+// on the path, so the file cannot be swapped between the check and the read. A symbolic link is
+// followed (a Kubernetes Secret volume is a link to the projected file); the file it reaches must
+// be a regular file owned by the effective user or root with no group or other permission bits.
+auto read_passphrase_file(const std::filesystem::path& path) -> result<std::string> {
+#if defined(_WIN32)
+    auto bytes = read_bytes(path);
+    if (!bytes) {
+        return std::unexpected(bytes.error());
+    }
+    if (bytes->size() > passphrase_file_limit) {
+        crypto_wipe(bytes->data(), bytes->size());
+        return std::unexpected(identity_error(
+            errc::unauthorized, "identity passphrase file is larger than 64 KiB", path.string()));
+    }
+    auto text = std::string{reinterpret_cast<const char*>(bytes->data()), bytes->size()};
+    crypto_wipe(bytes->data(), bytes->size());
+    return passphrase_text(std::move(text), path);
+#else
+    const auto descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
+    if (descriptor < 0) {
+        return std::unexpected(identity_error(
+            errc::unauthorized, "cannot open identity passphrase file", path.string()));
+    }
+    const auto refuse = [descriptor, &path](std::string_view reason) -> result<std::string> {
+        static_cast<void>(::close(descriptor));
+        return std::unexpected(
+            identity_error(errc::unauthorized, std::string{reason}, path.string()));
+    };
+    struct stat status{};
+    if (::fstat(descriptor, &status) != 0) {
+        return refuse("cannot inspect identity passphrase file");
+    }
+    if (!S_ISREG(status.st_mode)) {
+        return refuse("identity passphrase file must be a regular file");
+    }
+    if (status.st_uid != ::geteuid() && status.st_uid != 0) {
+        return refuse("identity passphrase file must be owned by the user liquid runs as, or root");
+    }
+    if ((status.st_mode & (S_IRWXG | S_IRWXO)) != 0) {
+        return refuse("identity passphrase file must be owner-only (mode 0600 or 0400)");
+    }
+    if (status.st_size < 0 || static_cast<std::size_t>(status.st_size) > passphrase_file_limit) {
+        return refuse("identity passphrase file is larger than 64 KiB");
+    }
+    auto text = std::string(passphrase_file_limit + 1, '\0');
+    auto filled = std::size_t{};
+    while (filled < text.size()) {
+        const auto count = ::read(descriptor, text.data() + filled, text.size() - filled);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count < 0) {
+            crypto_wipe(text.data(), text.size());
+            return refuse("cannot read identity passphrase file");
+        }
+        if (count == 0) {
+            break;
+        }
+        filled += static_cast<std::size_t>(count);
+    }
+    static_cast<void>(::close(descriptor));
+    if (filled > passphrase_file_limit) {
+        crypto_wipe(text.data(), text.size());
+        return std::unexpected(identity_error(
+            errc::unauthorized, "identity passphrase file is larger than 64 KiB", path.string()));
+    }
+    auto passphrase = std::string{text.data(), filled};
+    crypto_wipe(text.data(), text.size());
+    return passphrase_text(std::move(passphrase), path);
+#endif
+}
+
 auto identity_passphrase(bool confirm) -> result<std::string> {
+    const auto options = custody_options();
+    if (!options.passphrase_file.empty()) {
+        return read_passphrase_file(options.passphrase_file);
+    }
     if (const auto* file = std::getenv("LIQUID_IDENTITY_PASSPHRASE_FILE");
         file != nullptr && *file != '\0') {
         return read_passphrase_file(file);
     }
-    const auto source = custody_options().passphrase;
+    const auto& source = options.passphrase;
     if (!source) {
         return std::unexpected(identity_error(
             errc::unauthorized,
-            "the identity key needs a passphrase: set LIQUID_IDENTITY_PASSPHRASE_FILE to an "
-            "owner-only file that holds it, run liquid from a terminal, or choose another custody "
+            "the identity key needs a passphrase and there is no terminal: name an owner-only "
+            "passphrase file with LIQUID_IDENTITY_PASSPHRASE_FILE (or "
+            "identity_custody_options::passphrase_file), run liquid from a terminal, or choose "
+            "another custody "
             "with LIQUID_IDENTITY_KEY_CUSTODY (keychain, a custody URI, or file)",
             "identity passphrase"));
     }

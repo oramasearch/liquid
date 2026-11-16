@@ -1850,7 +1850,8 @@ result<bool> verify_with_trusted_time(const actor&, std::string_view artifact_ty
 result<bool> verify_with_trusted_time(const actor&, std::span<const identity_document> chain,
     std::string_view, std::span<const std::byte>, const signature&, const signature_timestamp&);
 struct identity_custody_options { std::string custody;            // passphrase | keychain | <custody URI> | file
-  std::function<result<std::string>(bool confirm)> passphrase; };   // asked when no passphrase file is set
+  std::function<result<std::string>(bool confirm)> passphrase;      // asked when no passphrase file is set
+  std::filesystem::path passphrase_file; };                         // headless hosts; owner-only, wins over the env
 void set_identity_custody_options(identity_custody_options);      // process-wide, read by local_signer
 struct identity_custody_status { std::string custody, kind; bool file_permissions_only, clear_copy_present;
                                  std::filesystem::path path; };

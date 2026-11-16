@@ -18,6 +18,7 @@
 
 #if !defined(_WIN32)
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #include "liquid/identity.hpp"
@@ -76,6 +77,10 @@ public:
 
     [[nodiscard]] auto identity() const -> std::filesystem::path {
         return home_ / "identity";
+    }
+
+    [[nodiscard]] auto home() const -> const std::filesystem::path& {
+        return home_;
     }
 
     // Writes `passphrase` to a file beside the identity directory and selects it.
@@ -232,6 +237,91 @@ TEST(IdentityCustody, PassphraseFileMustBeOwnerOnly) {
                                    std::filesystem::perms::owner_write |
                                    std::filesystem::perms::group_read);
     const auto refused = open_local();
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+    EXPECT_FALSE(std::filesystem::exists(environment.identity() / ".wrapping.key"));
+    EXPECT_FALSE(std::filesystem::exists(environment.identity() / ".wrapping.sealed"));
+}
+
+// A headless host (a Lake pod) names its passphrase file through the library option instead of
+// the environment. The option wins over LIQUID_IDENTITY_PASSPHRASE_FILE and over a prompt, and the
+// same owner-only rule applies to it.
+TEST(IdentityCustody, PassphraseFileOptionCreatesAHeadlessIdentity) {
+    auto environment = custody_environment{"passphrase-option", "passphrase"};
+    const auto path = environment.home() / "pod-passphrase";
+    {
+        auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
+        output << "mounted from a secret\n";
+    }
+    std::filesystem::permissions(
+        path, std::filesystem::perms::owner_read, std::filesystem::perm_options::replace);
+    environment.use_passphrase("not the option's passphrase");
+    auto asked = false;
+    liquid::set_identity_custody_options(
+        {.custody = {},
+         .passphrase = [&asked](bool) -> liquid::result<std::string> {
+             asked = true;
+             return std::string{"from a prompt"};
+         },
+         .passphrase_file = path});
+    auto signer = open_local();
+    ASSERT_TRUE(signer) << signer.error().message;
+    EXPECT_FALSE(asked);
+    EXPECT_FALSE(std::filesystem::exists(environment.identity() / ".wrapping.key"));
+    EXPECT_TRUE(std::filesystem::exists(environment.identity() / ".wrapping.sealed"));
+    expect_signs_and_verifies(*signer);
+
+    // Reopening reads the same file; with only the environment's file it is the wrong passphrase.
+    auto reopened = open_local();
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    liquid::set_identity_custody_options({});
+    const auto wrong = open_local();
+    ASSERT_FALSE(wrong);
+    EXPECT_EQ(wrong.error().code, liquid::errc::unauthorized);
+}
+
+// A symbolic link to an owner-only file is followed, as a Kubernetes Secret volume needs; the
+// checks apply to the file it reaches, so a link to a group-readable file is refused.
+TEST(IdentityCustody, PassphraseFileLinkIsCheckedAtItsTarget) {
+    auto environment = custody_environment{"passphrase-link", "passphrase"};
+    environment.use_passphrase("behind a link");
+    const auto target = environment.home() / "passphrase";
+    const auto link = environment.home() / "passphrase-link";
+    std::filesystem::create_symlink(target, link);
+    setenv("LIQUID_IDENTITY_PASSPHRASE_FILE", link.c_str(), 1);
+    auto signer = open_local();
+    ASSERT_TRUE(signer) << signer.error().message;
+
+    std::filesystem::permissions(target,
+                                 std::filesystem::perms::owner_read |
+                                     std::filesystem::perms::owner_write |
+                                     std::filesystem::perms::others_read,
+                                 std::filesystem::perm_options::replace);
+    const auto refused = open_local();
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+}
+
+// Only a regular file is accepted: a directory, a missing path and an oversized file are refused
+// and no identity is created.
+TEST(IdentityCustody, PassphraseFileMustBeASmallRegularFile) {
+    auto environment = custody_environment{"passphrase-kind", "passphrase"};
+    const auto directory = environment.home() / "a-directory";
+    std::filesystem::create_directories(directory);
+    std::filesystem::permissions(
+        directory, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
+    setenv("LIQUID_IDENTITY_PASSPHRASE_FILE", directory.c_str(), 1);
+    auto refused = open_local();
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+
+    setenv("LIQUID_IDENTITY_PASSPHRASE_FILE", (environment.home() / "missing").c_str(), 1);
+    refused = open_local();
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
+
+    environment.use_passphrase(std::string(65 * 1024, 'x'));
+    refused = open_local();
     ASSERT_FALSE(refused);
     EXPECT_EQ(refused.error().code, liquid::errc::unauthorized);
     EXPECT_FALSE(std::filesystem::exists(environment.identity() / ".wrapping.key"));
