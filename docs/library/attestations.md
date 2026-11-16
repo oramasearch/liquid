@@ -84,6 +84,36 @@ those recorded at fork (liquid #516). Private writes need no publish capability.
 checks happen before lease or base validation, and version-3 signed drips record the delegation
 digest and agent actor. Versions 1 and 2 remain readable.
 
+### Issuing a delegation
+
+`repository::issue_delegation(delegation_request)` signs a root `delegation/1` with the
+repository's own principal key (`repository::principal()`) and stores it (liquid #538). A client
+never builds or signs the attestation body itself. liquid fills the subject
+(`delegation_subject(agent)`), the issuer and `dispatcher` (the principal), `repository` (this
+repository's id), `at` (now) and `not_after` (`at` plus `lifetime`); the caller states the agent,
+the scopes and the capabilities. The result is an `issued_delegation`: the attestation, to pass as
+`session_options::delegation`, and its digest, which `liquid session start` takes and the
+revocation list names.
+
+Every capability defaults to the narrowest value: `may_publish` and `may_lease` false,
+`depth_remaining` 0, `lifetime` `default_delegation_lifetime` (15 minutes). `scopes` has no default.
+The call refuses, with `errc::invalid_argument`, an agent without a TAAP id, the principal itself
+as the agent, no scopes or an empty scope, a lifetime that is not positive or exceeds
+`delegation_maximum_lifetime`, and an empty `model`. Only a root delegation is issued here: the
+principal signs with the key it already holds, so the call grants no authority the caller did not
+have. A sub-delegation must be signed by the agent it descends from, and an in-process agent has no
+key, so it cannot sub-delegate.
+
+### Local agents
+
+`local_agent(principal, name)` is the identity of an agent that runs in the principal's own process,
+such as an editor's assistant: `<principal TAAP id>/agent/<name>`. It has no key. A session acting
+as it signs every drip with the principal's key, and the drip names the agent and the delegation,
+so history reads "agent `name` for the principal". No key-derived TAAP id contains `/`, so no key
+can claim a local agent's id, and a delegation issued to one binds only to that name under that
+principal. `name` is 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or
+digit; a local agent cannot be the principal of another.
+
 The `scan_result/1` names describe its established wire fields: detector ids, finding count, and
 allowance records. Its full encoding and privacy limits remain in
 [secret-scanning.md](secret-scanning.md#scan_result1).

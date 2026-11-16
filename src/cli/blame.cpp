@@ -68,11 +68,12 @@ void print_json(std::string_view path,
             std::print(",");
         }
         std::print("{{\"line\":{},\"change\":{},\"session\":{},\"actor\":{},"
-                   "\"agent\":{},\"text\":{}}}",
+                   "\"principal\":{},\"agent\":{},\"text\":{}}}",
                    line.line,
                    json_string(liquid::to_string(line.change.value)),
                    json_string(liquid::to_string(line.session)),
                    json_string(line.by.taap_id),
+                   line.principal ? json_string(line.principal->taap_id) : "null",
                    line.agent,
                    json_string(line.text));
     }
@@ -123,12 +124,16 @@ auto blame(int argc, char** argv) -> int {
         return 0;
     }
     for (const auto& line : *lines) {
-        std::println("{} change={} session={} actor={} agent={}\t{}",
+        // A delegated line names the principal the agent acted for (liquid#538).
+        const auto principal =
+            line.principal ? std::format(" for={}", line.principal->taap_id) : std::string{};
+        std::println("{} change={} session={} actor={} agent={}{}\t{}",
                      line.line,
                      liquid::to_string(line.change.value),
                      liquid::to_string(line.session),
                      line.by.taap_id,
                      line.agent,
+                     principal,
                      line.text);
     }
     return 0;

@@ -14,6 +14,7 @@
 #include "liquid/attestation.hpp"
 #include "liquid/data.hpp"
 #include "liquid/drip.hpp"
+#include "liquid/edit.hpp"
 #include "liquid/export.hpp"
 #include "liquid/frontend.hpp"
 #include "liquid/object.hpp"
@@ -127,10 +128,43 @@ struct LIQUID_EXPORT presence {
 struct LIQUID_EXPORT line_attribution {
     std::uint64_t line{};
     std::string text;
+    // The actor the operation was recorded for: the agent, when `agent` is true.
     liquid::actor by;
     session_id session;
     change_id change;
+    // True when the line was published by a delegated agent session.
     bool agent{};
+    // The principal the agent acted for, whose key signed the drips (liquid#538). Set when `agent`
+    // is true and the operation recorded it; operations written before liquid#538 do not.
+    std::optional<liquid::actor> principal;
+};
+
+// What a principal authorises an agent to do in one repository (liquid#538). Every capability
+// defaults to the narrowest value: no publishing, no leases, no sub-delegation, and a short
+// lifetime. `scopes` has no default and must name at least one path glob.
+struct LIQUID_EXPORT delegation_request {
+    // The agent the delegation is issued to. Only `taap_id` is used; `local_agent` derives one
+    // for an assistant running in the principal's own process.
+    liquid::actor agent;
+    // Path globs the agent may write, lease and publish (`*` and `?` stay inside one path
+    // segment, `**` crosses them). Required.
+    std::vector<std::string> scopes;
+    bool may_publish{};
+    bool may_lease{};
+    // How many further links the agent may delegate. Zero means none.
+    std::uint64_t depth_remaining{};
+    // The model the agent runs, recorded in the delegation. Optional.
+    std::optional<std::string> model;
+    // How long the delegation is valid from now: more than zero and at most
+    // `delegation_maximum_lifetime`.
+    std::chrono::seconds lifetime{default_delegation_lifetime};
+};
+
+// A delegation `repository::issue_delegation` signed and stored, with its digest: the id
+// `liquid session start` takes and the revocation list names.
+struct LIQUID_EXPORT issued_delegation {
+    attestation delegation;
+    digest id{};
 };
 
 struct LIQUID_EXPORT session_options {
@@ -169,6 +203,9 @@ struct LIQUID_EXPORT publish_report {
     std::vector<publish_path_result> paths;
     std::uint64_t directories{};
     std::optional<change_id> change;
+    // The one `structural_edit` operation a session that applied an edit publishes as
+    // (`session::apply_edit`, liquid#538); `repository::undo` reverts it whole.
+    std::optional<op_id> operation;
 };
 
 struct LIQUID_EXPORT epoch_options {
@@ -203,6 +240,14 @@ public:
     [[nodiscard]] runtime::task<void>
     move(std::string from, std::string to, write_options options = {});
     [[nodiscard]] runtime::task<void> remove(std::string path, write_options options = {});
+    // Applies a structural edit preview inside the session (liquid#538): every file is checked
+    // against its `before` digest in the session's snapshot and must lie inside the delegation's
+    // scopes. The edit must be the only change the session holds: it is refused after a write,
+    // move, remove or another edit, and those are refused after it. `publish` then records the
+    // edit as one `structural_edit` operation carrying the preview's attribution, with drips
+    // signed by the principal that name the agent and the delegation. A failure part-way leaves
+    // the session holding a partial edit; discard it.
+    [[nodiscard]] runtime::task<void> apply_edit(const edit_preview& preview);
     [[nodiscard]] runtime::task<void> lease(lease_claim claim, std::chrono::seconds ttl);
     [[nodiscard]] runtime::task<void> release(lease_claim claim);
     [[nodiscard]] runtime::task<void> report_presence(presence value);

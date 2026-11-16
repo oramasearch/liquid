@@ -607,9 +607,11 @@ auto repo_log(int argc, char** argv) -> int {
                                           : "forced");
                 const auto delegation =
                     drip.delegation ? json_string(liquid::to_string(*drip.delegation)) : "null";
+                const auto principal =
+                    drip.principal ? json_string(drip.principal->taap_id) : "null";
                 std::print("{}{{\"id\":{},\"base\":{},\"paths\":{},\"actor\":{},\"at\":{},"
                            "\"reasoned_from\":{},\"cursor\":{},\"revalidated\":{},"
-                           "\"delegation\":{}}}",
+                           "\"delegation\":{},\"principal\":{}}}",
                            index == 0 ? "" : ",",
                            json_string(liquid::to_string(drip.id.value)),
                            json_string(liquid::to_string(drip.base.value)),
@@ -619,17 +621,20 @@ auto repo_log(int argc, char** argv) -> int {
                            reasoned_from,
                            cursor,
                            revalidated,
-                           delegation);
+                           delegation,
+                           principal);
             }
             std::println("]");
         } else {
             for (const auto& drip : *drips) {
-                std::println("{} {} {}",
+                // A delegated drip names the principal the agent acted for (liquid#538).
+                std::println("{} {} {}{}",
                              liquid::to_string(drip.id.value),
                              drip.by.taap_id,
                              drip.revalidated == liquid::stale_revalidation::disjoint ? "disjoint"
                              : drip.revalidated == liquid::stale_revalidation::forced ? "forced"
-                                                                                      : "");
+                                                                                      : "",
+                             drip.principal ? " for=" + drip.principal->taap_id : std::string{});
             }
         }
         return 0;

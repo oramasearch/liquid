@@ -213,6 +213,17 @@ verify_attestation(const attestation& value, const attestation_verification_opti
 // after it, and `now` is before `not_after`.
 inline constexpr std::chrono::seconds delegation_maximum_lifetime{std::chrono::days{30}};
 inline constexpr std::chrono::seconds delegation_clock_skew{std::chrono::minutes{5}};
+// The lifetime `delegation_request` asks for unless the caller says otherwise (liquid#538).
+inline constexpr std::chrono::seconds default_delegation_lifetime{std::chrono::minutes{15}};
+
+// The identity of an agent that runs inside `principal`'s own process, such as an editor's
+// assistant (liquid#538): `<principal TAAP id>/agent/<name>`. It has no key of its own: a session
+// acting as it signs every drip with the principal's key and names this agent and the delegation.
+// No key-derived TAAP id contains `/`, so no key can ever claim it. `name` is 1 to 64 characters of
+// `a-z`, `0-9`, `.`, `_` and `-`, starting with a letter or digit, and `principal` must not itself
+// be a local agent.
+[[nodiscard]] LIQUID_EXPORT result<actor> local_agent(const actor& principal,
+                                                      std::string_view name);
 
 // Refuses a delegation outside its validity window: `errc::unauthorized` when it is expired or
 // issued in the future, `errc::invalid_argument` when `not_after` is missing or the window is

@@ -65,6 +65,9 @@ struct LIQUID_EXPORT drip {
     std::optional<write_base> reasoned_from;
     std::optional<stale_revalidation> revalidated;
     std::optional<digest> delegation;
+    // For a delegated drip, the principal whose key signed it; `by` is then the agent
+    // (liquid#538).
+    std::optional<actor> principal;
     std::optional<digest> scan_attestation;
     std::optional<scan_block> block;
     bool redacted{};
