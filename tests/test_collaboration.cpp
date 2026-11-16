@@ -5,6 +5,8 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -12,6 +14,7 @@
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
+#include "memory_backend.hpp"
 #include "objects/records.hpp"
 #include "temporary_directory.hpp"
 
@@ -451,6 +454,82 @@ TEST(Collaboration, epoch_compaction_bounds_history_and_old_cursor_gets_checkpoi
     ASSERT_TRUE(resync) << resync.error().message;
     EXPECT_GT(resync->count, 0U);
     EXPECT_TRUE(resync->done);
+}
+
+// liquid #343: a session's publish and discard end by removing the session's state tree. On a
+// backend that keeps only what a barrier covered, a crash right after either returned must not
+// bring the session back: a resurrected published session could be published a second time, and a
+// discarded one would reappear. lose_unbarriered() is that crash.
+TEST(Collaboration, published_and_discarded_sessions_stay_gone_after_a_crash) {
+    collaboration_directory directory;
+    auto backend = std::make_shared<liquid::sim::memory_store_backend>();
+    auto store_options = liquid::store_options{};
+    store_options.backend = backend;
+    auto opened_store = liquid::runtime::block_on(
+        liquid::store::open(directory.path() / "shared-store", store_options));
+    ASSERT_TRUE(opened_store) << opened_store.error().message;
+    auto shared_store = std::optional<liquid::store>{std::move(*opened_store)};
+    auto options = liquid::repository_options{.store = &*shared_store};
+    auto created =
+        liquid::runtime::block_on(liquid::repository::create("agent-repository", options));
+    ASSERT_TRUE(created) << created.error().message;
+    auto shared = std::optional<liquid::repository>{std::move(*created)};
+    ASSERT_TRUE(
+        liquid::runtime::block_on(shared->write("src/value.cpp", bytes("int value = 1;\n"))));
+    ASSERT_TRUE(liquid::runtime::block_on(shared->cut("fork point")));
+
+    const auto agent = current_actor();
+    auto authority = delegation(agent, {"src/**"});
+    ASSERT_TRUE(authority) << authority.error().message;
+    auto published_fork =
+        liquid::runtime::block_on(shared->fork_session({.actor = agent, .delegation = *authority}));
+    ASSERT_TRUE(published_fork) << published_fork.error().message;
+    auto published_session = std::move(*published_fork);
+    const auto published_id = published_session.id();
+    ASSERT_TRUE(liquid::runtime::block_on(
+        published_session.write("src/value.cpp", bytes("int value = 2;\n"))));
+    auto discarded_fork =
+        liquid::runtime::block_on(shared->fork_session({.actor = agent, .delegation = *authority}));
+    ASSERT_TRUE(discarded_fork) << discarded_fork.error().message;
+    auto discarded_session = std::move(*discarded_fork);
+    const auto discarded_id = discarded_session.id();
+    ASSERT_TRUE(liquid::runtime::block_on(
+        discarded_session.write("src/value.cpp", bytes("int value = 3;\n"))));
+
+    auto published = liquid::runtime::block_on(
+        published_session.publish({.message = "agent update", .atomic = true}));
+    ASSERT_TRUE(published) << published.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(discarded_session.discard()));
+
+    // The process stops at once; the backend keeps only what a barrier covered.
+    backend->set_frozen(true);
+    published_session = liquid::session{};
+    discarded_session = liquid::session{};
+    shared.reset();
+    shared_store.reset();
+    backend->set_frozen(false);
+    backend->lose_unbarriered();
+
+    opened_store = liquid::runtime::block_on(
+        liquid::store::open(directory.path() / "shared-store", store_options));
+    ASSERT_TRUE(opened_store) << opened_store.error().message;
+    shared_store.emplace(std::move(*opened_store));
+    options.store = &*shared_store;
+    auto reopened =
+        liquid::runtime::block_on(liquid::repository::open("agent-repository", options));
+    ASSERT_TRUE(reopened) << reopened.error().message;
+    auto landed = liquid::runtime::block_on(reopened->read("src/value.cpp"));
+    ASSERT_TRUE(landed) << landed.error().message;
+    EXPECT_EQ(text(*landed), "int value = 2;\n");
+    for (const auto& id : {published_id, discarded_id}) {
+        auto resurrected = liquid::runtime::block_on(reopened->open_session(id));
+        if (resurrected) {
+            ADD_FAILURE() << "session " << liquid::to_string(id)
+                          << " came back after its state was removed";
+            continue;
+        }
+        EXPECT_EQ(resurrected.error().code, liquid::errc::not_found);
+    }
 }
 
 } // namespace

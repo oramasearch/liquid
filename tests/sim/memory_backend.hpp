@@ -3,8 +3,11 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "liquid/store.hpp"
 
@@ -22,6 +25,13 @@ public:
     // freezes the backend at the crash point, so work the crashed process would never have done
     // (destructors, cleanup) cannot reach the state its successor recovers.
     void set_frozen(bool frozen) noexcept;
+    // Crash durability (liquid #343): only what a barrier has covered is durable. Drops every
+    // mutation made since the last successful barrier, as a crash of a backend that keeps nothing
+    // unbarriered would. Losing all of them is a prefix of any issue order (the empty one), so it
+    // holds under every ordering contract between barriers (liquid #344).
+    void lose_unbarriered();
+    // How many mutations a crash now would lose.
+    [[nodiscard]] std::size_t unbarriered() const;
 
     [[nodiscard]] runtime::task<void> put(std::string key, std::vector<std::byte> bytes) override;
     [[nodiscard]] runtime::task<void> put_if_absent(std::string key,

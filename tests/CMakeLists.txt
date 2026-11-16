@@ -55,6 +55,7 @@ add_executable(liquid-tests
   test_runtime.cpp
   test_secret.cpp
   test_store.cpp
+  sim/memory_backend.cpp
   sim/write_once_backend.cpp
   store/test_owner.cpp
   store/test_transfer.cpp
@@ -137,6 +138,9 @@ target_link_libraries(liquid-tests PRIVATE
   Boost::throw_exception
   $<COMPILE_ONLY:Boost::corosio>
   $<COMPILE_ONLY:Boost::corosio_openssl>)
+# The in-memory backend reports its fault points through the store's private fault header.
+set_source_files_properties(sim/memory_backend.cpp PROPERTIES
+  INCLUDE_DIRECTORIES ${PROJECT_SOURCE_DIR}/src/store)
 target_include_directories(liquid-tests PRIVATE
   ${PROJECT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/sim

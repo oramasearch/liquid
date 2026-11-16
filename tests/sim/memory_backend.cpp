@@ -16,6 +16,21 @@ namespace liquid::sim {
 struct memory_store_backend::state {
     std::mutex mutex;
     std::map<std::string, std::vector<std::byte>> objects;
+    // What each key held before its first mutation since the last barrier; nullopt when absent.
+    std::map<std::string, std::optional<std::vector<std::byte>>> undo;
+    std::size_t mutations{};
+
+    // Called under the mutex before a key changes.
+    void remember(const std::string& key) {
+        ++mutations;
+        if (undo.contains(key)) {
+            return;
+        }
+        const auto found = objects.find(key);
+        undo.emplace(key,
+                     found == objects.end() ? std::optional<std::vector<std::byte>>{}
+                                            : std::optional<std::vector<std::byte>>{found->second});
+    }
     std::optional<error> failure;
     std::chrono::milliseconds latency{};
     bool frozen{};
@@ -62,6 +77,24 @@ void memory_store_backend::set_frozen(bool frozen) noexcept {
     state_->frozen = frozen;
 }
 
+void memory_store_backend::lose_unbarriered() {
+    auto lock = std::scoped_lock(state_->mutex);
+    for (auto& [key, previous] : state_->undo) {
+        if (previous) {
+            state_->objects.insert_or_assign(key, std::move(*previous));
+        } else {
+            state_->objects.erase(key);
+        }
+    }
+    state_->undo.clear();
+    state_->mutations = 0;
+}
+
+std::size_t memory_store_backend::unbarriered() const {
+    auto lock = std::scoped_lock(state_->mutex);
+    return state_->mutations;
+}
+
 std::optional<error> memory_store_backend::take_mutation_failure(const std::string& key) {
     if (auto failure = take_failure()) {
         return failure;
@@ -86,6 +119,7 @@ runtime::task<void> memory_store_backend::put(std::string key, std::vector<std::
         {store_detail::fault_operation::write, store_detail::fault_phase::before, context});
     {
         auto lock = std::scoped_lock(state_->mutex);
+        state_->remember(key);
         state_->objects.insert_or_assign(std::move(key), std::move(bytes));
     }
     store_detail::visit_fault(
@@ -107,10 +141,12 @@ runtime::task<void> memory_store_backend::put_if_absent(std::string key,
         {store_detail::fault_operation::write, store_detail::fault_phase::before, context});
     {
         auto lock = std::scoped_lock(state_->mutex);
-        if (!state_->objects.try_emplace(key, std::move(bytes)).second) {
+        if (state_->objects.contains(key)) {
             co_return std::unexpected(
                 error{errc::already_exists, "backend object already exists", key});
         }
+        state_->remember(key);
+        state_->objects.emplace(key, std::move(bytes));
     }
     store_detail::visit_fault(
         {store_detail::fault_operation::write, store_detail::fault_phase::after, context});
@@ -147,6 +183,7 @@ runtime::task<void> memory_store_backend::put_range(std::string key,
         {store_detail::fault_operation::write, store_detail::fault_phase::before, context});
     {
         auto lock = std::scoped_lock(state_->mutex);
+        state_->remember(key);
         auto& object = state_->objects[key];
         if (object.size() < offset) {
             object.resize(static_cast<std::size_t>(offset));
@@ -197,9 +234,11 @@ runtime::task<void> memory_store_backend::remove(std::string key) {
         {store_detail::fault_operation::remove, store_detail::fault_phase::before, context});
     {
         auto lock = std::scoped_lock(state_->mutex);
-        if (state_->objects.erase(key) == 0) {
+        if (!state_->objects.contains(key)) {
             co_return std::unexpected(error{errc::not_found, "backend object was not found", key});
         }
+        state_->remember(key);
+        state_->objects.erase(key);
     }
     store_detail::visit_fault(
         {store_detail::fault_operation::remove, store_detail::fault_phase::after, context});
@@ -231,6 +270,14 @@ runtime::task<void> memory_store_backend::barrier() {
     }
     if (auto failure = take_failure()) {
         co_return std::unexpected(std::move(*failure));
+    }
+    {
+        // A frozen backend stands for a crashed process: its barrier makes nothing durable.
+        auto lock = std::scoped_lock(state_->mutex);
+        if (!state_->frozen) {
+            state_->undo.clear();
+            state_->mutations = 0;
+        }
     }
     co_return result<void>{};
 }

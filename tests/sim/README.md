@@ -7,7 +7,11 @@ rebuild, with no pending compaction left behind.
 
 The same schedule runs against the disk backend and the in-memory backend. The memory backend owns
 all store objects without creating backend files and supports injected coroutine latency, one-shot
-failures, the conditional create, a key listing, and freezing at a crash point.
+failures, the conditional create, a key listing, and freezing at a crash point. It also models
+barrier durability (liquid #343): `lose_unbarriered()` drops every mutation since the last
+successful barrier, as a crash of a backend that keeps only what a barrier covered would, and
+`unbarriered()` counts them. A barrier while frozen makes nothing durable. `liquid-tests` compiles
+it too, for the session durability test in `tests/test_collaboration.cpp`.
 
 `write_once_backend.hpp` decorates either backend with the range contract of Zetta's object storage
 (liquid #332): `put_range` only appends at the object's current end, a retry of bytes already held
@@ -20,6 +24,8 @@ suites run a second time over it.
 the backend: the conditional create, the scoped disk listing, a full repository lifecycle on the
 in-memory backend with no file under any directory, the unchanged disk layout, journal crashes,
 `RepositoryCollectionCrash` (liquid #337), which crashes one collection at each fault point of its
-object map and manifest publication and reopens, and `RepositoryStateSimulation`, the seeded crash
+object map and manifest publication and reopens, `RepositoryStateDurability` (liquid #343), which
+loses every unbarriered mutation right after a cut returns and requires the cut to survive, and
+`RepositoryStateSimulation`, the seeded crash
 schedule over repository operations. See
 `docs/library/simulation.md#repository-state`.
