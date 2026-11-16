@@ -170,6 +170,9 @@ mixed and atomic push outcomes, bounded client retries of a `503` or `429` that 
 forge review client with its polling event stream and installable double are implemented
 ([`sync.md`](sync.md), [`forge-client.md`](forge-client.md)). HTTPS verifies against
 `SSL_CERT_FILE` or OpenSSL's default trust store, on macOS too (liquid #368).
+Chunk uploads are bounded by a 64 MiB
+decoded-size budget per request that counts repeated frames, and are stored one decoded frame at a
+time (liquid#435).
 
 **Drive.** Issue #195 adds the persisted three-tree drive client, named concurrent conflict values,
 interrupted-transfer resume, per-reference refusal reporting, stable-node path history and restore,

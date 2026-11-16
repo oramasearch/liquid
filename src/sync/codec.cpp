@@ -18,6 +18,8 @@ namespace {
 namespace cbor = encoding::cbor;
 
 constexpr auto maximum_frame_size = std::size_t{16U * 1024U * 1024U};
+// Uncompressed bytes one chunk upload may declare across all its frames, repeats included.
+constexpr auto maximum_chunk_request_size = std::size_t{64U * 1024U * 1024U};
 constexpr auto physical_header_size = std::size_t{49};
 constexpr auto frame_magic = std::array<std::byte, 8>{std::byte{'L'},
                                                       std::byte{'Q'},
@@ -510,9 +512,9 @@ auto encode_pack_frame(digest id, std::span<const std::byte> contents)
     return output;
 }
 
-auto decode_pack_frames(std::span<const std::byte> input)
-    -> result<std::vector<std::pair<digest, std::vector<std::byte>>>> {
-    auto output = std::vector<std::pair<digest, std::vector<std::byte>>>{};
+auto parse_pack_frames(std::span<const std::byte> input) -> result<std::vector<pack_frame>> {
+    auto output = std::vector<pack_frame>{};
+    auto decoded_total = std::size_t{};
     auto offset = std::size_t{};
     while (offset < input.size()) {
         if (input.size() - offset < physical_header_size ||
@@ -528,22 +530,36 @@ auto decode_pack_frames(std::span<const std::byte> input)
             algorithm_value > static_cast<std::uint8_t>(algorithm::blake3_keyed)) {
             return std::unexpected(failure("invalid pack frame lengths or algorithm"));
         }
+        decoded_total += raw_size;
+        if (decoded_total > maximum_chunk_request_size) {
+            return std::unexpected(error{errc::invalid_argument,
+                                         "chunk upload exceeds the decoded-size budget",
+                                         "sync protocol"});
+        }
         auto id = digest{static_cast<algorithm>(algorithm_value), {}};
         std::ranges::copy_n(input.begin() + offset + 17, id.bytes.size(), id.bytes.begin());
-        auto raw = std::vector<std::byte>(raw_size);
-        const auto produced = ZSTD_decompress(
-            raw.data(), raw.size(), input.data() + offset + physical_header_size, compressed_size);
-        if (ZSTD_isError(produced) || produced != raw.size()) {
-            return std::unexpected(failure("pack frame decompression failed"));
-        }
-        auto actual = hash(id.alg, raw);
-        if (!actual || !same_digest(*actual, id)) {
-            return std::unexpected(failure("pack frame digest verification failed"));
-        }
-        output.emplace_back(id, std::move(raw));
+        output.push_back(pack_frame{
+            .id = id,
+            .raw_size = raw_size,
+            .compressed = input.subspan(offset + physical_header_size, compressed_size),
+        });
         offset += physical_header_size + compressed_size;
     }
     return output;
+}
+
+auto decode_pack_frame(const pack_frame& frame) -> result<std::vector<std::byte>> {
+    auto raw = std::vector<std::byte>(frame.raw_size);
+    const auto produced =
+        ZSTD_decompress(raw.data(), raw.size(), frame.compressed.data(), frame.compressed.size());
+    if (ZSTD_isError(produced) || produced != raw.size()) {
+        return std::unexpected(failure("pack frame decompression failed"));
+    }
+    auto actual = hash(frame.id.alg, raw);
+    if (!actual || !same_digest(*actual, frame.id)) {
+        return std::unexpected(failure("pack frame digest verification failed"));
+    }
+    return raw;
 }
 
 } // namespace liquid::sync_detail

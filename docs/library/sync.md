@@ -181,8 +181,15 @@ header, table, or footer:
 N bytes  zstd payload
 ```
 
-The receiver bounds both lengths, decompresses the payload, verifies its algorithm-tagged digest,
-and stores the logical bytes through the ordinary store path. Trust-domain encryption, when
+The receiver bounds both lengths of every frame to 16 MiB, then charges each frame's declared
+uncompressed length against a 64 MiB budget for the whole request. Repeated frames are charged
+every time they appear, so a request whose frames together declare more than 64 MiB is refused
+with `invalid_argument` before anything is decompressed or stored (liquid#435). An accepted request
+is then decoded one frame at a time: the receiver decompresses the payload, verifies its
+algorithm-tagged digest, and stores the logical bytes through the ordinary store path before it
+decodes the next frame, so at most one decoded frame is held at once. A frame that fails
+decompression or verification ends the request with an error; frames stored before it remain,
+each already verified. Trust-domain encryption, when
 configured, is applied by the receiving store; encrypted physical frames are never sent. A chunk
 range response is logical content rather than a partial compressed frame and is verified as part
 of the complete object read.
