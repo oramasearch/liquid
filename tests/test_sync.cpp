@@ -2077,11 +2077,13 @@ TEST(Sync, chunk_upload_charges_repeated_frames_against_the_decoded_budget) {
     ASSERT_TRUE(present);
     EXPECT_FALSE(*present);
 
+    // Within the budget the upload is accepted. It is staged, not stored: it enters the store only
+    // once a push that reaches it is authorized (liquid#403).
     auto accepted = liquid::runtime::block_on(server.handle_chunks(repeated_frames(*frame, 4)));
     ASSERT_TRUE(accepted) << (accepted ? "" : accepted.error().message);
     present = liquid::runtime::block_on(objects.contains(*id));
     ASSERT_TRUE(present);
-    EXPECT_TRUE(*present);
+    EXPECT_FALSE(*present);
 }
 
 auto write_drive_file(const std::filesystem::path& path, std::string_view value) -> void {
@@ -2685,9 +2687,10 @@ TEST(Sync, trust_configuration_never_travels_with_exported_drips) {
     ASSERT_TRUE(destination);
     auto imported = liquid::runtime::block_on(destination->import_drips(*items));
     ASSERT_TRUE(imported) << imported.error().message << " " << imported.error().context;
-    auto content = liquid::runtime::block_on(destination->read("content.txt"));
-    ASSERT_TRUE(content) << content.error().message;
-    EXPECT_EQ(text(*content), "content");
+    // Only metadata is imported here, so the content's chunks are not in this store; the history
+    // that names them is. The pull test below reads the content through a full sync.
+    auto head = liquid::runtime::block_on(destination->head());
+    ASSERT_TRUE(head) << head.error().message;
     expect_no_trust_configuration(*destination);
 
     *destination = {};

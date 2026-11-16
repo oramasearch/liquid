@@ -124,8 +124,9 @@ struct LIQUID_EXPORT sync_ref_verdict {
 using sync_authorizer = std::function<runtime::task<std::vector<sync_ref_verdict>>(
     const sync_item&, std::span<const sync_ref_update> reference_updates)>;
 
-// The name the push rate limit is charged to when the host did not say who authenticated the
-// push. Every unauthenticated push shares this one actor bucket (liquid#508).
+// The name the push rate limit is charged to, for a record that names no author, when the host did
+// not say who authenticated the push (liquid#508). An unauthenticated push charges each record that
+// names an author to that author once its signature is verified (liquid#403).
 inline constexpr std::string_view unauthenticated_pusher = "unauthenticated";
 
 struct LIQUID_EXPORT sync_server_options {
@@ -134,7 +135,8 @@ struct LIQUID_EXPORT sync_server_options {
     // The identity that authenticated the push: the session or TAAP identity the host verified
     // (Lake's signed-in caller, for example). The push rate limit's actor bucket is keyed on it,
     // never on a record's claimed `sync_item::author`, so a pusher cannot spend another person's
-    // budget by naming them (liquid#508). Empty means `unauthenticated_pusher`.
+    // budget by naming them (liquid#508). Empty means unauthenticated: each record is charged to
+    // its verified author, or to `unauthenticated_pusher` when it names none.
     std::string pusher;
     // Uploaded objects are held in a quarantine until a push that reaches them is authorized
     // (liquid#403): then they enter the store; a refused push discards them. The quarantine holds
@@ -161,7 +163,8 @@ public:
     [[nodiscard]] runtime::task<std::vector<std::byte>>
     handle_push(std::span<const std::byte> request);
     // Charges the push rate limit to `pusher`, the identity that authenticated this request, for a
-    // server that handles requests from more than one caller. Empty means `unauthenticated_pusher`.
+    // server that handles requests from more than one caller. Empty means unauthenticated, as for
+    // `sync_server_options::pusher`.
     [[nodiscard]] runtime::task<std::vector<std::byte>>
     handle_push(std::span<const std::byte> request, std::string pusher);
     [[nodiscard]] runtime::task<std::vector<std::byte>>

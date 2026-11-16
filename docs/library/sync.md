@@ -249,25 +249,33 @@ Non-success responses use `Content-Type: application/vnd.liquid.error-v1` and a 
 | 500 | `io`, `internal` |
 
 Before metadata import, `sync_server` applies the repository's actor, directory-document, and
-repository buckets to each `sync_item`. The actor bucket is the **authenticated pusher's**, never
-the author a record claims, because that name is not verified until import (liquid#508). The host
-names the pusher, the session or TAAP identity that authenticated the request, in
-`sync_server_options::pusher` or per request with `handle_push(request, pusher)`; Lake is to pass
-its signed-in caller, which it does not do yet. `actor_overrides` are keyed the same way. A push with no pusher is charged to
-the shared `unauthenticated_pusher` bucket, which is what `liquid serve sync` does today because it
-does not authenticate pushes. A refusal returns the existing HTTP 429 mapping;
+repository buckets to each `sync_item`. Which actor bucket is charged depends on whether the host
+says who pushed:
+
+- **An authenticated push is charged to the pusher**, never to the authors its records name, so a
+  pusher cannot spend another person's budget by naming them or by relaying their records
+  (liquid#508). The host names the pusher, the session or TAAP identity that authenticated the
+  request, in `sync_server_options::pusher` or per request with `handle_push(request, pusher)`;
+  Lake is to pass its signed-in caller, which it does not do yet. `actor_overrides` are keyed the
+  same way.
+- **An unauthenticated push is charged per verified author** (liquid#403): each record that names
+  an author is charged to that author once its signature is proven (below), and a record that names
+  no author to the shared `unauthenticated_pusher` bucket. This is what `liquid serve sync` does
+  today, because it does not name a pusher.
+
+A refusal returns the existing HTTP 429 mapping;
 the canonical error body also carries `retry_after_ms` and `scope`. The complete metadata batch is
 left unapplied, so a rejected peer operation cannot enter causal history. `max_update_bytes`
 applies to each item's body.
 
-The actor bucket is keyed on an item's author only after that author is proven (liquid#403): before
-admission, every authored item is checked against the author's identity chain, the stored one or
+An author is charged only after it is proven (liquid#403), and the proof runs for every push,
+authenticated or not: before admission, every authored item is checked against the author's identity chain, the stored one or
 the one the push carries. An identity frame must hold a valid chain named after its author, and a
 drip or change must be signed by a key in that chain. Any other frame kind that names an author,
 or an item that fails this check, refuses the whole push with that item's index before any budget
 is spent, so a peer cannot exhaust another author's budget with records it cannot sign. Import
-repeats the full verification. The budget remains per author, not per connection: a peer that
-replays an author's genuinely signed records still spends that author's budget.
+repeats the full verification. Without a pusher the budget is per author, not per connection: a
+peer that replays an author's genuinely signed records still spends that author's budget.
 
 `sync_endpoint::push` projects a flow rejection into `sync_report::retry_after_ms` and
 `exhausted_scope` rather than hiding the peer's retry signal in transport text. `liquid push`

@@ -824,11 +824,12 @@ runtime::task<std::vector<std::byte>> sync_server::handle_push(std::span<const s
         co_return std::unexpected(
             server_error(errc::invalid_argument, "push request contains reference outcomes"));
     }
-    // The push rate limit (liquid#508, liquid#403). An unauthenticated push is charged whole to
-    // the `unauthenticated_pusher` bucket. An authenticated push charges each item to the author
-    // it names, once the item is proven to be that author's, and an item that names no author to
-    // the pusher. A claimed author is verified either way, so a forged one is refused before
-    // anything is spent.
+    // The push rate limit (liquid#508, liquid#403). An authenticated push is charged whole to the
+    // pusher, never to the authors its records name: a pusher cannot spend another person's budget
+    // by relaying their records. An unauthenticated push charges each item to the author it names,
+    // once the item is proven to be that author's, and an item that names no author to the shared
+    // `unauthenticated_pusher` bucket. A claimed author is verified either way, so a forged one is
+    // refused before anything is spent.
     const auto authenticated = !pusher.empty();
     const auto pusher_bucket =
         authenticated ? std::move(pusher) : std::string{unauthenticated_pusher};
@@ -844,7 +845,7 @@ runtime::task<std::vector<std::byte>> sync_server::handle_push(std::span<const s
                 co_return co_await refuse_push(
                     objects, staged, roots, item_failure(index, std::move(verified.error())));
             }
-            if (authenticated) {
+            if (!authenticated) {
                 bucket = item.author.taap_id;
             }
         }
