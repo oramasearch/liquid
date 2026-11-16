@@ -207,11 +207,11 @@ exchange(boost::capy::any_stream& stream,
         }
         co_return std::vector<std::vector<std::byte>>{};
     }
-    auto body = co_await connection.receive_data(*stream_id);
-    if (!body) {
-        co_return std::unexpected(body.error());
+    auto response_body = co_await connection.receive_data(*stream_id);
+    if (!response_body) {
+        co_return std::unexpected(response_body.error());
     }
-    auto messages = http2::decode_grpc_messages(*body);
+    auto messages = http2::decode_grpc_messages(*response_body);
     if (!messages) {
         co_return std::unexpected(messages.error());
     }
