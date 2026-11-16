@@ -330,7 +330,11 @@ server reads each request one bounded message at a time and refuses a message ov
 action-digest scheduler and TAAP-signed worker fleet are implemented, including one bounded requeue
 after worker loss, size-class placement from #18's recorded decision, REAPI Execution and
 ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces
-([`workers.md`](workers.md)).
+([`workers.md`](workers.md)). The scheduler and workers authenticate each other with pinned TAAP
+identity documents (`--trust-worker`, `--trust-scheduler`): every worker request and every lease
+is signed and replay-checked, lease tokens are 128 random bits, and a result is accepted only under
+the leased worker's pinned key (liquid #416). The standard REAPI services and `Submit` remain
+unauthenticated.
 
 **Node store.** The per-node runtime chunk store is implemented with metadata-only image receipt,
 reference-counted read-only VFS mounts, shared-chunk reuse counters, logical byte-budget eviction,

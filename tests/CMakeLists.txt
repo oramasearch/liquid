@@ -52,6 +52,8 @@ add_executable(liquid-tests
   ${PROJECT_SOURCE_DIR}/src/reapi/messages.cpp
   ${PROJECT_SOURCE_DIR}/src/reapi/conversion.cpp
   ${PROJECT_SOURCE_DIR}/src/reapi/action_cache.cpp
+
+  ${PROJECT_SOURCE_DIR}/src/workers/auth.cpp
   ${PROJECT_SOURCE_DIR}/src/workers/protocol.cpp
   ${PROJECT_SOURCE_DIR}/src/workers/scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/identity/taap.cpp
@@ -625,6 +627,13 @@ if(LIQUID_BUILD_CLI)
   set_tests_properties(cli-log-url PROPERTIES
     TIMEOUT 120
     SKIP_REGULAR_EXPRESSION "^-- cli-log-url skipped: ")
+
+  add_test(NAME cli-workers-trust
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_WORKERS_TRUST_WORK=${CMAKE_CURRENT_BINARY_DIR}/workers-trust-work
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/workers-trust.cmake)
+  set_tests_properties(cli-workers-trust PROPERTIES TIMEOUT 120)
 
   add_test(NAME cli-transparency-configuration
     COMMAND ${CMAKE_COMMAND}

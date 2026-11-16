@@ -21,7 +21,7 @@ struct domain_keys {
     key chunk_encryption;
 };
 
-[[nodiscard]] result<void> random_bytes(std::span<std::byte> bytes);
+[[nodiscard]] LIQUID_EXPORT result<void> random_bytes(std::span<std::byte> bytes);
 void wipe(std::span<std::byte> bytes) noexcept;
 [[nodiscard]] result<key> random_key();
 [[nodiscard]] result<key> derive_key(const key& input, std::string_view context);

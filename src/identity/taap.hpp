@@ -42,6 +42,14 @@ namespace liquid::identity_detail {
                                  std::span<const std::byte> canonical_body)
     -> std::vector<std::byte>;
 [[nodiscard]] auto now() -> std::string;
+// Verifies a signature against exactly the key in `pinned`, which the caller has already bound to
+// an identity (for example a worker identity document an operator configured). It never consults
+// the local identity store and never accepts a key named only by the signature.
+[[nodiscard]] LIQUID_EXPORT auto verify_with_pinned_key(const actor& pinned,
+                                                        std::string_view artifact_type,
+                                                        std::span<const std::byte> canonical_body,
+                                                        const signature& signed_value)
+    -> result<bool>;
 [[nodiscard]] LIQUID_EXPORT auto local_signer() -> runtime::task<signer>;
 
 } // namespace liquid::identity_detail

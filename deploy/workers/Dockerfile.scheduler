@@ -6,7 +6,10 @@ FROM ${LIQUID_BASE}
 ARG LIQUID_BINARY=build-linux/liquid
 COPY ${LIQUID_BINARY} /usr/local/bin/liquid
 
-VOLUME ["/var/lib/liquid-scheduler"]
+# The scheduler signs leases with the identity in LIQUID_HOME and trusts the worker identity
+# documents mounted at /etc/liquid/workers (liquid #416).
+ENV LIQUID_HOME=/var/lib/liquid-identity
+VOLUME ["/var/lib/liquid-scheduler", "/var/lib/liquid-identity"]
 EXPOSE 50051 8080
 ENTRYPOINT ["/usr/local/bin/liquid", "scheduler"]
-CMD ["--listen", "0.0.0.0:50051", "--control-listen", "0.0.0.0:8080", "--store", "/var/lib/liquid-scheduler"]
+CMD ["--listen", "0.0.0.0:50051", "--control-listen", "0.0.0.0:8080", "--store", "/var/lib/liquid-scheduler", "--trust-worker", "/etc/liquid/workers"]

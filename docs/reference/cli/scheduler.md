@@ -5,18 +5,19 @@
 ## Synopsis
 
 ```text
-liquid scheduler --listen <address> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]
+liquid scheduler --listen <address> --trust-worker <path> [--control-listen <address>] [--store <path>] [--instance <name>] [--lease-ms <count>]
 ```
 
 ## Description
 
-Serve CAS, ActionCache, Execution, and the liquid worker lease queue.
+Serve CAS, ActionCache, Execution, and a signed worker lease queue for trusted workers.
 
 ## Options
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
 | `--listen` | `<address>` | Select the REAPI and worker listener. | none |
+| `--trust-worker` | `<path>` | Trust a worker identity document, or a directory of them; repeatable. | none |
 | `--control-listen` | `<address>` | Select the control listener. | 127.0.0.1:8080 |
 | `--store` | `<path>` | Select the scheduler store directory. | platform cache |
 | `--instance` | `<name>` | Select the scheduler instance. | empty |
@@ -29,7 +30,7 @@ available
 ## Examples
 
 ```sh
-liquid scheduler --listen 0.0.0.0:50051
+liquid scheduler --listen 0.0.0.0:50051 --trust-worker /etc/liquid/workers
 ```
 
 ## Exit status
