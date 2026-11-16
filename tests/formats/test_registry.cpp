@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -542,6 +543,60 @@ TEST(FormatRegistry, ComparesHdf5FloatingPointValuesWithTolerances) {
         hdf5->diff(*original, changed, liquid::format_diff_options{.absolute_tolerance = 0.01});
     ASSERT_TRUE(tolerant) << tolerant.error().message;
     EXPECT_TRUE(tolerant->entries.empty());
+}
+
+// A root group whose one link message has an 8-byte name length (flags 0x03), so a length near
+// 2^64 would wrap a position-plus-length bound check (liquid #477).
+TEST(FormatRegistry, RefusesAnHdf5LinkNameLengthThatWrapsPastTheMessage) {
+    const auto file = [](std::uint64_t name_size) {
+        auto output = std::vector<std::byte>{};
+        const auto put = [&](std::uint64_t value, std::size_t width) {
+            for (auto index = std::size_t{}; index < width; ++index) {
+                output.push_back(static_cast<std::byte>((value >> (index * 8U)) & 0xffU));
+            }
+        };
+        const auto put_bytes = [&](std::initializer_list<int> values) {
+            for (const auto value : values) {
+                put(static_cast<std::uint64_t>(value), 1);
+            }
+        };
+        put_bytes({0x89, 'H', 'D', 'F', '\r', '\n', 0x1a, '\n', 2, 8, 8, 0});
+        constexpr auto root = std::uint64_t{48};
+        constexpr auto message_size = std::uint64_t{2 + 8 + 4 + 8};
+        constexpr auto end = root + 7 + 4 + message_size + 4;
+        put(0, 8);
+        put(~std::uint64_t{}, 8);
+        put(end, 8);
+        put(root, 8);
+        put(0, 4);
+        put_bytes({'O', 'H', 'D', 'R', 2, 0});
+        put(4 + message_size, 1);
+        put(6, 1);
+        put(message_size, 2);
+        put(0, 1);
+        put(1, 1);
+        put(0x03, 1);
+        put(name_size, 8);
+        put_bytes({'a', 'b', 'c', 'd'});
+        put(root, 8);
+        put(0, 4);
+        return output;
+    };
+
+    auto honest = liquid::format_registry::global().unpack(file(4), "link.h5");
+    ASSERT_TRUE(honest) << honest.error().message << " " << honest.error().context;
+    EXPECT_EQ(honest->codec, "hdf5");
+
+    // The name length is read at message offset 2, so the position after it is 10 and this length
+    // makes position + length equal 1.
+    const auto wrapping = ~std::uint64_t{} - 10 + 2;
+    for (const auto name_size : {wrapping, ~std::uint64_t{}, std::uint64_t{13}}) {
+        auto crafted = liquid::format_registry::global().unpack(file(name_size), "link.h5");
+        ASSERT_FALSE(crafted) << name_size;
+        EXPECT_EQ(crafted.error().code, liquid::errc::corrupt) << name_size;
+        EXPECT_NE(crafted.error().message.find("link name"), std::string::npos)
+            << name_size << ": " << crafted.error().message;
+    }
 }
 
 TEST(FormatRegistry, UnpacksParquetRowGroupsAndDictionaryValues) {

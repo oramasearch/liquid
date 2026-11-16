@@ -93,6 +93,9 @@ size, and layout; comparisons use the logical decoded value bytes rather than fi
 64-bit floating-point datasets; the default zero values preserve exact comparison. An
 unknown datatype, link, layout, chunk index, or filter leaves an entry with `opaque_reason` instead
 of inventing a value.
+A link name's length can be 8 bytes wide, so it is compared with the bytes left in the message
+rather than added to the position: a length near 2^64 is refused as a truncated link name before
+any copy (liquid #477).
 
 ### Parquet
 

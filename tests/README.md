@@ -146,6 +146,8 @@ decoders, exact Tier 1 repack, deterministic tar and SquashFS writing, volatile 
 boundaries, Parquet RLE/bit-packed runs with wrapping lengths or invalid widths, Parquet and PDF
 allocations charged to one byte budget before they are made, nesting limits,
 and a dynamically loaded C11 module. The strict JSON and `.env` codecs
+boundaries (including an HDF5 link-name length that would wrap its bound check), nesting limits, and
+a dynamically loaded C11 module. The strict JSON and `.env` codecs
 used by
 structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,

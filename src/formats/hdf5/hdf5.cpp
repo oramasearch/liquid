@@ -910,7 +910,9 @@ private:
             return std::unexpected(name_size.error());
         }
         position += length_size;
-        if (position + *name_size > source.data.size()) {
+        // An 8-byte name length can be near 2^64, so compare against the bytes left rather than
+        // adding it to the position, where the sum would wrap.
+        if (position > source.data.size() || *name_size > source.data.size() - position) {
             return std::unexpected(failure("truncated link name"));
         }
         auto name = std::string{reinterpret_cast<const char*>(source.data.data() + position),

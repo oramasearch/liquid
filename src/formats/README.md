@@ -25,6 +25,11 @@ outermost unpack's budgets in a thread-local expansion, so that call draws on th
 expanded further (liquid#438). It may not add a format vendor's
 library or expose third-party types. Synchronous codec work called from a coroutine runs through
 `runtime::offload`.
+A codec must bound every size and offset before reading or allocating, comparing a length read from
+the input with the bytes left (`size > end - position`) rather than adding it to the position, where
+a wide length wraps (liquid #477). It must honour the registry entry, depth, and byte limits, and
+report unsupported objects explicitly. It may not add a format vendor's library or expose third-
+party types. Synchronous codec work called from a coroutine runs through `runtime::offload`.
 
 Every new codec adds a real fixture and passes the common cases in `tests/formats/`: recognition,
 unpack, canonicalisation, logical comparison, every truncation boundary, recursion limits, and a
