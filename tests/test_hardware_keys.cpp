@@ -1056,31 +1056,35 @@ auto make_fido2_vector(std::string algorithm,
             signed_with(ctap2_assertion_authenticator_data("liquid", 7, std::byte{0x00}))};
 }
 
+// The vectors test the CTAP2 signed bytes, not identity binding: their key is made here and has no
+// identity chain, so they are checked against that key alone (`verify_key_signature`), which is
+// how a caller checks a key it bound itself. `verify` would refuse them as an unknown signer
+// (liquid#429, liquid#544).
 auto expect_fido2_vector(const fido2_vector& vector,
                          std::string_view purpose,
                          std::span<const std::byte> body) -> void {
-    auto verified = liquid::verify(vector.by, purpose, body, vector.correct);
+    auto verified = liquid::verify_key_signature(vector.by, purpose, body, vector.correct);
     ASSERT_TRUE(verified) << vector.by.algorithm << ": " << verified.error().message;
     EXPECT_TRUE(*verified);
 
-    auto rehashed = liquid::verify(vector.by, purpose, body, vector.double_hashed);
+    auto rehashed = liquid::verify_key_signature(vector.by, purpose, body, vector.double_hashed);
     ASSERT_FALSE(rehashed) << vector.by.algorithm << " accepted a double-hashed client hash";
     EXPECT_EQ(rehashed.error().code, liquid::errc::unauthorized);
 
     for (const auto* refused : {&vector.other_relying_party, &vector.user_absent}) {
-        auto result = liquid::verify(vector.by, purpose, body, *refused);
+        auto result = liquid::verify_key_signature(vector.by, purpose, body, *refused);
         ASSERT_FALSE(result) << vector.by.algorithm << " accepted invalid authenticator data";
         EXPECT_EQ(result.error().code, liquid::errc::unauthorized);
     }
 
     auto tampered = vector.correct;
     tampered.authenticator_data[32] = std::byte{0x05};
-    auto tampered_result = liquid::verify(vector.by, purpose, body, tampered);
+    auto tampered_result = liquid::verify_key_signature(vector.by, purpose, body, tampered);
     ASSERT_FALSE(tampered_result);
     EXPECT_EQ(tampered_result.error().code, liquid::errc::unauthorized);
 
     auto other_body = bytes("another body");
-    auto wrong_body = liquid::verify(vector.by, purpose, other_body, vector.correct);
+    auto wrong_body = liquid::verify_key_signature(vector.by, purpose, other_body, vector.correct);
     ASSERT_FALSE(wrong_body);
     EXPECT_EQ(wrong_body.error().code, liquid::errc::unauthorized);
 }
@@ -1314,6 +1318,23 @@ TEST(ReleaseApproval, fido2_eddsa_and_es256_approvals_meet_the_threshold) {
         liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v3", second));
     ASSERT_TRUE(first_approval) << first_approval.error().message;
     ASSERT_TRUE(second_approval) << second_approval.error().message;
+    // The verifier binds each signer's name to its key only through a chain it holds (liquid#429,
+    // liquid#544). The approvers rotated to FIDO2, so their whole chains are trusted, not only the
+    // initial documents.
+    auto chain_of = [](std::string_view home, const liquid::signer& value) {
+        select_identity_home(home);
+        auto chain = liquid::load_identity_chain(value.identity().taap_id);
+        EXPECT_TRUE(chain) << chain.error().message;
+        return chain ? std::move(*chain) : std::vector<liquid::identity_document>{};
+    };
+    const auto chains = std::array{chain_of("fido2-release-policy", policy_signer),
+                                   chain_of("fido2-release-eddsa", first),
+                                   chain_of("fido2-release-es256", second)};
+    identity_home("fido2-release-verifier");
+    for (const auto& chain : chains) {
+        auto trusted = liquid::trust_identity_chain(chain);
+        ASSERT_TRUE(trusted) << trusted.error().message;
+    }
     const auto approvals = std::array{*first_approval, *second_approval};
     auto result = liquid::verify_release(
         artifact, *policy, approvals, release_trust_for(repository, policy_signer));
