@@ -107,7 +107,7 @@ built binary under the build directory before CTest compares it with the committ
 | `sign` | `sign <macos\|windows> <artifact> --identity <custody-uri> [--timestamp-server <url>] [--out <path>] [--no-notarize]` or `sign verify <artifact>` | Apply or verify a native platform signature and its `platform_signature/1` sidecar outside the projection sandbox. | macOS signing on macOS; Windows signing on Windows |
 | `release` | `release policy set --threshold <k> --signer <id>...` or `release <approve\|verify> <artifact>` | Manage signed threshold release approval. | available |
 | `secret` | `secret <public-key\|seal\|unseal> ...` | Fetch a Lake key, seal a scoped value, or unseal locally. | available |
-| `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. | available |
+| `attest` | `attest <show\|verify> <digest>` or `attest image <ref@sha256:...> --tree <digest> [--result <id>] [--store <path>]` | Show, verify, or mint an image attestation. `show` names the issuer only when an identity chain verifies the signature, and otherwise prints "signed by an unverified key", with `issuer_verified=true\|false` (liquid#512). | available |
 | `keys` | `keys <show\|rewrap\|rotate\|revoke\|split> ...` | Inspect and manage data-key custody. | available |
 | `delta` | `delta <create\|apply\|fetch> ...` | Create, apply, or fetch an artifact delta. | available |
 | `verify` | `verify <action\|--all\|--changed> [--explain] [--log <log-url>]` or `verify --graph [--all] [--explain]` | Re-execute cached actions or cleanly validate the query graph. | available on Linux with FUSE and on macOS with macFUSE |
