@@ -42,7 +42,7 @@ if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT LIQUID_USE_SYSTEM_COMPILER)
   endif()
 endif()
 
-project(liquid VERSION 0.2.0 LANGUAGES C CXX
+project(liquid VERSION 0.3.0 LANGUAGES C CXX
         DESCRIPTION "liquid — version control, build, packages, artifacts and runtime in one program")
 
 file(READ

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // TUF metadata as liquid's TUF client reads it from a release repository (liquid #463): the root it
 // pins, and the timestamp, snapshot, targets and rotated roots of an update (src/tuf.cpp). The
 // client keeps its state in a repository's metadata, so the harness makes one repository in a

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Default sanitizer options for the harnesses, linked into each one.
 //
 // On Darwin, libFuzzer's own runtime uses the system libc++ and shares std::vector<std::string>

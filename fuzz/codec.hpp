@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 // Shared driver for the format-codec harnesses (archive, binary, data, model; liquid #463).

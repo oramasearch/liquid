@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Git pack files and pack indexes as `liquid import` and the Git bridge read them from disk through
 // git_detail::object_store (liquid #463): the version 2 index (fanout, names, 31-bit and 64-bit
 // offsets), the packed object headers, OFS_DELTA and REF_DELTA bases, zlib inflation and delta

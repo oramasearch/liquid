@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // HTTP/1.1: the request parser liquid's servers use (Boost.HTTP, configured as src/http1/server.cpp
 // configures it), fed in pieces as a socket would deliver them, and liquid's own response parser
 // in the HTTP/1.1 client, including chunked transfer decoding.

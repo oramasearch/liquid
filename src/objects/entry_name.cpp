@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "objects/entry_name.hpp"
 
 #include <cstdint>

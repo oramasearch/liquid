@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Transparency documents (liquid #463): RFC 3161 timestamp tokens and RFC 4998 evidence records
 // that renew a log checkpoint's signature (src/transparency.cpp), and the entry and hash tiles a
 // log serves (tile::entries and tile::hashes in src/lake_transparency.cpp).

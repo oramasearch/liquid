@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The model-file readers in src/formats/model/ (liquid #463): Jupyter notebooks, safetensors and
 // pickle, each through codec.hpp's driver. None executes a payload; the pickle reader walks the
 // opcode stream. One selector byte picks the codec, in that order.

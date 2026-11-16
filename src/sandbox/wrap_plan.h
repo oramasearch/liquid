@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 /* The liquid wrap plan: the rows the exec-time hook reads to decide whether a process is a cache

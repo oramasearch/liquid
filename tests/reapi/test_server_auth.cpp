@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // `liquid serve reapi` and `liquid scheduler` with a bearer token refuse every RPC that does not
 // carry it, writes included, before the request body is read (liquid#415, liquid#520).
 #include <gtest/gtest.h>

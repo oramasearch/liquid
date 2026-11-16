@@ -3,6 +3,9 @@
 One page per tagged release, newest first. A page states what the release includes, what it
 does not, what is knowingly still broken, and how it was verified.
 
+- [v0.3.0](v0.3.0.md) — 2026-11-15. The first release published as open source (MIT, the CLA,
+  `SECURITY.md`), and a month of security fixes from the pre-launch review, several of them
+  breaking: read its *Breaking changes* before upgrading.
 - [v0.2.0](v0.2.0.md) — 2026-10-17. The library is the `v0.1.0` source: the release adds a test
   that holds the version in its three places, and moves the release procedure to `dev` → `main`.
   Lake `v0.2.0` is built from liquid `v0.1.0`.

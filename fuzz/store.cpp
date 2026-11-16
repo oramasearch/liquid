@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The store's own files as an open store reads them back from its backend (liquid #463): pack
 // files (the frame scan of an open pack, the table of a sealed one, and each frame read back and
 // decompressed through read_pack_entry) and the chunk index (its MANIFEST and the runs it names).

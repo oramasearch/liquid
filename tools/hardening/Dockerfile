@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Linux sanitizer, fuzzing and hardening runs on the cluster BuildKit lane (liquid #407).
 # Nothing is pushed: the build runs, prints its results and is discarded. See
 # docs/build/hardening.md for the commands; run.sh drives it.

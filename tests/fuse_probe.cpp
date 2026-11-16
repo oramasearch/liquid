@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // liquid-fuse-probe: exits 0 when this host can attempt a FUSE mount, or prints why it cannot
 // and exits 77, the skip code the CLI tests that mount read (liquid#362).
 #include <print>

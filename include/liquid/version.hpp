@@ -17,7 +17,7 @@ struct LIQUID_EXPORT version {
 // constexpr functions are implicitly inline and must be visible to every
 // translation unit that uses them, so this lives in the header.
 [[nodiscard]] LIQUID_EXPORT constexpr version current_version() noexcept {
-    return {0, 2, 0};
+    return {0, 3, 0};
 }
 
 [[nodiscard]] LIQUID_EXPORT std::string_view version_string() noexcept;

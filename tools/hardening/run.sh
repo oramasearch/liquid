@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+
 # Runs a sanitizer, fuzzing or hardened-release build of a liquid checkout on a BuildKit daemon
 # (linux/amd64), using the Dockerfile beside this script. Nothing is pushed. (liquid #407)
 #

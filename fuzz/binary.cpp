@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The linked-binary readers under src/formats/binary/ (liquid #463): ELF, Mach-O and PE, both as
 // registry codecs (codec.hpp's driver) and through the structured readers that SBOM inference,
 // ABI extraction and relocation checking call directly.

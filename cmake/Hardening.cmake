@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Hardening, sanitizer and fuzzing flags for every C and C++ target in the build (liquid #407).
 #
 # Included right after project() and before any dependency is added, so the options below reach

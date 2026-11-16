@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // libFuzzer harness for the HTTP/2 connection (liquid#412). Built only with
 // -DLIQUID_BUILD_FUZZERS=ON and Clang; see docs/library/http2.md.
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Writes the seed corpus for every harness in this directory (liquid #407).
 //
 //   liquid-fuzz-seeds <source directory> <corpus directory>

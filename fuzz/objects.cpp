@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The object records: blobs, trees, changes, conflicts and the build records that share the store
 // and travel between peers. One selector byte picks the record type.
 

@@ -19,9 +19,9 @@ liquid wrap cmake --build build    # build with a cache that explains its misses
 liquid project oci "$change" ...   # ship what you built, with signed provenance
 ```
 
-**Status:** the current release is **v0.2.0** (2026-10-17). Its
-[release notes](docs/releases/v0.2.0.md) say what changed since the first release, `v0.1.0`, whose
-[notes](docs/releases/v0.1.0.md) list everything liquid implements. liquid is a C++26 library,
+**Status:** the current release is **v0.3.0** (2026-11-15), the first published as open source.
+Its [release notes](docs/releases/v0.3.0.md) list the security fixes and the breaking changes since
+`v0.2.0`; the [`v0.1.0` notes](docs/releases/v0.1.0.md) list everything liquid implements. liquid is a C++26 library,
 **libliquid**, and a `liquid` command-line binary, on macOS and Linux, released under the MIT
 licence.
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The data-file readers under src/formats/ (liquid #463): HDF5, Parquet, SQLite and PDF, each
 // through codec.hpp's driver. One selector byte picks the codec, in that order.
 

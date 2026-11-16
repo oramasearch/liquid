@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Writer processes for the liquid #526 tests: several processes writing one store without an
 // owner, the way a checkout's daemon, the CLI and an IDE do.
 //

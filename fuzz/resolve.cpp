@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The lock records of the package manager: a package spec as typed or written in a manifest, the
 // stored package record, and the concretised spec that pins a resolution.
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // The identity chain and the signature envelope: TAAP identity documents, their signatures, a
 // chain of documents across key rotations, and scan attestations. Signatures are checked, so the
 // verification code runs on whatever decodes.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Git objects as `liquid import` and the Git bridge read them: a loose object's header and its
 // identifier check, commit and tree payloads, and pack deltas.
 

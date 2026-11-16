@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Issues a `delegation/1` for `liquid session start` tests: run in a repository with the CLI's
 // LIQUID_HOME, it signs a delegation to the agent named on the command line with this machine's
 // identity, bound to the repository, stores it in `.liquid-store` and prints its digest.
