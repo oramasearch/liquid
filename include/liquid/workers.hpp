@@ -12,6 +12,7 @@
 #include "liquid/build.hpp"
 #include "liquid/export.hpp"
 #include "liquid/identity.hpp"
+#include "liquid/reapi.hpp"
 #include "liquid/remote.hpp"
 #include "liquid/runtime.hpp"
 
@@ -27,6 +28,7 @@ struct LIQUID_EXPORT scheduler_options {
     // scheduler leases to and accepts results from. Required: a scheduler with none refuses to
     // start. The scheduler signs every lease with its own identity, the one in LIQUID_HOME.
     std::vector<identity_document> trusted_workers;
+    reapi_upload_limits uploads;
 };
 
 struct LIQUID_EXPORT worker_options {

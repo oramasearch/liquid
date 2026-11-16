@@ -323,10 +323,10 @@ ActionCache action digest must be lowercase hexadecimal of its algorithm's lengt
 file, and entries are never opened through a symbolic link (liquid #428). The HTTP/2
 transport under both enforces the limits it advertises (concurrent streams, header list and table
 sizes, frame size, flow control) and closes on rapid reset, CONTINUATION, PING and SETTINGS floods
-([`http2.md`](http2.md), liquid#412). Liquid's
-and `liquid serve reapi` exposes liquid's CAS and ActionCache ([`reapi.md`](reapi.md)). The
-server reads each request one bounded message at a time and refuses a message over 5 MiB with
-`RESOURCE_EXHAUSTED` (#451). Liquid's
+([`http2.md`](http2.md), liquid#412). The server reads each request one bounded message at a time
+and refuses a message over 5 MiB with `RESOURCE_EXHAUSTED` (#451). Both REAPI listeners bound
+retained ByteStream uploads by size, total allocated capacity, count and idle expiry and active
+Write deadlines; failed Writes release their buffers (liquid #444). Liquid's
 action-digest scheduler and TAAP-signed worker fleet are implemented, including one bounded requeue
 after worker loss, size-class placement from #18's recorded decision, REAPI Execution and
 ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces

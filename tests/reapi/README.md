@@ -14,3 +14,9 @@ provenance and regeneration instructions live in `fixtures/`.
 a unary request or a Write message whose prefix declares more than 5 MiB is answered with
 `RESOURCE_EXHAUSTED` before its body is sent, a 7 MiB Write sent as 1 MiB messages on one stream
 is stored, and `grpc_client::call_messages` uploads a blob above the limit.
+`test_uploads.cpp` covers ByteStream limits, capacity accounting through completion, empty-upload
+quotas, ownership and cancellation cleanup, expiry without status polling refreshing the timeout,
+and resumption. Its loopback server tests exercise limits across separate RPC connections, idle
+expiry, malformed or compressed later messages, resource changes, finishing-message ordering and
+a zero HTTP/2 response window that must time out and release its active upload.
+The tests use small configured budgets and deterministic clock values for unit checks.

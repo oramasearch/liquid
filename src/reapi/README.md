@@ -23,6 +23,14 @@ The server reads each request stream through a bounded gRPC message reader (liqu
 request is one message of at most 5 MiB, a ByteStream Write is applied one message at a time, and a
 stream answered before it ended closes the connection. The client sends a large Write as 1 MiB
 messages on one stream (`grpc_client::call_messages`).
+`uploads.cpp` accounts for retained ByteStream payload capacity across connections, limits upload
+size, count and resource-name length, and expires idle partial writes. A Write owns its upload
+through storage and response delivery; its destructor discards state on failure or cancellation.
+The server sweeps idle entries every second, including when clients disconnect. Each wait of a
+Write (its next message, storage, the response) is bounded by the upload timeout, so a stalled
+stream or withheld response flow control cannot keep an owner alive.
+Limits and their
+CLI environment variables are documented in `docs/library/reapi.md` (liquid #444).
 Normal connection closure, including the transport's lowercase EOF spelling, is not logged as a
 server error.
 

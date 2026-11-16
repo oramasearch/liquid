@@ -146,7 +146,7 @@ specifies it.
 | [03](03-diff-and-merge.md) | Diff and merge | Structural diff for source, format-aware diff **inside** zip, HDF5, Parquet, SQLite and OOXML, with a generated codec-tier table and bounded safetensors copies. |
 | [04](04-build-engine.md) | Build engine | The incremental query graph, actions, typed `.liquid` targets, early cutoff, compile-as-you-type, and local critical-path traces. |
 | [05](05-caching.md) | Caching | Built-in build/compiler caching with content-addressed outputs, miss explanations, byte statistics, and phase attribution. |
-| [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes. |
+| [06](06-distributed-execution.md) | Distributed execution | Remote build farm, REAPI compatibility, build without the bytes; [bounded resumable uploads](../library/reapi.md#bytestream-upload-limits-liquid-444-lsr-204). |
 | [07](07-dependency-resolution.md) | Dependency resolution | Direct `.liquid` universe loading, canonical record output, empty-universe diagnostics, typed package rules, and Spack-grade solving over variants, compilers, targets, virtual providers, content-addressed outputs, and ABI compatibility are implemented. |
 | [08](08-packaging-and-images.md) | Packaging and images | Tier A package and image projection from ordinary-repository changes and trees plus Debian Tier B source packages, generated install scripts, ownership conflict checks, atomic generations, and ABI gates. |
 | [08](08-packaging-and-images.md) | Packaging and images | Projection to native packages, Homebrew, Arch, OCI, Helm, AppImage with vendored hash-pinned runtimes, Flatpak, and Snap, with ABI and relocation gates. |

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <condition_variable>
 #include <filesystem>
 #include <format>
 #include <limits>
@@ -17,6 +18,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 
 #include <boost/capy/io/any_stream.hpp>
@@ -33,6 +35,7 @@
 #include "reapi/action_cache.hpp"
 #include "reapi/conversion.hpp"
 #include "reapi/messages.hpp"
+#include "reapi/uploads.hpp"
 #include "repository/store_access.hpp"
 #include "sandbox/environment.hpp"
 #include "store/pack.hpp"
@@ -82,19 +85,30 @@ struct server_state {
     server_state(store objects,
                  std::filesystem::path action_cache,
                  std::string instance,
-                 std::shared_ptr<workers::scheduler> executions = {},
-                 std::shared_ptr<signer> lease_signer = {})
+                 std::shared_ptr<workers::scheduler> executions,
+                 std::shared_ptr<signer> lease_signer,
+                 reapi_upload_limits limits)
         : objects(std::move(objects)), action_cache(std::move(action_cache)),
           instance(std::move(instance)), executions(std::move(executions)),
-          lease_signer(std::move(lease_signer)) {}
+          lease_signer(std::move(lease_signer)), upload_timeout(limits.idle_timeout),
+          partial_writes(limits), expiry([this](std::stop_token stop) {
+              auto mutex = std::mutex{};
+              auto condition = std::condition_variable_any{};
+              auto lock = std::unique_lock{mutex};
+              while (!stop.stop_requested()) {
+                  condition.wait_for(lock, stop, std::chrono::seconds{1}, [] { return false; });
+                  partial_writes.expire();
+              }
+          }) {}
 
     store objects;
     std::filesystem::path action_cache;
     std::string instance;
     std::shared_ptr<workers::scheduler> executions;
     std::shared_ptr<signer> lease_signer;
-    std::mutex mutex;
-    std::map<std::string, std::vector<std::byte>> partial_writes;
+    std::chrono::milliseconds upload_timeout;
+    reapi::partial_uploads partial_writes;
+    std::jthread expiry;
 };
 
 auto server_error(errc code, std::string message, std::string context = {}) -> error {
@@ -193,6 +207,8 @@ auto grpc_code(errc code) -> std::uint32_t {
         return 3;
     case errc::unauthorized:
         return 7;
+    case errc::busy:
+        return 8;
     case errc::unsupported:
         return 12;
     default:
@@ -830,100 +846,142 @@ runtime::task<void> handle_read(http2::connection& connection,
     co_return co_await send_message(connection, stream, response);
 }
 
-runtime::task<void> handle_write(http2::connection& connection,
-                                 std::uint32_t stream,
-                                 server_state& state,
-                                 request_stream& messages) {
+// Awaits one step of a ByteStream Write within the upload timeout (liquid #444). A client that
+// stops sending, or withholds response flow-control credit, cannot keep its upload's budget
+// charge: the step is cancelled, `expired` is set, and the caller closes the connection.
+template <class T>
+runtime::task<T>
+within_upload_timeout(const server_state& state, runtime::task<T> step, bool& expired) {
+    auto [deadline_error, outcome] =
+        co_await runtime::timeout(runtime::as_io(std::move(step)), state.upload_timeout);
+    if (deadline_error) {
+        expired = true;
+        co_return std::unexpected(
+            server_error(errc::unavailable, "ByteStream Write handling timed out"));
+    }
+    co_return std::move(outcome);
+}
+
+// Reads a Write one bounded message at a time and applies each to its tracked upload before the
+// next is read (liquid#451, liquid #444). A finishing message must be the last of its RPC, so
+// its bytes are stored only once the stream has ended. The result is the committed size; an
+// error is the RPC's failure, unless `expired` is set.
+runtime::task<std::int64_t> receive_write(server_state& state,
+                                          request_stream& messages,
+                                          std::unique_ptr<reapi::partial_uploads::write>& pending,
+                                          bool& expired) {
     auto committed = std::int64_t{};
     auto resource_name = std::string{};
     auto count = std::size_t{};
+    auto finished = std::optional<std::pair<resource_digest, std::vector<std::byte>>>{};
     for (;;) {
-        // One message at a time: each is applied before the next is read (liquid#451).
-        auto next = co_await messages.next();
+        auto next = co_await within_upload_timeout(state, messages.next(), expired);
+        if (expired) {
+            co_return std::unexpected(next.error());
+        }
         if (!next && messages.exceeded()) {
-            co_return co_await send_status(
-                connection,
-                stream,
-                8,
-                std::format("ByteStream Write message exceeds {} bytes", messages.limit()));
+            co_return std::unexpected(server_error(
+                errc::busy,
+                std::format("ByteStream Write message exceeds {} bytes", messages.limit())));
         }
         if (!next) {
-            co_return co_await send_failure(connection, stream, next.error());
+            co_return std::unexpected(next.error());
         }
         if (!*next) {
             break;
         }
+        if (finished) {
+            co_return std::unexpected(
+                server_error(errc::invalid_argument, "messages follow finish_write"));
+        }
         const auto message = std::move(**next);
         ++count;
         if (message.compressed) {
-            co_return co_await send_failure(
-                connection,
-                stream,
+            co_return std::unexpected(
                 server_error(errc::unsupported, "compressed ByteStream Write is unsupported"));
         }
         auto request = reapi::decode_message<reapi::WriteRequest>(message.bytes);
         if (!request) {
-            co_return co_await send_failure(connection, stream, request.error());
+            co_return std::unexpected(request.error());
         }
         if (request->resource_name.empty()) {
             request->resource_name = resource_name;
         } else if (!resource_name.empty() && request->resource_name != resource_name) {
-            co_return co_await send_failure(
-                connection,
-                stream,
+            co_return std::unexpected(
                 server_error(errc::invalid_argument, "write resource changed within a stream"));
         } else {
             resource_name = request->resource_name;
         }
         auto requested = resource(request->resource_name);
-        if (!requested || request->write_offset < 0) {
-            co_return co_await send_failure(
-                connection,
-                stream,
-                requested ? server_error(errc::invalid_argument, "invalid ByteStream write offset")
-                          : requested.error());
+        if (!requested) {
+            co_return std::unexpected(requested.error());
         }
-        auto complete = std::vector<std::byte>{};
-        auto offset_matches = true;
-        {
-            auto lock = std::scoped_lock{state.mutex};
-            auto& pending = state.partial_writes[request->resource_name];
-            if (static_cast<std::size_t>(request->write_offset) != pending.size()) {
-                offset_matches = false;
-            } else {
-                pending.insert(pending.end(), request->data.begin(), request->data.end());
-                if (request->finish_write) {
-                    complete = std::move(pending);
-                    state.partial_writes.erase(request->resource_name);
-                }
+        if (!pending) {
+            auto started = state.partial_writes.begin(resource_name, requested->wire.size_bytes);
+            if (!started) {
+                co_return std::unexpected(started.error());
             }
+            pending = std::move(*started);
         }
-        if (!offset_matches) {
-            co_return co_await send_failure(
-                connection,
-                stream,
-                server_error(errc::invalid_argument, "write offset does not match"));
+        auto appended = pending->append(request->write_offset, request->data);
+        if (!appended) {
+            co_return std::unexpected(appended.error());
         }
-        committed = request->write_offset + static_cast<std::int64_t>(request->data.size());
+        committed = *appended;
         if (request->finish_write) {
-            auto hash_algorithm =
-                written_algorithm(*requested, complete, state.executions != nullptr);
-            if (!hash_algorithm) {
-                co_return co_await send_failure(connection, stream, hash_algorithm.error());
+            auto complete = pending->finish();
+            if (!complete) {
+                co_return std::unexpected(complete.error());
             }
-            auto stored = co_await repository_detail::store_access::put_plain(
-                state.objects, std::move(complete), *hash_algorithm);
-            if (!stored) {
-                co_return co_await send_failure(connection, stream, stored.error());
-            }
+            finished.emplace(std::move(*requested), std::move(*complete));
         }
     }
     if (count == 0) {
-        co_return co_await send_failure(
-            connection, stream, server_error(errc::corrupt, "ByteStream Write has no messages"));
+        co_return std::unexpected(server_error(errc::corrupt, "ByteStream Write has no messages"));
     }
-    co_return co_await send_message(
-        connection, stream, reapi::WriteResponse{.committed_size = committed});
+    if (finished) {
+        auto& [requested, complete] = *finished;
+        auto hash_algorithm = written_algorithm(requested, complete, state.executions != nullptr);
+        if (!hash_algorithm) {
+            co_return std::unexpected(hash_algorithm.error());
+        }
+        auto stored =
+            co_await within_upload_timeout(state,
+                                           repository_detail::store_access::put_plain(
+                                               state.objects, std::move(complete), *hash_algorithm),
+                                           expired);
+        if (!stored) {
+            co_return std::unexpected(stored.error());
+        }
+    }
+    co_return committed;
+}
+
+// The upload stays owned by this Write until its response is delivered; a partial upload is then
+// retained for resumption, and on any failure it is released (liquid #444).
+runtime::task<void> handle_write(http2::connection& connection,
+                                 std::uint32_t stream,
+                                 server_state& state,
+                                 request_stream& messages) {
+    auto pending = std::unique_ptr<reapi::partial_uploads::write>{};
+    auto expired = false;
+    auto received = co_await receive_write(state, messages, pending, expired);
+    if (expired) {
+        co_return std::unexpected(received.error());
+    }
+    if (!received) {
+        auto failed = co_await within_upload_timeout(
+            state, send_failure(connection, stream, received.error()), expired);
+        co_return failed;
+    }
+    auto sent = co_await within_upload_timeout(
+        state,
+        send_message(connection, stream, reapi::WriteResponse{.committed_size = *received}),
+        expired);
+    if (sent) {
+        pending->retain();
+    }
+    co_return sent;
 }
 
 runtime::task<void> handle_query_write(http2::connection& connection,
@@ -949,24 +1007,14 @@ runtime::task<void> handle_query_write(http2::connection& connection,
     if (loaded.error().code != errc::not_found) {
         co_return co_await send_failure(connection, stream, loaded.error());
     }
-    auto committed = std::int64_t{};
-    auto found_write = false;
-    {
-        auto lock = std::scoped_lock{state.mutex};
-        const auto found = state.partial_writes.find(request->resource_name);
-        if (found != state.partial_writes.end()) {
-            committed = static_cast<std::int64_t>(found->second.size());
-            found_write = true;
-        }
-    }
-    if (!found_write) {
-        co_return co_await send_failure(
-            connection, stream, server_error(errc::not_found, "write resource is unknown"));
+    auto committed = state.partial_writes.committed(request->resource_name);
+    if (!committed) {
+        co_return co_await send_failure(connection, stream, committed.error());
     }
     co_return co_await send_message(
         connection,
         stream,
-        reapi::QueryWriteStatusResponse{.committed_size = committed, .complete = false});
+        reapi::QueryWriteStatusResponse{.committed_size = *committed, .complete = false});
 }
 
 runtime::task<void> handle_get_action(http2::connection& connection,
@@ -1511,6 +1559,10 @@ runtime::task<void> session(std::shared_ptr<server_state> state,
 runtime::task<void> serve_reapi_impl(reapi_serve_options options,
                                      std::shared_ptr<workers::scheduler> executions,
                                      std::shared_ptr<signer> lease_signer) {
+    auto limits_valid = reapi::validate_upload_limits(options.uploads);
+    if (!limits_valid) {
+        co_return std::unexpected(limits_valid.error());
+    }
     auto endpoint = boost::corosio::endpoint{};
     if (const auto code = boost::corosio::parse_endpoint(options.listen, endpoint)) {
         co_return std::unexpected(
@@ -1534,7 +1586,8 @@ runtime::task<void> serve_reapi_impl(reapi_serve_options options,
                                                 std::move(action_cache),
                                                 std::move(options.instance_name),
                                                 std::move(executions),
-                                                std::move(lease_signer));
+                                                std::move(lease_signer),
+                                                options.uploads);
     const auto executor = co_await boost::capy::this_coro::executor;
     auto acceptor = boost::corosio::tcp_acceptor{executor.context(), endpoint};
     for (;;) {
@@ -1618,7 +1671,8 @@ runtime::task<void> serve_scheduler(scheduler_options options) {
         });
     auto reapi_options = reapi_serve_options{.store_directory = std::move(options.store_directory),
                                              .listen = std::move(options.listen),
-                                             .instance_name = std::move(options.instance_name)};
+                                             .instance_name = std::move(options.instance_name),
+                                             .uploads = options.uploads};
     co_return co_await serve_reapi_impl(
         std::move(reapi_options), std::move(executions), std::move(lease_signer));
 }

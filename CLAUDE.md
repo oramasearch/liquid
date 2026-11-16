@@ -176,6 +176,10 @@ Drive ingestion skips symlinks and pins each source through a no-follow director
 see [`docs/library/drive.md`](docs/library/drive.md#filesystem-sources-liquid-423) before changing
 filesystem staging or its store reads.
 
+Both REAPI listeners use the shared ByteStream upload policy documented in
+[`docs/library/reapi.md`](docs/library/reapi.md#bytestream-upload-limits-liquid-444-lsr-204).
+Changes to Write handling preserve its byte/count limits, idle expiry and error cleanup.
+
 ### Commands follow Git
 
 liquid does not deviate from Git's commands without a good reason (for example `git mv` versus
