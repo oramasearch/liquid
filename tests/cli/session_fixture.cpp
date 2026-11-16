@@ -15,6 +15,7 @@
 #include "liquid/runtime.hpp"
 #include "liquid/store.hpp"
 #include "objects/records.hpp"
+#include "repository/store_access.hpp"
 
 namespace {
 
@@ -85,7 +86,8 @@ auto issue(std::string_view agent_id) -> liquid::result<liquid::digest> {
     if (!objects) {
         return std::unexpected(objects.error());
     }
-    return liquid::runtime::block_on(objects->put_plain(std::move(*encoded)));
+    return liquid::runtime::block_on(
+        liquid::repository_detail::store_access::put_plain(*objects, std::move(*encoded)));
 }
 
 } // namespace
