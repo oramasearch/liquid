@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:c5f876bf-bd28-52ba-9fba-ac60fe642493",
+  "serialNumber": "urn:uuid:e4f5f1ac-3b9f-5098-9fd0-292bb3fc7bc9",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-11-16T01:55:40Z",
+    "timestamp": "2026-11-16T06:39:14Z",
     "tools": {
       "components": [
         {
@@ -140,10 +140,10 @@
       ]
     },
     {
-      "bom-ref": "pkg:github/oramasearch/corosio@887166b82a1b7acc0a10ce9f3c61224d45ae80e4?package-id=Component-Boost.Corosio-ce423e89ec459008",
+      "bom-ref": "pkg:github/oramasearch/corosio@8783392dcc84b1856b25054a1bb3f6c42d01ecfb?package-id=Component-Boost.Corosio-6b58bd8ebdb809a3",
       "type": "library",
       "name": "Boost.Corosio",
-      "version": "887166b82a1b7acc0a10ce9f3c61224d45ae80e4",
+      "version": "8783392dcc84b1856b25054a1bb3f6c42d01ecfb",
       "licenses": [
         {
           "license": {
@@ -151,7 +151,7 @@
           }
         }
       ],
-      "purl": "pkg:github/oramasearch/corosio@887166b82a1b7acc0a10ce9f3c61224d45ae80e4",
+      "purl": "pkg:github/oramasearch/corosio@8783392dcc84b1856b25054a1bb3f6c42d01ecfb",
       "properties": [
         {
           "name": "syft:package:type",
@@ -277,7 +277,7 @@
       "bom-ref": "DocumentRoot",
       "type": "library",
       "name": "liquid",
-      "version": "d7a70cb226ce",
+      "version": "9d976256c7bd",
       "licenses": [
         {
           "license": {
@@ -371,11 +371,11 @@
       ]
     },
     {
-      "bom-ref": "pkg:docker/python@3.13.7-slim-bookworm?package-id=Image-python-7056b72e738dab8a",
+      "bom-ref": "pkg:docker/python@sha256%3Aadafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d?package-id=Image-python-9d4a41e0bf33772e&tag=3.13.7-slim-bookworm",
       "type": "library",
       "name": "python",
-      "version": "3.13.7-slim-bookworm",
-      "purl": "pkg:docker/python@3.13.7-slim-bookworm",
+      "version": "3.13.7-slim-bookworm@sha256:adafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d",
+      "purl": "pkg:docker/python@sha256%3Aadafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d?tag=3.13.7-slim-bookworm",
       "properties": [
         {
           "name": "syft:package:type",
@@ -1484,6 +1484,19 @@
       ]
     },
     {
+      "bom-ref": "pkg:docker/ubuntu@sha256%3A2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5?package-id=Image-ubuntu-6698ea6738a5d032&tag=24.04",
+      "type": "library",
+      "name": "ubuntu",
+      "version": "24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5",
+      "purl": "pkg:docker/ubuntu@sha256%3A2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5?tag=24.04",
+      "properties": [
+        {
+          "name": "syft:package:type",
+          "value": "UnknownPackage"
+        }
+      ]
+    },
+    {
       "bom-ref": "Component-zlib-4c4d4a13a9590a03",
       "type": "library",
       "name": "zlib",
@@ -1525,8 +1538,9 @@
         "Component-Monocypher-ed4726faf758318c",
         "Component-macFUSE-fa5482d7ddbad991",
         "Component-zlib-4c4d4a13a9590a03",
-        "pkg:docker/python@3.13.7-slim-bookworm?package-id=Image-python-7056b72e738dab8a",
+        "pkg:docker/python@sha256%3Aadafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d?package-id=Image-python-9d4a41e0bf33772e&tag=3.13.7-slim-bookworm",
         "pkg:docker/ubuntu@24.04?package-id=Image-ubuntu-246bf0cb8a2d8764",
+        "pkg:docker/ubuntu@sha256%3A2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5?package-id=Image-ubuntu-6698ea6738a5d032&tag=24.04",
         "pkg:github/alemuller/tree-sitter-make@a4b9187417d6be349ee5fd4b6e77b4172c6827dd?package-id=Component-tree-sitter-grammar-make-b2a88413c6ce2e3c",
         "pkg:github/alex-pinkus/tree-sitter-swift@f47512c92fb3183b5b56c9ef40a442fdeb942853?package-id=Component-tree-sitter-grammar-swift-bcc6ecb668c5dc77",
         "pkg:github/appimage/type2-runtime@75849dce7cc37e4319b633df1f116ca895c71a12?package-id=Component-AppImage-type-2-runtime-2f95e0751b0182d8",
@@ -1553,7 +1567,7 @@
         "pkg:github/maxxnino/tree-sitter-zig@a80a6e9be81b33b182ce6305ae4ea28e29211bd5?package-id=Component-tree-sitter-grammar-zig-df03001e0fa14757",
         "pkg:github/nix-community/tree-sitter-nix@3d0173d903e630b6e14d17f1cf79488791379ded?package-id=Component-tree-sitter-grammar-nix-ed8e201fcb1668d4",
         "pkg:github/openssl/openssl@3.x%20%28system%29?package-id=Component-OpenSSL-844c5a1b29c99b9c",
-        "pkg:github/oramasearch/corosio@887166b82a1b7acc0a10ce9f3c61224d45ae80e4?package-id=Component-Boost.Corosio-ce423e89ec459008",
+        "pkg:github/oramasearch/corosio@8783392dcc84b1856b25054a1bb3f6c42d01ecfb?package-id=Component-Boost.Corosio-6b58bd8ebdb809a3",
         "pkg:github/oramasearch/http@af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4?package-id=Component-Boost.HTTP-0dbeb02a94dc16e8",
         "pkg:github/oramasearch/oramacore-cpp@9b74ce177f47d63024532ae6000c2cd62c73e0cd?package-id=Component-oramacore-cpp-339b170fefd1c12a",
         "pkg:github/r-lib/tree-sitter-r@58a22794466c0fc15b0d3b40531db751593721e8?package-id=Component-tree-sitter-grammar-r-710be359d74d9548",

@@ -2,17 +2,17 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "liquid-d7a70cb226ce",
-  "documentNamespace": "https://github.com/oramasearch/liquid/sbom/d7a70cb226cee9532901c3dc628acc0de6e5b61a",
+  "name": "liquid-9d976256c7bd",
+  "documentNamespace": "https://github.com/oramasearch/liquid/sbom/9d976256c7bde82bb58f88add18b29756ad5861a",
   "creationInfo": {
-    "created": "2026-11-16T01:55:40Z",
+    "created": "2026-11-16T06:39:14Z",
     "creators": [
       "Organization: OramaSearch, Inc.",
       "Tool: tools/sbom.py",
       "Tool: syft"
     ],
     "licenseListVersion": "3.29",
-    "comment": "Made from source commit d7a70cb226cee9532901c3dc628acc0de6e5b61a by tools/sbom.py."
+    "comment": "Made from source commit 9d976256c7bde82bb58f88add18b29756ad5861a by tools/sbom.py."
   },
   "documentDescribes": [
     "SPDXRef-DocumentRoot"
@@ -140,9 +140,9 @@
     },
     {
       "name": "Boost.Corosio",
-      "SPDXID": "SPDXRef-Component-Boost.Corosio-ce423e89ec459008",
-      "versionInfo": "887166b82a1b7acc0a10ce9f3c61224d45ae80e4",
-      "downloadLocation": "git+https://github.com/oramasearch/corosio.git@887166b82a1b7acc0a10ce9f3c61224d45ae80e4",
+      "SPDXID": "SPDXRef-Component-Boost.Corosio-6b58bd8ebdb809a3",
+      "versionInfo": "8783392dcc84b1856b25054a1bb3f6c42d01ecfb",
+      "downloadLocation": "git+https://github.com/oramasearch/corosio.git@8783392dcc84b1856b25054a1bb3f6c42d01ecfb",
       "filesAnalyzed": false,
       "supplier": "NOASSERTION",
       "copyrightText": "NOASSERTION",
@@ -154,7 +154,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:github/oramasearch/corosio@887166b82a1b7acc0a10ce9f3c61224d45ae80e4"
+          "referenceLocator": "pkg:github/oramasearch/corosio@8783392dcc84b1856b25054a1bb3f6c42d01ecfb"
         }
       ]
     },
@@ -273,7 +273,7 @@
     {
       "name": "liquid",
       "SPDXID": "SPDXRef-DocumentRoot",
-      "versionInfo": "d7a70cb226ce",
+      "versionInfo": "9d976256c7bd",
       "downloadLocation": "git+https://github.com/oramasearch/liquid.git",
       "homepage": "https://github.com/oramasearch/liquid",
       "filesAnalyzed": false,
@@ -373,8 +373,8 @@
     },
     {
       "name": "python",
-      "SPDXID": "SPDXRef-Image-python-7056b72e738dab8a",
-      "versionInfo": "3.13.7-slim-bookworm",
+      "SPDXID": "SPDXRef-Image-python-9d4a41e0bf33772e",
+      "versionInfo": "3.13.7-slim-bookworm@sha256:adafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "supplier": "NOASSERTION",
@@ -382,12 +382,12 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "primaryPackagePurpose": "CONTAINER",
-      "comment": "Container base image (python:3.13.7-slim-bookworm), FROM in tests/reapi/Dockerfile. Its own packages are in the image SBOM of each release image.",
+      "comment": "Container base image (python:3.13.7-slim-bookworm@sha256:adafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d), FROM in tests/reapi/Dockerfile. Its own packages are in the image SBOM of each release image.",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:docker/python@3.13.7-slim-bookworm"
+          "referenceLocator": "pkg:docker/python@sha256%3Aadafcc17694d715c905b4c7bebd96907a1fd5cf183395f0ebc4d3428bd22d92d?tag=3.13.7-slim-bookworm"
         }
       ]
     },
@@ -1486,12 +1486,32 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "primaryPackagePurpose": "CONTAINER",
-      "comment": "Container base image (ubuntu:24.04), FROM in tools/linux-ci/Dockerfile. Its own packages are in the image SBOM of each release image.",
+      "comment": "Container base image (ubuntu:24.04), FROM in tools/hardening/Dockerfile. Its own packages are in the image SBOM of each release image.",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:docker/ubuntu@24.04"
+        }
+      ]
+    },
+    {
+      "name": "ubuntu",
+      "SPDXID": "SPDXRef-Image-ubuntu-6698ea6738a5d032",
+      "versionInfo": "24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "primaryPackagePurpose": "CONTAINER",
+      "comment": "Container base image (ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5), FROM in tools/linux-ci/Dockerfile. Its own packages are in the image SBOM of each release image.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:docker/ubuntu@sha256%3A2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5?tag=24.04"
         }
       ]
     },
@@ -1563,7 +1583,7 @@
       "spdxElementId": "SPDXRef-DocumentRoot"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Component-Boost.Corosio-ce423e89ec459008",
+      "relatedSpdxElement": "SPDXRef-Component-Boost.Corosio-6b58bd8ebdb809a3",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-DocumentRoot"
     },
@@ -1908,12 +1928,17 @@
       "spdxElementId": "SPDXRef-DOCUMENT"
     },
     {
-      "relatedSpdxElement": "SPDXRef-Image-python-7056b72e738dab8a",
+      "relatedSpdxElement": "SPDXRef-Image-python-9d4a41e0bf33772e",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-DocumentRoot"
     },
     {
       "relatedSpdxElement": "SPDXRef-Image-ubuntu-246bf0cb8a2d8764",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Image-ubuntu-6698ea6738a5d032",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-DocumentRoot"
     },
