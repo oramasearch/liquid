@@ -27,6 +27,9 @@ public headers and ABI rules.
 
 The complete topic index is in [`../README.md`](../README.md#library).
 
+[Grammar traversal limits](grammars.md#syntax-traversal-limits) cover whole-tree validation,
+rejection diagnostics, and the C/C++ compatibility overloads (#441, LSR-131).
+
 [VFS conformance](vfs.md#backend-conformance-301) documents named backend execution, common
 filesystem and observation assertions, direct core calibration, adding a driver, and the Linux
 libfuse baseline still owed against #299. The [proof record](vfs-conformance-proof.md) preserves

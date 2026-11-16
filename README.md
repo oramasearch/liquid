@@ -370,6 +370,8 @@ The axioms and the commitments they serve are set out in the
 the public API, and `src/main.cpp` only parses arguments and calls it. Other programs link the
 same library: liquify does, and lake compiles it in.
 
+Source discovery enforces shared [syntax traversal limits](docs/library/grammars.md#syntax-traversal-limits).
+
 | Target | What it is |
 |---|---|
 | `liquid::liquid` (`libliquid`) | The library: `libliquid.a`, or a shared library with `-DBUILD_SHARED_LIBS=ON`. `find_package(liquid CONFIG REQUIRED)` works from an installed prefix. |

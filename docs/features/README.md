@@ -4,6 +4,10 @@ The [VFS conformance harness](../library/vfs.md#backend-conformance-301) specifi
 projection checks for decisions 39 and 41. Nine cases run against the direct core reference; every
 replacement must run them itself. Linux libfuse calibration is still owed against #299.
 
+The bundled source frontend rejects trees beyond its shared depth and node limits before
+traversal; the behavior and API errors are recorded in
+[`grammars.md`](../library/grammars.md#syntax-traversal-limits) (#441, LSR-131).
+
 This tree states what liquid **does**. It is the counterpart to
 [`docs/research/`](../research/), which states what the world currently does and
 why it is insufficient.

@@ -64,7 +64,10 @@ milliseconds.
 `test_grammars.cpp` parses the lock-driven sample for every configured grammar without an `ERROR`
 node, runs tag queries for Python, Go, Rust, JavaScript, TypeScript, Java, and Ruby, checks explicit
 unsupported behavior when no tag query exists, rejects a descriptor with a mismatched grammar ABI,
-and checks public registry metadata. `liquid-grammar-measure` reports mean nanoseconds over 100
+and checks public registry metadata. `Grammars.TraversalLimit*` rejects deep namespaces, bodies,
+and declarators across the common APIs and bundled module, checks anonymous-token depth and
+wide-tree node limits, and verifies that rejection returns no partial results (#441, LSR-131).
+`liquid-grammar-measure` reports mean nanoseconds over 100
 parses of each fixture.
 `test_structural_diff.cpp` exercises handwritten move, formatting, and semantic edits for the ten
 primary languages, mechanically reindents every other locked sample, and checks comment handling
