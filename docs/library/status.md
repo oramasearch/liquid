@@ -436,6 +436,8 @@ it reaches, including the package and document codecs that decode their own memb
 registry (liquid#438).
 HDF5 rejects filter pipelines longer than the 32-bit
 chunk mask before decoding any dataset layout (liquid #486).
+The RPM reader charges the header strings it copies and its
+decoded payload to one byte budget per read (liquid #473).
 
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository

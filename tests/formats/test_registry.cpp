@@ -1084,4 +1084,118 @@ TEST(FormatRegistry, RefusesPackageMembersThatDecodeMembersThemselves) {
         << unpacked.error().message;
 }
 
+auto append_be32(std::vector<std::byte>& output, std::uint32_t value) -> void {
+    for (auto shift : {24U, 16U, 8U, 0U}) {
+        output.push_back(static_cast<std::byte>((value >> shift) & 0xffU));
+    }
+}
+
+auto append_text(std::vector<std::byte>& output, std::string_view text) -> void {
+    for (const auto character : text) {
+        output.push_back(static_cast<std::byte>(character));
+    }
+}
+
+struct rpm_string_entry {
+    std::uint32_t tag;
+    std::uint32_t offset;
+};
+
+// A minimal RPM: an empty signature header, a main header whose string entries point into `store`,
+// and a zstd payload of one raw block holding only the cpio trailer.
+auto rpm_package(std::span<const rpm_string_entry> entries, std::span<const std::byte> store)
+    -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>(96);
+    output[0] = std::byte{0xed};
+    output[1] = std::byte{0xab};
+    output[2] = std::byte{0xee};
+    output[3] = std::byte{0xdb};
+    const auto header_start = [&](std::uint32_t count, std::uint32_t size) {
+        append_be32(output, 0x8eade801U);
+        append_be32(output, 0);
+        append_be32(output, count);
+        append_be32(output, size);
+    };
+    header_start(0, 0);
+    header_start(static_cast<std::uint32_t>(entries.size()),
+                 static_cast<std::uint32_t>(store.size()));
+    for (const auto& entry : entries) {
+        append_be32(output, entry.tag);
+        append_be32(output, 6);
+        append_be32(output, entry.offset);
+        append_be32(output, 1);
+    }
+    output.insert(output.end(), store.begin(), store.end());
+    auto trailer = std::vector<std::byte>{};
+    append_text(trailer, "070701");
+    for (auto field = 0; field < 13; ++field) {
+        append_text(trailer, field == 11 ? "0000000b" : "00000000");
+    }
+    append_text(trailer, "TRAILER!!!");
+    trailer.resize(124);
+    for (const auto value : {0x28U, 0xb5U, 0x2fU, 0xfdU, 0x20U, 124U}) {
+        output.push_back(static_cast<std::byte>(value));
+    }
+    const auto block = 1U | (124U << 3U);
+    for (auto shift : {0U, 8U, 16U}) {
+        output.push_back(static_cast<std::byte>((block >> shift) & 0xffU));
+    }
+    output.insert(output.end(), trailer.begin(), trailer.end());
+    return output;
+}
+
+auto entry_text(const liquid::format_tree& tree, std::string_view path) -> std::string {
+    const auto* found = entry(tree, path);
+    return found == nullptr ? std::string{}
+                            : std::string{reinterpret_cast<const char*>(found->bytes.data()),
+                                          found->bytes.size()};
+}
+
+TEST(FormatRegistry, ReadsRpmNameAndVersionFromTheMainHeader) {
+    auto* rpm = codec("rpm");
+    ASSERT_NE(rpm, nullptr);
+    auto store = std::vector<std::byte>{};
+    append_text(store,
+                std::string_view{"demo\0"
+                                 "1.0\0",
+                                 9});
+    const auto entries = std::array{rpm_string_entry{1000, 0}, rpm_string_entry{1001, 5}};
+    auto tree = rpm->unpack(rpm_package(entries, store));
+    ASSERT_TRUE(tree) << tree.error().message;
+    EXPECT_EQ(entry_text(*tree, ".metadata"), "Name: demo\nVersion: 1.0\n");
+}
+
+// liquid #473: many index entries naming one long string must not each copy it.
+TEST(FormatRegistry, ChargesRpmHeaderStringCopiesToTheByteBudget) {
+    auto* rpm = codec("rpm");
+    ASSERT_NE(rpm, nullptr);
+    const auto limits = liquid::format_limits{.byte_budget = 1024ULL * 1024ULL};
+
+    // The reported shape: distinct tags, every one at offset 0 of a string with no terminator.
+    // Uncharged, the 64 copies come to 16 MiB; the six tags the reader keeps still need 1.5 MiB.
+    const auto distinct_store = std::vector<std::byte>(256U * 1024U, std::byte{'a'});
+    auto distinct = std::vector<rpm_string_entry>{};
+    for (auto tag = 1000U; tag < 1064U; ++tag) {
+        distinct.push_back({tag, 0});
+    }
+    auto refused = rpm->unpack(rpm_package(distinct, distinct_store), limits);
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().code, liquid::errc::unsupported);
+    EXPECT_NE(refused.error().message.find("byte budget"), std::string::npos);
+
+    // One kept tag repeated: each 64 KiB copy fits on its own, 64 of them do not.
+    const auto repeated_store = std::vector<std::byte>(64U * 1024U, std::byte{'a'});
+    const auto repeated = std::vector<rpm_string_entry>(64, rpm_string_entry{1000, 0});
+    auto repeated_refused = rpm->unpack(rpm_package(repeated, repeated_store), limits);
+    ASSERT_FALSE(repeated_refused);
+    EXPECT_EQ(repeated_refused.error().code, liquid::errc::unsupported);
+
+    // Tags the reader does not keep cost nothing, however many name the string.
+    auto ignored = std::vector<rpm_string_entry>{};
+    for (auto tag = 2000U; tag < 2064U; ++tag) {
+        ignored.push_back({tag, 0});
+    }
+    EXPECT_TRUE(rpm->unpack(rpm_package(ignored, distinct_store), limits));
+}
+
 } // namespace
