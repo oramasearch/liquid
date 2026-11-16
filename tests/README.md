@@ -254,6 +254,12 @@ both named files, the conflict references, and history for each name. The deskto
 tests run without GNOME or KDE. Linux FUSE coverage calls the mounted attribute setters, getters,
 and list operation directly.
 
+Drive source tests sync absolute, relative, internal, dangling, and directory symlinks through a
+real sync server, then replace a synchronized file with a link and confirm the target bytes never
+reach the remote store. Direct staging tests reject leaf and parent links, traversal, absolute and
+NUL-containing names, directories, and FIFOs. A descriptor-lifetime test replaces the opened file
+and its parent and verifies subsequent reads still return the original bytes.
+
 Build tests cover the disk action index's reopen and rebuild paths, public configured-plan schema,
 named configuration errors, and current root digests on every platform. In the
 privileged Linux environment they also prove a second identical execution launches no process,

@@ -173,3 +173,6 @@ snapshots and content identities to the three-tree reconciler, records selected 
 references without copying their bytes, merges pulled directory documents before reconciliation,
 records local and remote parents when they differ, and publishes files atomically. Drive state
 itself remains repository metadata, and its remote shadow repository borrows the same object store.
+Staging accepts a folder and relative source path, opens every component without following links,
+and keeps the resulting regular-file descriptor alive through every store read. It rejects unsafe
+paths even when called independently of the Drive walk.

@@ -11,6 +11,13 @@ so overflow and coalescing cannot make the stored tree authoritative over disk. 
 publication syscalls use `runtime::offload`; file contents enter and leave the store one chunk at a
 time. The in-memory path index refuses to exceed the configured ceiling.
 
+The walk skips file and directory symlinks, including links within the folder. `source_file`
+opens each staged relative path from the folder with `openat` and `O_NOFOLLOW` on every component,
+then checks the descriptor names a regular file. Its `/dev/fd` path keeps store streaming and
+write-through rereads on that open file even if the original name or parent is replaced.
+Opening a changed path fails the sync before push. Safe source reads support macOS and Linux;
+other platforms return `unsupported` before ingesting a file.
+
 The three-tree query keys established files by `node_id`, combines a move on one side with an edit
 on the other, retains concurrent inputs through the canonical conflict record, and gives the
 remote value a deterministic visible conflict name. Drive status decodes the same conflict values

@@ -2,6 +2,8 @@
 
 [Git interoperability](git-interop.md) documents local object inflation and shared delta
 budgets, strictly earlier offset bases, and compatibility limits for import (#443).
+Drive's [filesystem source rules](drive.md#filesystem-sources-liquid-423) cover ignored symlinks,
+descriptor lifetime, and supported platforms.
 
 The [documentation index](../README.md#library) lists one entry for each library topic.
 [Implementation status](status.md) is the authoritative inventory of implemented behavior and

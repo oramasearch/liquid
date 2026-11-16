@@ -180,7 +180,9 @@ available-offline, and excluded path state; pin and unpin commands; xattrs; poli
 offline-aware hydration; queued-write and hydration-debt status; and GNOME Files and Dolphin badge
 providers. Issue #247 adds `liquid clone` over the same client, including first-pull identity
 adoption, persisted remote configuration, full plain-checkout materialization, and stable JSON
-output ([`drive.md`](drive.md), [`../cli/README.md`](../cli/README.md)).
+output ([`drive.md`](drive.md), [`../cli/README.md`](../cli/README.md)). Issue #423 makes filesystem
+ingestion skip symlinks and pin regular-file sources through no-follow descriptor walks on macOS
+and Linux; unsupported platforms refuse ingestion.
 
 **VFS.** Full materialisation writes a plain directory; lazy mounts use libfuse3 on Linux and
 optional macFUSE on macOS ([`vfs.md`](vfs.md)). Tree entry names are validated at decode, encode,

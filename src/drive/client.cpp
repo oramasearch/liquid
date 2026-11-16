@@ -47,7 +47,6 @@ struct persisted_state {
 
 struct walk_entry {
     std::string path;
-    std::filesystem::path source;
     std::uint32_t mode{0100644};
 };
 
@@ -208,15 +207,6 @@ auto selected_for_device(const drive_detail::stored_settings& settings, std::str
     return drive_detail::effective_state(settings, path) != drive_path_state::not_synced_here;
 }
 
-auto file_mode(const std::filesystem::directory_entry& entry, std::error_code& code)
-    -> std::uint32_t {
-    const auto permissions = entry.status(code).permissions();
-    if (code) {
-        return 0100644;
-    }
-    return 0100000U | static_cast<std::uint32_t>(permissions) & 0777U;
-}
-
 auto walk_files(const std::filesystem::path& folder,
                 std::uint64_t ceiling,
                 drive_detail::stored_settings settings) -> result<walk_result> {
@@ -235,20 +225,20 @@ auto walk_files(const std::filesystem::path& folder,
             code.clear();
             continue;
         }
-        if (!iterator->is_regular_file(code)) {
-            code.clear();
-            continue;
-        }
-        const auto mode = file_mode(*iterator, code);
+        const auto status = iterator->symlink_status(code);
         if (code) {
             return std::unexpected(drive_error(errc::io, code.message(), relative));
         }
+        if (!std::filesystem::is_regular_file(status)) {
+            continue;
+        }
+        const auto mode = 0100000U | (static_cast<std::uint32_t>(status.permissions()) & 0777U);
         output.state_bytes += sizeof(walk_entry) + relative.size() * 2U + 128U;
         if (output.state_bytes > ceiling) {
             return std::unexpected(drive_error(
                 errc::busy, "drive state memory ceiling exceeded", std::to_string(ceiling)));
         }
-        output.entries.push_back({relative, iterator->path(), mode});
+        output.entries.push_back({relative, mode});
     }
     if (code) {
         return std::unexpected(drive_error(errc::io, code.message(), folder.string()));
@@ -1026,7 +1016,8 @@ struct drive_client::impl {
         for (const auto& item : (**walked).entries) {
             auto staged = co_await repository_detail::drive_access::stage(
                 local,
-                item.source,
+                folder,
+                item.path,
                 std::filesystem::path{item.path}.filename().string(),
                 item.mode);
             if (!staged) {
