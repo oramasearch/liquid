@@ -29,6 +29,9 @@ universe before solving. See [resolution](../docs/library/resolution.md).
 The command table documents ordinary-repository projection and `liquid tree`, which prints the
 recorded root digest. The CLI chooses the owning repository before calling projection; format
 writers retain their existing behavior.
+`daemon.cpp` hosts the checkout daemon. Its socket sits in a private per-user directory, is bound
+under `umask(077)`, and serves only peers with the same uid; the rules are in
+[the incremental engine](../docs/library/incremental-engine.md) (liquid#397).
 HTTP log sources validate URL syntax and numeric port bounds locally. The factory returns
 public errors; legacy sources return retained validation errors before transport access.
 See [the URL contract](../docs/library/transparency.md#http-url-validation-289).

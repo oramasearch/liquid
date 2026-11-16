@@ -189,9 +189,43 @@ resident value bytes and reports the key count, resident value count, use, and c
 
 **Clients** talk to the daemon over one local endpoint: the CLI over a Unix socket with the same
 one-byte type, four-byte big-endian length, and canonical-CBOR payload shape the sync protocol
-uses. The socket has a deterministic checkout-derived name in the platform temporary directory so
-macOS's short Unix-socket path limit does not reject deep checkouts; its lock, cursor state, and
-graph remain under `.liquid/daemon/`. Windows returns `errc::unsupported` until Corosio supplies
+uses. The socket has a deterministic checkout-derived name (24 hex digits of the BLAKE3 digest of
+the checkout path) so macOS's short Unix-socket path limit does not reject deep checkouts; its lock,
+cursor state, and graph remain under `.liquid/daemon/`.
+
+**Who may talk to the daemon** (liquid#397). The socket is reachable only by the user who started
+the daemon:
+
+- It lives in a private per-user directory, `<base>/liquid-<uid>/<name>.sock`. The base is the first
+  of `$XDG_RUNTIME_DIR`, on macOS the per-user temporary directory the system assigns
+  (`confstr(_CS_DARWIN_USER_TEMP_DIR)`, a `/var/folders/...` directory of mode 0700), then the
+  temporary directory and `/tmp`, skipping any base whose socket path would not fit in `sun_path`.
+  `$HOME` is not used: test harnesses and users point it at deep directories that overflow the
+  104-byte macOS limit.
+- The daemon creates the directory with mode 0700 and, before using it, checks with `lstat` that it
+  is a real directory (not a link), owned by the effective uid, with no group or other permission,
+  and that its parent is owned by this user or root and is not writable by others unless sticky.
+  A directory that fails is refused with `errc::unauthorized`; it is never chmodded or reused.
+- `bind` runs under `umask(077)`, so the socket file never exists with wider permission, not even
+  for the moment between `bind` and a `chmod`. umask is process-wide, so the change is held only
+  around `bind` and serialised by a mutex.
+- A file at the socket path is removed only when it is a socket owned by this user with no group or
+  other permission; the checkout lock is held at that point, so it is a stale socket of this
+  checkout. A regular file, a link, or someone else's socket is refused.
+- Every accepted connection is checked by peer credentials (`SO_PEERCRED` on Linux, `getpeereid`
+  on macOS). A connection from another uid is closed unread and the daemon keeps serving.
+- The client (the CLI, `daemon::attach`) checks the directory and the socket the same way before it
+  connects and checks the server's peer credentials after, so it never sends a request to a socket
+  it did not create. Any failure is `errc::unauthorized`; a missing socket stays `errc::unavailable`,
+  which is what starts a daemon on first use.
+
+No token is sent in the first frame: a process running as the same user could read a token file as
+easily as it can connect, so peer credentials are the boundary. Verify with the `Daemon.*` tests in
+`tests/test_daemon.cpp` (`socket_lives_in_a_private_per_user_directory`,
+`start_and_attach_refuse_a_directory_other_users_can_reach`,
+`attach_refuses_a_socket_it_did_not_create`, and, as root, `refuses_a_connection_from_another_uid`).
+
+Windows returns `errc::unsupported` until Corosio supplies
 named pipes. liquify links libliquid and hosts the graph in-process (liquify hosts the daemon
 service when it is the first client, and the CLI attaches to it), which is the whole point of the
 architecture and is the only way to avoid a serialisation boundary.

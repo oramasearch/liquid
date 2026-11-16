@@ -10,6 +10,11 @@ replays the customer scenarios in fresh processes; see [the contract](../docs/li
 Exclusive checkout coverage spans repository holder/refusal/release and offline-sync cases,
 configuration lowering, connected authority, daemon fan-out, and the `cli-locks` command scenario.
 
+`test_daemon.cpp` also covers who may reach the daemon socket (liquid#397): the socket's private
+per-user directory and `$XDG_RUNTIME_DIR`, refusal of a directory other users can reach, of a planted
+socket, a link or a regular file at the socket path, and, when run as root, of a connection from
+another uid.
+
 The default suite covers the public library surface and the local store. Focused garbage
 collection cases and its CLI flags, and the liquid #321 multi-process owner-lock cases, live in
 `store/`. `test_index.cpp` runs a flush and compaction through the in-memory backend on a thread

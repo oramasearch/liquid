@@ -8,11 +8,24 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <thread>
 #include <type_traits>
 #include <vector>
+
+#ifndef _WIN32
+#include <cerrno>
+#include <csignal>
+#include <cstring>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include "daemon/fanout.hpp"
 #include "liquid/daemon.hpp"
@@ -189,6 +202,113 @@ auto wait_for_delivery(liquid::daemon& daemon, std::uint64_t before)
     return std::unexpected(
         liquid::error{liquid::errc::unavailable, "daemon did not deliver a drip", "daemon test"});
 }
+
+#ifndef _WIN32
+
+// Sets one environment variable for the life of a test and puts the old value back.
+class environment_override final {
+public:
+    environment_override(std::string name, const std::string& value) : name_(std::move(name)) {
+        if (const auto* previous = std::getenv(name_.c_str())) {
+            previous_ = previous;
+        }
+        ::setenv(name_.c_str(), value.c_str(), 1);
+    }
+
+    ~environment_override() {
+        if (previous_) {
+            ::setenv(name_.c_str(), previous_->c_str(), 1);
+        } else {
+            ::unsetenv(name_.c_str());
+        }
+    }
+
+    environment_override(const environment_override&) = delete;
+    auto operator=(const environment_override&) -> environment_override& = delete;
+
+private:
+    std::string name_;
+    std::optional<std::string> previous_;
+};
+
+// A short, private directory to stand in for $XDG_RUNTIME_DIR.
+class runtime_root final {
+public:
+    runtime_root() {
+        auto text = std::string{"/tmp/lq-xdg-XXXXXX"};
+        if (::mkdtemp(text.data()) == nullptr) {
+            throw std::runtime_error(std::string{"mkdtemp: "} + std::strerror(errno));
+        }
+        path_ = text;
+    }
+
+    ~runtime_root() {
+        auto ignored = std::error_code{};
+        std::filesystem::remove_all(path_, ignored);
+    }
+
+    runtime_root(const runtime_root&) = delete;
+    auto operator=(const runtime_root&) -> runtime_root& = delete;
+
+    [[nodiscard]] auto path() const -> const std::filesystem::path& {
+        return path_;
+    }
+
+private:
+    std::filesystem::path path_;
+};
+
+// A listening socket the test owns, standing in for an impostor at the daemon's path. It accepts
+// connections and closes them without answering.
+class planted_socket final {
+public:
+    planted_socket(std::filesystem::path path, ::mode_t mode) : path_(std::move(path)) {
+        auto address = sockaddr_un{};
+        address.sun_family = AF_UNIX;
+        const auto text = path_.string();
+        if (text.size() >= sizeof(address.sun_path)) {
+            throw std::runtime_error("planted socket path is too long: " + text);
+        }
+        std::memcpy(address.sun_path, text.c_str(), text.size() + 1);
+        descriptor_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (descriptor_ < 0 ||
+            ::bind(descriptor_, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) !=
+                0 ||
+            ::listen(descriptor_, 4) != 0 || ::chmod(path_.c_str(), mode) != 0) {
+            throw std::runtime_error("cannot plant socket at " + text + ": " +
+                                     std::strerror(errno));
+        }
+        worker_ = std::thread{[this] {
+            while (!stop_.load(std::memory_order_acquire)) {
+                auto ready = pollfd{.fd = descriptor_, .events = POLLIN, .revents = 0};
+                if (::poll(&ready, 1, 20) > 0) {
+                    const auto connection = ::accept(descriptor_, nullptr, nullptr);
+                    if (connection >= 0) {
+                        ::close(connection);
+                    }
+                }
+            }
+        }};
+    }
+
+    ~planted_socket() {
+        stop_.store(true, std::memory_order_release);
+        worker_.join();
+        ::close(descriptor_);
+        ::unlink(path_.c_str());
+    }
+
+    planted_socket(const planted_socket&) = delete;
+    auto operator=(const planted_socket&) -> planted_socket& = delete;
+
+private:
+    std::filesystem::path path_;
+    int descriptor_{-1};
+    std::atomic_bool stop_{false};
+    std::thread worker_;
+};
+
+#endif
 
 } // namespace
 
@@ -541,6 +661,173 @@ TEST(Daemon, command_starts_on_first_use_and_attaches_to_same_process) {
     EXPECT_NE(json.find("\"buckets\":[{"), std::string::npos);
 
     EXPECT_TRUE(liquid::runtime::block_on(attached->shutdown()));
+}
+
+// liquid#397: the socket must not sit in the shared temporary directory, and neither the socket
+// nor its directory may be reachable by another user.
+TEST(Daemon, socket_lives_in_a_private_per_user_directory) {
+    temporary_repository location;
+    auto started = liquid::runtime::block_on(liquid::daemon::start(location.path(), options()));
+    ASSERT_TRUE(started) << (started ? "" : started.error().message);
+    auto status = liquid::runtime::block_on(started->status());
+    ASSERT_TRUE(status) << (status ? "" : status.error().message);
+
+    const auto endpoint = std::filesystem::path{status->endpoint};
+    const auto directory = endpoint.parent_path();
+    auto ignored = std::error_code{};
+    EXPECT_NE(std::filesystem::weakly_canonical(directory, ignored),
+              std::filesystem::weakly_canonical(std::filesystem::temp_directory_path(), ignored));
+    struct stat directory_info{};
+    ASSERT_EQ(::lstat(directory.c_str(), &directory_info), 0);
+    EXPECT_TRUE(S_ISDIR(directory_info.st_mode));
+    EXPECT_EQ(directory_info.st_uid, ::geteuid());
+    EXPECT_EQ(directory_info.st_mode & 0777, 0700);
+    struct stat socket_info{};
+    ASSERT_EQ(::lstat(endpoint.c_str(), &socket_info), 0);
+    EXPECT_TRUE(S_ISSOCK(socket_info.st_mode));
+    EXPECT_EQ(socket_info.st_uid, ::geteuid());
+    EXPECT_EQ(socket_info.st_mode & 077, 0);
+
+    EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
+}
+
+TEST(Daemon, runtime_directory_follows_xdg_runtime_dir) {
+    runtime_root root;
+    environment_override runtime_directory{"XDG_RUNTIME_DIR", root.path().string()};
+    temporary_repository location;
+    auto started = liquid::runtime::block_on(liquid::daemon::start(location.path(), options()));
+    ASSERT_TRUE(started) << (started ? "" : started.error().message);
+    auto status = liquid::runtime::block_on(started->status());
+    ASSERT_TRUE(status) << (status ? "" : status.error().message);
+    EXPECT_EQ(std::filesystem::path{status->endpoint}.parent_path(),
+              root.path() / ("liquid-" + std::to_string(::geteuid())));
+    EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
+}
+
+TEST(Daemon, start_and_attach_refuse_a_directory_other_users_can_reach) {
+    runtime_root root;
+    environment_override runtime_directory{"XDG_RUNTIME_DIR", root.path().string()};
+    const auto shared = root.path() / ("liquid-" + std::to_string(::geteuid()));
+    ASSERT_TRUE(std::filesystem::create_directory(shared));
+    ASSERT_EQ(::chmod(shared.c_str(), 0777), 0);
+    temporary_repository location;
+
+    auto started = liquid::runtime::block_on(liquid::daemon::start(location.path(), options()));
+    if (started) {
+        EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
+        EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
+    }
+    ASSERT_FALSE(started);
+    EXPECT_EQ(started.error().code, liquid::errc::unauthorized) << started.error().message;
+
+    auto attached = liquid::runtime::block_on(liquid::daemon::attach(location.path()));
+    ASSERT_FALSE(attached);
+    EXPECT_EQ(attached.error().code, liquid::errc::unauthorized) << attached.error().message;
+}
+
+TEST(Daemon, attach_refuses_a_socket_it_did_not_create) {
+    runtime_root root;
+    environment_override runtime_directory{"XDG_RUNTIME_DIR", root.path().string()};
+    temporary_repository location;
+    auto started = liquid::runtime::block_on(liquid::daemon::start(location.path(), options()));
+    ASSERT_TRUE(started) << (started ? "" : started.error().message);
+    auto status = liquid::runtime::block_on(started->status());
+    ASSERT_TRUE(status) << (status ? "" : status.error().message);
+    const auto endpoint = std::filesystem::path{status->endpoint};
+    EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
+    ASSERT_FALSE(std::filesystem::exists(endpoint));
+
+    {
+        // Anyone could have created a socket that any user may write to.
+        planted_socket impostor{endpoint, 0666};
+        auto attached = liquid::runtime::block_on(liquid::daemon::attach(location.path()));
+        ASSERT_FALSE(attached);
+        EXPECT_EQ(attached.error().code, liquid::errc::unauthorized) << attached.error().message;
+    }
+    {
+        // A symbolic link at the daemon's path is never followed.
+        const auto elsewhere = root.path() / "elsewhere.sock";
+        planted_socket impostor{elsewhere, 0600};
+        std::filesystem::create_symlink(elsewhere, endpoint);
+        auto attached = liquid::runtime::block_on(liquid::daemon::attach(location.path()));
+        std::filesystem::remove(endpoint);
+        ASSERT_FALSE(attached);
+        EXPECT_EQ(attached.error().code, liquid::errc::unauthorized) << attached.error().message;
+    }
+    {
+        // A regular file left at the path is not replaced by start, either.
+        {
+            std::ofstream{endpoint} << "not a socket";
+        }
+        auto restarted =
+            liquid::runtime::block_on(liquid::daemon::start(location.path(), options()));
+        if (restarted) {
+            EXPECT_TRUE(liquid::runtime::block_on(restarted->shutdown()));
+            EXPECT_TRUE(liquid::runtime::block_on(restarted->wait()));
+        }
+        ASSERT_FALSE(restarted);
+        EXPECT_EQ(restarted.error().code, liquid::errc::unauthorized) << restarted.error().message;
+        EXPECT_TRUE(std::filesystem::is_regular_file(endpoint));
+    }
+}
+
+// A process running as another user that reaches the socket anyway (here because the test opens
+// the directory and socket modes) is refused by its peer credentials, and the daemon keeps
+// serving. Needs root to switch user.
+TEST(Daemon, refuses_a_connection_from_another_uid) {
+    if (::geteuid() != 0) {
+        GTEST_SKIP() << "needs root to connect as another user";
+    }
+    runtime_root root;
+    environment_override runtime_directory{"XDG_RUNTIME_DIR", root.path().string()};
+    temporary_repository location;
+    auto started = liquid::runtime::block_on(liquid::daemon::start(location.path(), options()));
+    ASSERT_TRUE(started) << (started ? "" : started.error().message);
+    auto status = liquid::runtime::block_on(started->status());
+    ASSERT_TRUE(status) << (status ? "" : status.error().message);
+    const auto endpoint = std::filesystem::path{status->endpoint};
+    const auto directory = endpoint.parent_path();
+    ASSERT_EQ(::chmod(root.path().c_str(), 0711), 0);
+    ASSERT_EQ(::chmod(directory.c_str(), 0711), 0);
+    ASSERT_EQ(::chmod(endpoint.c_str(), 0666), 0);
+
+    auto address = sockaddr_un{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, endpoint.c_str(), endpoint.native().size() + 1);
+    const auto child = ::fork();
+    ASSERT_GE(child, 0);
+    if (child == 0) {
+        // Only async-signal-safe calls between fork and _exit.
+        ::signal(SIGPIPE, SIG_IGN);
+        if (::setgid(65534) != 0 || ::setuid(65534) != 0) {
+            ::_exit(2);
+        }
+        const auto descriptor = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (descriptor < 0 ||
+            ::connect(descriptor, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) !=
+                0) {
+            ::_exit(3);
+        }
+        const unsigned char empty_frame[5] = {0, 0, 0, 0, 0};
+        static_cast<void>(::write(descriptor, empty_frame, sizeof(empty_frame)));
+        unsigned char reply = 0;
+        const auto received = ::read(descriptor, &reply, 1);
+        ::_exit(received > 0 ? 1 : 0);
+    }
+    auto child_status = 0;
+    ASSERT_EQ(::waitpid(child, &child_status, 0), child);
+    ASSERT_TRUE(WIFEXITED(child_status));
+    EXPECT_EQ(WEXITSTATUS(child_status), 0) << "1 means the daemon answered another user";
+
+    ASSERT_EQ(::chmod(endpoint.c_str(), 0600), 0);
+    ASSERT_EQ(::chmod(directory.c_str(), 0700), 0);
+    auto still_serving = liquid::runtime::block_on(started->status());
+    EXPECT_TRUE(still_serving) << (still_serving ? "" : still_serving.error().message);
+    EXPECT_TRUE(liquid::runtime::block_on(started->shutdown()));
+    EXPECT_TRUE(liquid::runtime::block_on(started->wait()));
 }
 
 #else
