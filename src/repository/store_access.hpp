@@ -33,6 +33,9 @@ struct store_access {
         return source.blob_for(id);
     }
 
+    [[nodiscard]] static auto recorded_recoveries(const store& source) -> std::vector<std::string> {
+        return source.recorded_recoveries();
+    }
     [[nodiscard]] static auto remote_bytes(const store& source, digest id)
         -> result<std::uint64_t> {
         return source.remote_bytes(id);

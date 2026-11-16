@@ -7,6 +7,23 @@
 #include "store/store_impl.hpp"
 
 namespace liquid {
+namespace {
+
+// A read that missed may have used a view another process has since changed (liquid #526): an
+// object it published after this handle loaded, or a pack its collection or compaction rewrote.
+bool retry_after_refresh(const error& failure) {
+    return failure.code == errc::not_found || failure.code == errc::corrupt ||
+           failure.code == errc::io;
+}
+
+// True when the handle reloaded its view, so the read is worth one more attempt.
+runtime::task<bool> refreshed(store_detail::store_backend& backend) {
+    auto stale = co_await backend.refresh_if_stale();
+    co_return stale.value_or(false);
+}
+
+} // namespace
+
 struct lease::impl {
     explicit impl(std::shared_ptr<store_detail::lease_state> value) : value(std::move(value)) {}
     std::shared_ptr<store_detail::lease_state> value;
@@ -95,7 +112,20 @@ runtime::task<void> store::get_to_file(digest id, std::filesystem::path destinat
     if (!impl_)
         co_return std::unexpected(
             error{errc::invalid_argument, "store is not open", "store::get_to_file"});
-    co_return co_await impl_->value->get_to_file(id, std::move(destination));
+    auto value = co_await impl_->value->get_to_file(id, destination);
+    if (!value && retry_after_refresh(value.error()) &&
+        (co_await refreshed(*impl_->value)).value_or(false)) {
+        value = co_await impl_->value->get_to_file(id, std::move(destination));
+    }
+    co_return value;
+}
+
+std::vector<std::string> store::recoveries() const {
+    return impl_ ? impl_->value->recoveries() : std::vector<std::string>{};
+}
+
+std::vector<std::string> store::recorded_recoveries() const {
+    return impl_ ? impl_->value->recorded_recoveries() : std::vector<std::string>{};
 }
 
 result<blob> store::blob_for(digest id) const {
@@ -186,7 +216,12 @@ std::vector<digest> store::object_ids(std::string_view kind) const {
 runtime::task<std::vector<std::byte>> store::get(digest id) {
     if (!impl_)
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::get"});
-    co_return co_await impl_->value->get(id);
+    auto value = co_await impl_->value->get(id);
+    if (!value && retry_after_refresh(value.error()) &&
+        (co_await refreshed(*impl_->value)).value_or(false)) {
+        value = co_await impl_->value->get(id);
+    }
+    co_return value;
 }
 
 runtime::task<std::uint64_t>
@@ -194,21 +229,35 @@ store::read(digest id, std::uint64_t offset, std::span<std::byte> into) {
     if (!impl_)
         co_return std::unexpected(
             error{errc::invalid_argument, "store is not open", "store::read"});
-    co_return co_await impl_->value->read(id, offset, into);
+    auto value = co_await impl_->value->read(id, offset, into);
+    if (!value && retry_after_refresh(value.error()) &&
+        (co_await refreshed(*impl_->value)).value_or(false)) {
+        value = co_await impl_->value->read(id, offset, into);
+    }
+    co_return value;
 }
 
 runtime::task<bool> store::contains(digest id) {
     if (!impl_)
         co_return std::unexpected(
             error{errc::invalid_argument, "store is not open", "store::contains"});
-    co_return co_await impl_->value->contains(id);
+    auto value = co_await impl_->value->contains(id);
+    if (value && !*value && (co_await refreshed(*impl_->value)).value_or(false)) {
+        value = co_await impl_->value->contains(id);
+    }
+    co_return value;
 }
 
 runtime::task<blob_availability> store::has(digest id) {
     if (!impl_) {
         co_return std::unexpected(error{errc::invalid_argument, "store is not open", "store::has"});
     }
-    co_return co_await impl_->value->has(id);
+    auto value = co_await impl_->value->has(id);
+    if (value && *value != blob_availability::local &&
+        (co_await refreshed(*impl_->value)).value_or(false)) {
+        value = co_await impl_->value->has(id);
+    }
+    co_return value;
 }
 
 runtime::task<void> store::register_remote_source(std::string id,

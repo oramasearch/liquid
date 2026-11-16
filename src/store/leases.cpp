@@ -205,6 +205,11 @@ load_leases(std::shared_ptr<::liquid::store_backend> backend, std::filesystem::p
             if (!entry.key.ends_with(".lease"))
                 continue;
             auto bytes = co_await read_backend_object(backend, entry.key);
+            // Another process renews and releases leases while this one lists them: a lease
+            // renewed or released between the listing and the read is simply no longer there
+            // (liquid #526).
+            if (!bytes && bytes.error().code == errc::not_found)
+                continue;
             if (!bytes)
                 co_return std::unexpected(bytes.error());
             auto decoded = decode(*bytes, entry.key);

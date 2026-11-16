@@ -83,7 +83,13 @@ sweep takes the mutation lock again, reloads the committed tombstone manifest so
 added by an eviction or redaction during marking stay dead, includes roots and objects created
 during marking, and treats a lease created during the epoch as after the high-water mark for this
 sweep. The mutation lock is the store's thread-safe asynchronous mutex; see the mutation mutex
-section of [store.md](store.md).
+section of [store.md](store.md). On a disk store opened without an owner, the collection also holds
+the root's cross-process write lock from its snapshot to the end of its sweep, reloading first what
+other processes published, so no other process appends below the high-water mark or publishes an
+object map or index manifest while it runs (liquid #526,
+[store.md](store.md#several-writers-without-an-owner)). `lease_root` in another process waits for
+the lock. A lease another process writes straight to `leases/` during marking (a repository's
+retention roots do) is not seen by this collection.
 
 The backend publication order is:
 

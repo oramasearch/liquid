@@ -7729,6 +7729,7 @@ result<repository_status> repository::status() {
     for (const auto& branch : impl_->current.data_branches) {
         output.data_branches.push_back(branch.record);
     }
+    output.store_recoveries = repository_detail::store_access::recorded_recoveries(impl_->objects);
     auto visit = [&](auto&& self, const working_entry& entry, std::string path) -> result<void> {
         if (entry.kind == entry_kind::file) {
             auto remote =

@@ -203,6 +203,9 @@ struct LIQUID_EXPORT repository_status {
     std::optional<change_id> head;
     agents_config agents;
     std::vector<data_branch_record> data_branches;
+    // The last repairs any process made to the repository's store when it opened, oldest first,
+    // each "<UTC time> <what>", for example an index rebuilt from the packs (liquid #526).
+    std::vector<std::string> store_recoveries;
 };
 
 struct LIQUID_EXPORT snapshot {

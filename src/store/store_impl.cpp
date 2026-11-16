@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cstring>
+#include <format>
 #include <limits>
 #include <numeric>
 #include <set>
@@ -28,9 +30,37 @@
 #include "objects/records.hpp"
 #include "owner_lock.hpp"
 #include "references.hpp"
+#include "write_lock.hpp"
 
 namespace liquid::store_detail {
 namespace {
+
+// How long a writer waits for another process's mutation to finish before it gives up with
+// errc::busy (liquid #526). A collection holds the lock for its whole run.
+constexpr auto write_wait = std::chrono::minutes{10};
+constexpr std::string_view recovery_log_key = "recoveries.log";
+constexpr std::size_t maximum_recorded_recoveries = 20;
+
+// A temporary a writer abandoned when it was killed between writing and renaming. Every live
+// publication renames its temporary within one write, so one an hour old has no writer.
+void remove_abandoned_temporaries(const std::filesystem::path& root) {
+    const auto cutoff = std::filesystem::file_time_type::clock::now() - std::chrono::hours{1};
+    for (const auto* directory : {"packs", "index", "gc", "leases", "keys"}) {
+        auto code = std::error_code{};
+        auto entries = std::filesystem::directory_iterator(root / directory, code);
+        if (code)
+            continue;
+        for (const auto& entry : entries) {
+            const auto name = entry.path().filename().string();
+            if (!name.ends_with(".backend-tmp"))
+                continue;
+            auto ignored = std::error_code{};
+            const auto written = entry.last_write_time(ignored);
+            if (!ignored && written < cutoff)
+                std::filesystem::remove(entry.path(), ignored);
+        }
+    }
+}
 
 constexpr std::array<std::byte, 8> objects_magic_v1{std::byte{'L'},
                                                     std::byte{'Q'},
@@ -261,6 +291,34 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
                 co_return std::unexpected(grant.error());
             owner = owner_hold(std::move(disk), std::move(*grant), false);
         }
+        // Without an owner, several processes may write this root at once (liquid #526): take its
+        // write lock before repairing anything, and hold it until the state below is loaded.
+        auto writes = std::optional<write_lock>{};
+        auto mutations_before = std::uint64_t{};
+        if (!owned) {
+            if (const auto lock_path = backend_local_path(persistence, "store.write.lock")) {
+                auto opened_lock = write_lock::open(*lock_path);
+                if (!opened_lock)
+                    co_return std::unexpected(opened_lock.error());
+                auto acquired = co_await opened_lock->acquire(write_wait);
+                if (!acquired)
+                    co_return std::unexpected(acquired.error());
+                mutations_before = backend_mutations(persistence);
+                writes = std::move(*opened_lock);
+                if (const auto local_root = lock_path->parent_path(); !local_root.empty()) {
+                    auto swept = co_await runtime::offload(
+                        [local_root] { remove_abandoned_temporaries(local_root); });
+                    static_cast<void>(swept);
+                }
+            }
+        }
+        auto generation = std::uint64_t{};
+        if (writes) {
+            auto read = writes->generation();
+            if (!read)
+                co_return std::unexpected(read.error());
+            generation = *read;
+        }
         for (const auto& temporary :
              {"gc/MANIFEST.tmp", "packs/objects.meta.tmp", "packs/remotes.meta.tmp"}) {
             auto removed = co_await persistence->remove(temporary);
@@ -311,46 +369,252 @@ runtime::task<std::unique_ptr<store_backend>> store_backend::open(std::filesyste
         auto result =
             std::unique_ptr<store_backend>(new store_backend(std::move(root), std::move(options)));
         result->owner_ = std::move(owner);
+        auto hold = write_hold{};
+        if (writes) {
+            result->writes_ = std::move(writes);
+            result->holds_ = 1;
+            result->generation_ = generation;
+            result->mutations_at_hold_ = mutations_before;
+            hold = write_hold{result.get()};
+        }
         if (result->options_.keys) {
             auto attached = co_await result->options_.keys->attach(result->root_ / "keys");
             if (!attached)
                 co_return std::unexpected(attached.error());
         }
-        auto objects = co_await result->load_objects();
-        if (!objects)
-            co_return std::unexpected(objects.error());
-        auto remotes = co_await result->load_remotes();
-        if (!remotes)
-            co_return std::unexpected(remotes.error());
-        auto collection = co_await load_collection_manifest(result->persistence_, result->root_);
-        if (!collection)
-            co_return std::unexpected(collection.error());
-        auto recovered = co_await result->recover_pending_compactions(*collection);
-        if (!recovered)
-            co_return std::unexpected(recovered.error());
-        auto manifest_exists = co_await backend_exists(result->persistence_, "index/MANIFEST");
-        if (!manifest_exists) {
-            co_return std::unexpected(manifest_exists.error());
-        }
-        auto opened = co_await result->index_.open();
-        if (!opened && opened.error().code != errc::corrupt)
-            co_return std::unexpected(opened.error());
-        auto indexed = co_await result->index_packs(
-            !opened || !*manifest_exists || result->index_.collection_epoch() != collection->epoch);
-        if (!indexed)
-            co_return std::unexpected(indexed.error());
-        auto subjects = co_await result->rebuild_subject_index();
-        if (!subjects)
-            co_return std::unexpected(subjects.error());
-        auto remote_records = co_await result->rebuild_remote_record_index();
-        if (!remote_records)
-            co_return std::unexpected(remote_records.error());
+        auto loaded = co_await result->load_state();
+        if (!loaded)
+            co_return std::unexpected(loaded.error());
+        hold.release();
         co_return result;
     } catch (const std::system_error& caught) {
         co_return std::unexpected(store_error(errc::io, caught.what(), root.string()));
     } catch (const std::exception& caught) {
         co_return std::unexpected(store_error(errc::internal, caught.what(), root.string()));
     }
+}
+
+runtime::task<void> store_backend::load_state() {
+    auto objects = co_await load_objects();
+    if (!objects)
+        co_return std::unexpected(objects.error());
+    auto remotes = co_await load_remotes();
+    if (!remotes)
+        co_return std::unexpected(remotes.error());
+    auto collection = co_await load_collection_manifest(persistence_, root_);
+    if (!collection)
+        co_return std::unexpected(collection.error());
+    auto recovered = co_await recover_pending_compactions(*collection);
+    if (!recovered)
+        co_return std::unexpected(recovered.error());
+    auto manifest_exists = co_await backend_exists(persistence_, "index/MANIFEST");
+    if (!manifest_exists) {
+        co_return std::unexpected(manifest_exists.error());
+    }
+    // The index is a cache of the pack tables (decision 8): a manifest that is corrupt, or that
+    // names a run file which is missing or torn, is rebuilt from the packs rather than refused
+    // (liquid #526), and the store records that it did.
+    auto opened = co_await index_.open();
+    auto note = std::optional<std::string>{};
+    if (!opened) {
+        note = "index rebuilt from packs: " + opened.error().message;
+        if (!opened.error().context.empty())
+            *note += " (" + opened.error().context + ")";
+    }
+    auto indexed = co_await index_packs(!opened || !*manifest_exists ||
+                                        index_.collection_epoch() != collection->epoch);
+    if (!indexed)
+        co_return std::unexpected(indexed.error());
+    auto recorded = co_await load_recovery_log();
+    if (!recorded)
+        co_return std::unexpected(recorded.error());
+    if (note) {
+        recoveries_.push_back(*note);
+        auto logged = co_await record_recovery(std::move(*note));
+        if (!logged)
+            co_return std::unexpected(logged.error());
+    }
+    auto subjects = co_await rebuild_subject_index();
+    if (!subjects)
+        co_return std::unexpected(subjects.error());
+    co_return co_await rebuild_remote_record_index();
+}
+
+runtime::task<void> store_backend::refresh() {
+    auto pending = std::vector<stored_object>{};
+    for (const auto& key : unpublished_objects_) {
+        if (const auto found = objects_.find(key); found != objects_.end()) {
+            pending.push_back(found->second);
+        }
+    }
+    objects_.clear();
+    remotes_.clear();
+    remote_records_.clear();
+    chunk_keys_.clear();
+    chunk_bases_.clear();
+    packs_.clear();
+    delta_candidates_.clear();
+    delta_candidate_order_.clear();
+    delta_candidate_bytes_ = 0;
+    subjects_.clear();
+    current_pack_ = 0;
+    auto loaded = co_await load_state();
+    if (!loaded)
+        co_return std::unexpected(loaded.error());
+    // An open object batch's objects are not in the published map yet. Their chunks are in the
+    // packs, which the reload indexed, so keeping their entries keeps the batch whole.
+    for (auto& object : pending) {
+        if (!object.key_id.empty()) {
+            for (const auto& chunk : object.chunks)
+                chunk_keys_.try_emplace(to_string(chunk), object.key_id);
+            if (object.has_descriptor)
+                chunk_keys_.try_emplace(to_string(object.descriptor), object.key_id);
+        }
+        objects_.insert_or_assign(to_string(object.id), std::move(object));
+        objects_dirty_ = true;
+    }
+    co_return result<void>{};
+}
+
+runtime::task<write_hold> store_backend::hold_writes() {
+    if (!writes_)
+        co_return write_hold{};
+    {
+        const auto guard = std::lock_guard{hold_state_};
+        if (holds_ != 0) {
+            ++holds_;
+            co_return write_hold{this};
+        }
+    }
+    auto acquired = co_await writes_->acquire(write_wait);
+    if (!acquired)
+        co_return std::unexpected(acquired.error());
+    {
+        const auto guard = std::lock_guard{hold_state_};
+        holds_ = 1;
+        mutations_at_hold_ = backend_mutations(persistence_);
+    }
+    auto hold = write_hold{this};
+    auto current = writes_->generation();
+    if (!current)
+        co_return std::unexpected(current.error());
+    auto seen = std::uint64_t{};
+    auto reload = false;
+    {
+        const auto guard = std::lock_guard{hold_state_};
+        seen = generation_;
+        reload = reload_pending_;
+    }
+    if (*current != seen || reload) {
+        auto refreshed = co_await refresh();
+        const auto guard = std::lock_guard{hold_state_};
+        if (!refreshed) {
+            reload_pending_ = true;
+            co_return std::unexpected(refreshed.error());
+        }
+        reload_pending_ = false;
+    }
+    {
+        const auto guard = std::lock_guard{hold_state_};
+        generation_ = *current;
+    }
+    co_return hold;
+}
+
+void store_backend::release_writes() noexcept {
+    const auto guard = std::lock_guard{hold_state_};
+    if (holds_ == 0 || --holds_ != 0)
+        return;
+    if (backend_mutations(persistence_) != mutations_at_hold_) {
+        // Another handle of this root learns from the new generation that it must reload. If the
+        // write fails, other handles keep a stale view; the next successful hold publishes again
+        // because its own mutations differ.
+        if (writes_->set_generation(generation_ + 1))
+            ++generation_;
+    }
+    writes_->release();
+}
+
+runtime::task<bool> store_backend::refresh_if_stale() {
+    if (!writes_)
+        co_return false;
+    auto current = writes_->generation();
+    if (!current)
+        co_return std::unexpected(current.error());
+    {
+        const auto guard = std::lock_guard{hold_state_};
+        if (*current == generation_ && !reload_pending_)
+            co_return false;
+    }
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error)
+        co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::refresh"));
+    auto hold = co_await hold_writes();
+    if (!hold)
+        co_return std::unexpected(hold.error());
+    co_return true;
+}
+
+std::vector<std::string> store_backend::recoveries() const {
+    return recoveries_;
+}
+
+std::vector<std::string> store_backend::recorded_recoveries() const {
+    return recorded_recoveries_;
+}
+
+runtime::task<void> store_backend::load_recovery_log() {
+    recorded_recoveries_.clear();
+    auto raw = co_await read_backend_object(persistence_, std::string{recovery_log_key});
+    if (!raw) {
+        if (raw.error().code == errc::not_found)
+            co_return result<void>{};
+        co_return std::unexpected(raw.error());
+    }
+    const auto text = std::string(reinterpret_cast<const char*>(raw->data()), raw->size());
+    std::size_t start = 0;
+    for (auto end = text.find('\n'); end != std::string::npos; end = text.find('\n', start)) {
+        if (end != start)
+            recorded_recoveries_.push_back(text.substr(start, end - start));
+        start = end + 1;
+    }
+    co_return result<void>{};
+}
+
+// Keeps the last repairs where any later process can read them: the process that repaired the
+// store is often the daemon, whose output nobody sees (liquid #526).
+runtime::task<void> store_backend::record_recovery(std::string note) {
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    recorded_recoveries_.push_back(std::format("{:%Y-%m-%dT%H:%M:%SZ} {}", now, note));
+    while (recorded_recoveries_.size() > maximum_recorded_recoveries)
+        recorded_recoveries_.erase(recorded_recoveries_.begin());
+    auto text = std::string{};
+    for (const auto& line : recorded_recoveries_)
+        text += line + "\n";
+    co_return co_await persistence_->put(
+        std::string{recovery_log_key},
+        std::vector<std::byte>(reinterpret_cast<const std::byte*>(text.data()),
+                               reinterpret_cast<const std::byte*>(text.data()) + text.size()));
+}
+
+write_hold::~write_hold() {
+    release();
+}
+
+write_hold::write_hold(write_hold&& other) noexcept
+    : owner_(std::exchange(other.owner_, nullptr)) {}
+
+write_hold& write_hold::operator=(write_hold&& other) noexcept {
+    if (this != &other) {
+        release();
+        owner_ = std::exchange(other.owner_, nullptr);
+    }
+    return *this;
+}
+
+void write_hold::release() noexcept {
+    if (auto* owner = std::exchange(owner_, nullptr))
+        owner->release_writes();
 }
 
 runtime::task<void>
@@ -735,7 +999,11 @@ runtime::task<void> store_backend::save_objects() {
     auto staged = co_await stage_objects();
     if (!staged)
         co_return std::unexpected(staged.error());
-    co_return co_await publish_staged_objects();
+    auto published = co_await publish_staged_objects();
+    if (!published)
+        co_return std::unexpected(published.error());
+    unpublished_objects_.clear();
+    co_return result<void>{};
 }
 
 runtime::task<void> store_backend::rebuild_subject_index() {
@@ -893,7 +1161,19 @@ runtime::task<void> store_backend::index_packs(bool rebuild) {
         index_.set_collection_epoch(collection->epoch);
         co_return co_await index_.rebuild(std::move(all));
     }
+    // Only frames the index does not already locate go to the memtable, so an open of a store
+    // whose index is current writes no run (liquid #526). Every open used to append a full copy
+    // of the index as a new run, which made each reader a writer. A digest held by several frames
+    // (a chunk two writers stored) is current when the index names any one of its live frames.
+    auto live_locations = std::set<std::pair<std::uint32_t, std::uint64_t>>{};
+    for (const auto& entry : all)
+        live_locations.emplace(entry.location.pack_id, entry.location.offset);
     for (auto& entry : all) {
+        auto known = index_.find(entry.id);
+        if (!known)
+            co_return std::unexpected(known.error());
+        if (*known && live_locations.contains({(*known)->pack_id, (*known)->offset}))
+            continue;
         auto inserted = index_.insert(std::move(entry));
         if (!inserted)
             co_return std::unexpected(inserted.error());
@@ -903,8 +1183,11 @@ runtime::task<void> store_backend::index_packs(bool rebuild) {
                 co_return std::unexpected(flushed.error());
         }
     }
+    // The rest stay in the memtable: they are frames of the packs, which every open scans, so
+    // writing them here would only add a run per open. The writer that appends next flushes them
+    // with its own entries.
     index_.set_highest_pack_id(highest);
-    co_return co_await index_.flush();
+    co_return result<void>{};
 }
 
 void store_backend::remember_delta_candidate(std::string_view scope,
@@ -1152,9 +1435,11 @@ runtime::task<void> store_backend::add_object(stored_object object) {
         if (object.has_descriptor)
             chunk_keys_.try_emplace(to_string(object.descriptor), object.key_id);
     }
-    objects_[to_string(object.id)] = std::move(object);
+    const auto key = to_string(object.id);
+    objects_[key] = std::move(object);
     objects_dirty_ = true;
     if (object_batch_depth_ != 0) {
+        unpublished_objects_.insert(key);
         co_return result<void>{};
     }
     auto durable = co_await persistence_->barrier();
@@ -1175,6 +1460,9 @@ void store_backend::abort_object_batch() {
 }
 
 runtime::task<void> store_backend::commit_object_batch() {
+    auto [lock_error, guard] = co_await mutation_.scoped_lock();
+    if (lock_error)
+        co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::batch"));
     if (object_batch_depth_ == 0) {
         co_return std::unexpected(
             store_error(errc::invalid_argument, "object batch is not active", "store::batch"));
@@ -1183,6 +1471,11 @@ runtime::task<void> store_backend::commit_object_batch() {
     if (object_batch_depth_ != 0 || !objects_dirty_) {
         co_return result<void>{};
     }
+    // The map is published under the write lock from a view that includes every other writer's
+    // objects; the batch's own objects survived any reload in between.
+    auto writes = co_await hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     objects_dirty_ = false;
     co_return co_await save_objects();
 }
@@ -1251,6 +1544,9 @@ runtime::task<digest> store_backend::put_selected(std::vector<std::byte> input,
     auto [lock_error, guard] = co_await mutation_.scoped_lock();
     if (lock_error)
         co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::put"));
+    auto writes = co_await hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     std::optional<crypto_detail::domain_keys> encryption;
     auto remote_record = std::optional<blob>{};
     if (!selected_key) {
@@ -1477,6 +1773,9 @@ runtime::task<digest> store_backend::put_file(std::filesystem::path source) {
     if (lock_error) {
         co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::put_file"));
     }
+    auto writes = co_await hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     try {
         auto encryption = std::optional<crypto_detail::domain_keys>{};
         auto key_id = std::string{};
@@ -1753,6 +2052,9 @@ store_backend::hydrate_remote_chunk(const blob& value, std::size_t index, std::u
             co_return std::unexpected(
                 store_error(errc::busy, lock_error.message(), "remote chunk hydration"));
         }
+        auto writes = co_await hold_writes();
+        if (!writes)
+            co_return std::unexpected(writes.error());
         const auto resemblance = resemblance_hash(bytes);
         auto stored = co_await store_chunk(value.chunks[index], bytes, resemblance);
         if (!stored) {
@@ -2037,6 +2339,9 @@ runtime::task<void> store_backend::register_remote(blob value) {
         co_return std::unexpected(
             store_error(errc::busy, lock_error.message(), "store::register_remote"));
     }
+    auto writes = co_await hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     remotes_[to_string(value.content)] = std::move(value);
     co_return co_await save_remotes();
 }
@@ -2167,6 +2472,9 @@ store_backend::lease_root(digest id, std::chrono::seconds ttl, std::string owner
     if (lock_error)
         co_return std::unexpected(
             store_error(errc::busy, lock_error.message(), "store::lease_root"));
+    auto writes = co_await hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     if (!objects_.contains(to_string(id))) {
         co_return std::unexpected(
             store_error(errc::not_found, "lease root is not present", to_string(id)));
@@ -2267,6 +2575,9 @@ runtime::task<transfer_counts> store_backend::transfer_copy_chunk(store_backend&
     if (lock_error) {
         co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::transfer"));
     }
+    auto writes = co_await hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     // Another writer may have stored it while this one read the source.
     present = index_.find(id);
     if (!present) {
@@ -2337,6 +2648,9 @@ runtime::task<transfer_counts> store_backend::transfer_copy_object(store_backend
             co_return std::unexpected(
                 store_error(errc::busy, lock_error.message(), "store::transfer"));
         }
+        auto writes = co_await hold_writes();
+        if (!writes)
+            co_return std::unexpected(writes.error());
         auto present = index_.find(chunk);
         if (!present) {
             co_return std::unexpected(present.error());
@@ -2382,6 +2696,9 @@ runtime::task<transfer_counts> store_backend::transfer_copy_object(store_backend
     if (lock_error) {
         co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::transfer"));
     }
+    auto writes = co_await hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     if (objects_.contains(to_string(object.id))) {
         co_return counts;
     }
@@ -2441,6 +2758,9 @@ runtime::task<transfer_counts> store_backend::transfer_copy_remote(const blob& r
     if (lock_error) {
         co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::transfer"));
     }
+    auto writes = co_await hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     const auto key = to_string(registration.content);
     if (const auto found = remotes_.find(key);
         found != remotes_.end() && same_registration(found->second, registration)) {
@@ -2460,6 +2780,9 @@ runtime::task<void> store_backend::transfer_publish() {
     if (lock_error) {
         co_return std::unexpected(store_error(errc::busy, lock_error.message(), "store::transfer"));
     }
+    auto writes = co_await hold_writes();
+    if (!writes)
+        co_return std::unexpected(writes.error());
     if (transfer_appended_) {
         if (transfer_pack_ > index_.highest_pack_id()) {
             index_.set_highest_pack_id(transfer_pack_);
