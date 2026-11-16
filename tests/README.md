@@ -194,6 +194,11 @@ Focused CRDT cases verify commit metadata, compact checkpoint journal replay, co
 atomicity, and upstream sync convergence; the repository replica case also covers distinct clone
 actors and multi-round sync.
 
+`test_delegated_edit.cpp` (target `liquid-delegated-edit-tests`, linked only against
+`liquid::liquid`, no private header) issues a delegation to a local agent, applies a structural
+edit preview in its session, publishes it as one operation, and reads the agent and the principal
+back from the drips, the operation and the attribution (liquid #538).
+
 `test_collaboration.cpp` covers speculative agent sessions, delegated publication, semantic leases,
 transient presence, epoch resynchronization, and line attribution across human and agent changes
 and a path move. Its delegation cases prove the holding must-nevers of

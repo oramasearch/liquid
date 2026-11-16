@@ -104,6 +104,8 @@ struct stored_operation {
     actor by;
     std::chrono::sys_seconds at;
     bool agent{};
+    // For an operation a delegated agent session recorded, the principal it acted for (liquid#538).
+    std::optional<actor> principal;
     std::map<std::string, std::string> metadata;
 };
 struct persisted_drip {
@@ -602,7 +604,7 @@ auto encode_repository_document(const repository_document& value)
         for (const auto& [name, value] : operation.metadata) {
             operation_metadata.emplace_back(name, value);
         }
-        ops.push_back(
+        auto encoded_operation =
             map({{"id", digest_value(operation.id.value)},
                  {"kind", cbor::value{operation.kind}},
                  {"from", cbor::value{operation.from}},
@@ -623,7 +625,12 @@ auto encode_repository_document(const repository_document& value)
                  {"head_after",
                   operation.head_after ? digest_value(operation.head_after->value)
                                        : cbor::value{cbor::null{}}},
-                 {"metadata", cbor::value{std::move(operation_metadata)}}}));
+                 {"metadata", cbor::value{std::move(operation_metadata)}}});
+        if (operation.principal) {
+            std::get<cbor::value::map>(encoded_operation.data)
+                .emplace_back("principal", actor_value(*operation.principal));
+        }
+        ops.push_back(std::move(encoded_operation));
     }
     auto locks = cbor::value::array{};
     for (const auto& lock : value.locks) {
@@ -1049,6 +1056,7 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
         const auto* head_before = find(item, "head_before");
         const auto* head_after = find(item, "head_after");
         const auto* operation_metadata = find(item, "metadata");
+        const auto* operation_principal = find(item, "principal");
         const auto* kind_text =
             operation_kind ? std::get_if<std::string>(&operation_kind->data) : nullptr;
         const auto* from_text = from ? std::get_if<std::string>(&from->data) : nullptr;
@@ -1117,6 +1125,13 @@ auto decode_repository_document(std::span<const std::byte> input) -> result<repo
                     errc::corrupt, "invalid operation agent marker", "repository document"));
             }
             decoded_operation.agent = *marked;
+        }
+        if (operation_principal) {
+            auto principal = decode_actor(*operation_principal);
+            if (!principal) {
+                return std::unexpected(principal.error());
+            }
+            decoded_operation.principal = std::move(*principal);
         }
         if (session) {
             const auto* raw = std::get_if<cbor::value::bytes>(&session->data);
@@ -5188,6 +5203,9 @@ struct repository::impl {
         operation.by = current_actor();
         operation.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
         operation.agent = acting_delegation.has_value();
+        if (acting_delegation) {
+            operation.principal = signing_key.identity();
+        }
         if (operation.kind == "write" || operation.kind == "mkdir") {
             auto parts = split_path(operation.from);
             auto* after = parts ? lookup(current.root, *parts) : nullptr;
@@ -5210,6 +5228,9 @@ struct repository::impl {
         operation.by = signing_key.identity();
         operation.at = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
         operation.agent = acting_delegation.has_value();
+        if (acting_delegation) {
+            operation.principal = signing_key.identity();
+        }
         current.operations.push_back(std::move(operation));
     }
     runtime::task<undo_report> apply_undo(std::vector<stored_operation> operations,
@@ -6409,6 +6430,12 @@ result<node_id> repository::id() const {
     }
     return impl_->current.repository;
 }
+result<actor> repository::principal() const {
+    if (!impl_) {
+        return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    return impl_->signing_key.identity();
+}
 runtime::task<digest> repository::root_digest() {
     if (!impl_)
         co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
@@ -6576,6 +6603,10 @@ runtime::task<std::vector<drip>> repository::drips() {
                           .reasoned_from = decoded->reasoned_from,
                           .revalidated = decoded->revalidated,
                           .delegation = decoded->delegation};
+        if (decoded->delegation) {
+            value.principal =
+                saved.author.taap_id.empty() ? impl_->signing_key.identity() : saved.author;
+        }
         for (auto& path : decoded->paths) {
             value.ops.push_back({std::move(path)});
         }
@@ -8362,7 +8393,9 @@ runtime::task<std::vector<operation_record>> repository::operations(log_options)
                           operation->by,
                           operation->at,
                           operation->session,
-                          operation->metadata});
+                          operation->metadata,
+                          operation->agent,
+                          operation->principal});
     }
     co_return output;
 }
@@ -8378,6 +8411,7 @@ struct attribution_source {
     actor by;
     session_id session;
     bool agent{};
+    std::optional<actor> principal;
 };
 
 auto attribution_groups(const repository_document& document)
@@ -8446,7 +8480,10 @@ auto source_for_change(const std::map<std::string, attribution_operation_group>&
         }
     }
     selected = selected ? selected : found->second.record;
-    return selected ? attribution_source{selected->by, selected->session, selected->agent}
+    return selected ? attribution_source{selected->by,
+                                         selected->session,
+                                         selected->agent,
+                                         selected->agent ? selected->principal : std::nullopt}
                     : attribution_source{.by = value.author};
 }
 
@@ -8495,7 +8532,8 @@ auto apply_attribution_hunks(std::span<const line_attribution> previous,
                               .by = source.by,
                               .session = source.session,
                               .change = change_value,
-                              .agent = source.agent});
+                              .agent = source.agent,
+                              .principal = source.principal});
         }
         old_offset = old_start + static_cast<std::size_t>(hunk.old_count);
         new_offset = new_start + static_cast<std::size_t>(hunk.new_count);
@@ -8977,7 +9015,102 @@ auto authorize_session(store& objects,
     co_return authority;
 }
 
+// The structural edit a session's private replica holds, if any (liquid#538): the
+// `structural_edit` operation `session::apply_edit` recorded there. It is read from the replica's
+// own operations, so a reopened session publishes its edit the same way.
+auto held_structural_edit(const repository_document& document) -> const stored_operation* {
+    const auto found =
+        std::ranges::find(document.operations, "structural_edit", &stored_operation::kind);
+    return found == document.operations.end() ? nullptr : &*found;
+}
+
 } // namespace
+
+runtime::task<issued_delegation> repository::issue_delegation(delegation_request request) {
+    if (!impl_) {
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    }
+    const auto principal = impl_->signing_key.identity();
+    if (request.agent.taap_id.empty()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "delegation agent has no TAAP id", "delegation/1"));
+    }
+    if (request.agent.taap_id == principal.taap_id) {
+        co_return std::unexpected(failure(errc::invalid_argument,
+                                          "a principal cannot delegate to itself",
+                                          request.agent.taap_id));
+    }
+    if (request.scopes.empty() ||
+        std::ranges::any_of(request.scopes, [](const auto& scope) { return scope.empty(); })) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "delegation needs at least one scope", "delegation/1"));
+    }
+    if (request.lifetime <= std::chrono::seconds::zero() ||
+        request.lifetime > delegation_maximum_lifetime) {
+        co_return std::unexpected(failure(errc::invalid_argument,
+                                          "delegation lifetime must be positive and at most "
+                                          "delegation_maximum_lifetime",
+                                          "delegation/1"));
+    }
+    if (request.model && request.model->empty()) {
+        co_return std::unexpected(
+            failure(errc::invalid_argument, "delegation model is empty", "delegation/1"));
+    }
+    auto subject = delegation_subject(request.agent);
+    if (!subject) {
+        co_return std::unexpected(subject.error());
+    }
+    const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
+    auto value = attestation{.subject = *subject,
+                             .profile = "delegation/1",
+                             .at = now,
+                             .issuer = principal,
+                             .subject_kind = attestation_subject_kind::actor};
+    value.attributes = {
+        {"scopes", std::move(request.scopes)},
+        {"may_publish", request.may_publish},
+        {"may_lease", request.may_lease},
+        {"depth_remaining", request.depth_remaining},
+        {"dispatcher", principal.taap_id},
+        {"not_after",
+         static_cast<std::uint64_t>((now + request.lifetime).time_since_epoch().count())},
+        {"repository", node_text(impl_->current.repository)},
+    };
+    if (request.model) {
+        value.attributes.push_back({"model", std::move(*request.model)});
+    }
+    auto valid = validate_delegation(value);
+    if (!valid) {
+        co_return std::unexpected(valid.error());
+    }
+    auto window = check_delegation_window(value, now);
+    if (!window) {
+        co_return std::unexpected(window.error());
+    }
+    auto body = objects::encode_attestation_body(value);
+    if (!body) {
+        co_return std::unexpected(body.error());
+    }
+    auto signed_value = co_await impl_->signing_key.sign("attestation", std::move(*body));
+    if (!signed_value) {
+        co_return std::unexpected(signed_value.error());
+    }
+    auto signature = encode_attestation_signature(*signed_value);
+    if (!signature) {
+        co_return std::unexpected(signature.error());
+    }
+    value.signature = std::move(*signature);
+    auto encoded = encode_attestation(value);
+    if (!encoded) {
+        co_return std::unexpected(encoded.error());
+    }
+    auto id =
+        co_await repository_detail::store_access::put_plain(impl_->objects, std::move(*encoded));
+    if (!id) {
+        co_return std::unexpected(id.error());
+    }
+    co_return issued_delegation{.delegation = std::move(value), .id = *id};
+}
 
 runtime::task<session> repository::fork_session(session_options options) {
     if (!impl_) {
@@ -9194,6 +9327,10 @@ session::write(std::string path, std::vector<std::byte> contents, write_options 
     if (!impl_ || !impl_->active) {
         co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
     }
+    if (held_structural_edit(impl_->private_replica.impl_->current)) {
+        co_return std::unexpected(
+            failure(errc::conflict, "session holds a structural edit; publish or discard it"));
+    }
     options.base.reset();
     co_return co_await impl_->private_replica.write(
         std::move(path), std::move(contents), std::move(options));
@@ -9204,6 +9341,10 @@ session::write_file(std::string path, std::filesystem::path source, write_option
     if (!impl_ || !impl_->active) {
         co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
     }
+    if (held_structural_edit(impl_->private_replica.impl_->current)) {
+        co_return std::unexpected(
+            failure(errc::conflict, "session holds a structural edit; publish or discard it"));
+    }
     options.base.reset();
     co_return co_await impl_->private_replica.write_file(
         std::move(path), std::move(source), std::move(options));
@@ -9212,6 +9353,10 @@ session::write_file(std::string path, std::filesystem::path source, write_option
 runtime::task<void> session::move(std::string from, std::string to, write_options options) {
     if (!impl_ || !impl_->active) {
         co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    if (held_structural_edit(impl_->private_replica.impl_->current)) {
+        co_return std::unexpected(
+            failure(errc::conflict, "session holds a structural edit; publish or discard it"));
     }
     options.base.reset();
     co_return co_await impl_->private_replica.move(
@@ -9222,8 +9367,42 @@ runtime::task<void> session::remove(std::string path, write_options options) {
     if (!impl_ || !impl_->active) {
         co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
     }
+    if (held_structural_edit(impl_->private_replica.impl_->current)) {
+        co_return std::unexpected(
+            failure(errc::conflict, "session holds a structural edit; publish or discard it"));
+    }
     options.base.reset();
     co_return co_await impl_->private_replica.remove(std::move(path), std::move(options));
+}
+
+runtime::task<void> session::apply_edit(const edit_preview& preview) {
+    if (!impl_ || !impl_->active) {
+        co_return std::unexpected(failure(errc::invalid_argument, "session is not active"));
+    }
+    if (!impl_->private_replica.impl_->current.operations.empty()) {
+        co_return std::unexpected(
+            failure(errc::conflict, "a structural edit must be the only change a session holds"));
+    }
+    auto still_valid = check_delegation_now(impl_->delegation,
+                                            impl_->delegation_id,
+                                            impl_->chain,
+                                            impl_->chain_ids,
+                                            impl_->shared->impl_->signing_key.identity().taap_id,
+                                            impl_->status);
+    if (!still_valid) {
+        co_return std::unexpected(still_valid.error());
+    }
+    for (const auto& file : preview.changes) {
+        if (!session_path_allowed(impl_->scopes, file.path)) {
+            co_return std::unexpected(
+                failure(errc::unauthorized, "edit is outside delegation scopes", file.path));
+        }
+    }
+    auto applied = co_await impl_->private_replica.apply_edit(preview);
+    if (!applied) {
+        co_return std::unexpected(applied.error());
+    }
+    co_return {};
 }
 
 runtime::task<void> session::lease(lease_claim claim, std::chrono::seconds ttl) {
@@ -9393,6 +9572,11 @@ runtime::task<publish_report> session::publish(publish_options options) {
         shared.session = saved_session;
     };
     auto report = publish_report{.session = id()};
+    auto held_edit = std::optional<std::pair<std::string, std::string>>{};
+    if (const auto* held = held_structural_edit(impl_->private_replica.impl_->current)) {
+        held_edit.emplace(held->from, held->to);
+    }
+    const auto operation_start = shared.current.operations.size();
     auto touched_directories = std::set<std::string>{};
     auto directory_paths = std::map<std::string, std::vector<std::string>>{};
     shared.defer_persistence = true;
@@ -9491,6 +9675,40 @@ runtime::task<publish_report> session::publish(publish_options options) {
         }
         ++shared.current.pending_drips;
         static_cast<void>(directory);
+    }
+    if (held_edit) {
+        // The edit is published as one operation, as `repository::apply_edit` records it, so it
+        // undoes whole and names the agent and the principal it acted for (liquid#538).
+        auto grouped = stored_operation{};
+        auto operation_id = random_operation_id(shared.hash_algorithm);
+        if (!operation_id) {
+            auto restored = restore_shared();
+            auto checkpointed = restored ? co_await shared.checkpoint() : result<void>{};
+            reset_publish_state();
+            if (!restored) {
+                co_return std::unexpected(restored.error());
+            }
+            if (!checkpointed) {
+                co_return std::unexpected(checkpointed.error());
+            }
+            co_return std::unexpected(operation_id.error());
+        }
+        grouped.id = *operation_id;
+        grouped.kind = "structural_edit";
+        grouped.from = held_edit->first;
+        grouped.to = held_edit->second;
+        for (auto index = operation_start; index < shared.current.operations.size(); ++index) {
+            auto& operation = shared.current.operations[index];
+            grouped.entries.insert(grouped.entries.end(),
+                                   std::make_move_iterator(operation.entries.begin()),
+                                   std::make_move_iterator(operation.entries.end()));
+        }
+        shared.current.operations.erase(shared.current.operations.begin() +
+                                            static_cast<std::ptrdiff_t>(operation_start),
+                                        shared.current.operations.end());
+        shared.record_operation(std::move(grouped));
+        shared.current.operations.back().by = impl_->agent;
+        report.operation = *operation_id;
     }
     report.directories = touched_directories.size();
     const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());

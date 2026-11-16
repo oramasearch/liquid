@@ -18,10 +18,11 @@ libliquid, across the local daemon wire, and through `liquid blame`.
 |---|---|
 | `line` | One-based line number at the requested change. |
 | `text` | The line contents without the terminating newline. |
-| `by` | TAAP actor recorded for the operation. |
+| `by` | TAAP actor recorded for the operation: the agent, for a delegated write. |
 | `session` | The 16-byte session that wrote the line. |
 | `change` | The change that introduced the current line contents. |
 | `agent` | `true` when the operation was published under scoped delegation. |
+| `principal` | For a delegated write, the principal the agent acted for, whose key signed the drips (liquid #538). Absent otherwise, and for delegated operations recorded before liquid #538. |
 
 `repository::attribution(path, change)` returns these records in line order. The path is resolved
 in the requested historical tree. Attribution then follows that file's stable `node_id` through
@@ -50,10 +51,55 @@ prints one line as:
 
 ```text
 1 change=blake3:<digest> session=<32-hex-digits> actor=<taap-id> agent=false\ttext
+2 change=blake3:<digest> session=<32-hex-digits> actor=<agent-id> agent=true for=<principal-id>\ttext
 ```
 
 `--json` emits one versioned object with `v`, `path`, `change`, and a `lines` array. Each line has
-`line`, `change`, `session`, `actor`, `agent`, and `text`. This is the stable editor-facing form.
+`line`, `change`, `session`, `actor`, `principal` (a TAAP id, or `null` for a line not written
+under delegation), `agent`, and `text`. This is the stable editor-facing form. The daemon wire
+carries `principal` as an optional text field of each line.
+
+`liquid log --ops` names a delegated drip's principal the same way: the text form ends with
+` for=<principal-id>`, and `--json` gives each drip a `principal` field (`null` for an ordinary
+drip). `drip::principal` and `operation_record::principal` carry it in the library, with
+`operation_record::agent`.
+
+## Assistant edits as a delegated agent
+
+liquid #538 lets an editor record an accepted assistant edit as the agent acting for the person,
+using the public API only:
+
+```cpp
+auto principal = repository.principal();
+auto assistant = liquid::local_agent(*principal, "assistant");
+auto issued = co_await repository.issue_delegation({.agent = *assistant,
+                                                    .scopes = {"src/left.cpp"},
+                                                    .may_publish = true,
+                                                    .model = "editor-assistant"});
+auto session = co_await repository.fork_session({.actor = *assistant,
+                                                 .delegation = issued->delegation,
+                                                 .status = liquid::local_delegation_status()});
+co_await session->apply_edit(preview);
+auto report = co_await session->publish({.message = "assistant edit"});
+```
+
+- `local_agent` and `issue_delegation` are described in
+  [attestations.md](attestations.md#issuing-a-delegation).
+- `session::apply_edit(preview)` checks every file against the delegation's scopes and the
+  delegation's window and status, then applies the preview in the session's private replica, where
+  each file's `before` digest must match the snapshot the session forked from.
+- The edit must be the only change the session holds. It is refused after a write, move, remove or
+  another edit, and those are refused after it, so the published operation is exactly the edit.
+- `session::publish` checks the base, scopes and leases as for any session, then records every
+  path it writes as one `structural_edit` operation. That operation carries the preview id in
+  `from` and the preview's attribution in `to`, names the agent in `by`, and is marked `agent` with
+  the principal. Its id is `publish_report::operation`, and `repository::undo` reverts it whole.
+- The published drips are signed by the principal and carry the delegation digest and the agent,
+  one drip per changed directory, as for any publish. `repository::attribution` marks the edited
+  lines `agent` with both identities.
+- The record lives in the session's private replica, so a session reopened with `open_session`
+  publishes its edit the same way. A failure part-way through `apply_edit` leaves the session
+  holding a partial edit; discard it.
 
 ## Plugin delivery
 
@@ -115,7 +161,11 @@ where each is enforced, and the test that proves it. Every must-never holds:
 The delegated-session must-nevers are proved by the `Collaboration` and `AttestationRegistry` tests
 named in the [threat model](../security/delegation-threat-model.md#must-nevers).
 `Collaboration.line_attribution_follows_changes_sessions_agents_and_moves` checks human and agent
-line ownership plus rename preservation. `Daemon.attribution_query_crosses_the_wire` compares the
+line ownership plus rename preservation. The `DelegatedEdit` tests
+(`tests/test_delegated_edit.cpp`, target `liquid-delegated-edit-tests`, which links only
+`liquid::liquid` and includes no private header) issue a delegation to a local agent, apply an edit
+preview in its session, publish it, and read the agent and the principal back from the drips, the
+operation and the attribution; they also check scope refusal and the narrow defaults. `Daemon.attribution_query_crosses_the_wire` compares the
 daemon result with the direct repository query. `cli-blame` checks the text and JSON contracts.
 The static and shared full suites also compile every public C++ header independently.
 

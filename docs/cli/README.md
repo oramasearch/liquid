@@ -192,8 +192,10 @@ and prints a 32-digit session ID. `session write` demonstrates cross-process pri
 library callers normally write through the returned `session` handle. `session publish` validates
 the original base and delegation scopes before any shared mutation, and `session discard` removes
 the private state and owned leases. `compact --epoch` prints the epoch number and compact document
-bytes. `log --ops --json` includes a `delegation` digest for version-3 agent drips, while `attest
-show` prints every typed attribute.
+bytes. `log --ops --json` includes a `delegation` digest and the `principal` the agent acted for
+for version-3 agent drips (`null` otherwise), and the text form ends such a drip with
+` for=<principal>`, while `attest show` prints every typed attribute. `blame` ends a delegated line
+with ` for=<principal>` and its `--json` gives every line a `principal` (liquid #538).
 
 `status` prints `remote_bytes`, the sum of current-tree file chunks that are registered remotely
 but not present in the local store, plus `agents.require_base`, the configured actor list, one line

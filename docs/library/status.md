@@ -123,7 +123,9 @@ appended in order or replaced whole, which Zetta's object storage requires (liqu
 change cuts, references, snapshots, historical document state, composition, conflict values,
 operation- and session-scoped local-intent undo, advisory locks, private speculative agent
 sessions, semantic file/symbol/range leases, transient presence, compaction epochs, scoped
-delegation attribution, stable-node per-line attribution, status, public tree/change diff,
+delegation attribution, delegations issued through the public API to keyless local agents and
+structural edits published from a delegated session as one operation naming the agent and its
+principal (liquid #538), stable-node per-line attribution, status, public tree/change diff,
 edit-surviving text anchors, paged result,
 attestation, trace, and SBOM enumeration, one-drip streaming file writes and tree imports, and
 caller-stated write bases with stale-reasoning refusal, disjoint re-validation, and forced

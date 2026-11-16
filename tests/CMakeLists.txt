@@ -588,18 +588,9 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_BLAME_ROOT=${CMAKE_CURRENT_BINARY_DIR}/blame-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/blame.cmake)
-  # Compiles the private attestation encoder directly, as liquid-verify-log-cli does, so the
-  # fixture links against hidden symbols in shared-library builds.
-  add_executable(liquid-session-cli-fixture
-    cli/session_fixture.cpp
-    ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
-    ${PROJECT_SOURCE_DIR}/src/objects/records.cpp)
-  target_include_directories(liquid-session-cli-fixture PRIVATE
-    ${PROJECT_SOURCE_DIR}/src
-    ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include
-    ${monocypher_source_SOURCE_DIR}/src
-    ${monocypher_source_SOURCE_DIR}/src/optional)
-  target_link_libraries(liquid-session-cli-fixture PRIVATE liquid::liquid liquid_monocypher)
+  # Issues its delegation through the public `repository::issue_delegation` (liquid#538).
+  add_executable(liquid-session-cli-fixture cli/session_fixture.cpp)
+  target_link_libraries(liquid-session-cli-fixture PRIVATE liquid::liquid)
   add_test(NAME cli-session
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -758,6 +749,11 @@ if(LIQUID_BUILD_CLI)
       TIMEOUT 1200)
   endif()
 endif()
+
+# liquid#538: an assistant's edit published as a delegated agent, through the public API only.
+add_executable(liquid-delegated-edit-tests test_delegated_edit.cpp)
+target_link_libraries(liquid-delegated-edit-tests PRIVATE liquid::liquid GTest::gtest_main)
+gtest_discover_tests(liquid-delegated-edit-tests DISCOVERY_TIMEOUT 120)
 
 add_executable(liquid-vfs-queue-tests
   vfs/test_request_queue.cpp

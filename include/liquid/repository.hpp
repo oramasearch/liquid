@@ -407,6 +407,10 @@ struct LIQUID_EXPORT operation_record {
     std::chrono::sys_seconds at;
     session_id session;
     std::map<std::string, std::string> metadata;
+    // True when a delegated agent session recorded the operation; `by` is then the agent and
+    // `principal` the identity it acted for (liquid#538).
+    bool agent{};
+    std::optional<actor> principal;
 };
 
 enum class conflict_resolution_kind : std::uint8_t {
@@ -559,6 +563,9 @@ public:
              repository_transfer_options options = {});
     [[nodiscard]] runtime::task<tree> root();
     [[nodiscard]] result<node_id> id() const;
+    // The identity this repository signs with: the principal every delegation it accepts must be
+    // rooted in (liquid#538).
+    [[nodiscard]] result<actor> principal() const;
     [[nodiscard]] runtime::task<digest> root_digest();
     [[nodiscard]] runtime::task<change_id> head();
     [[nodiscard]] runtime::task<std::vector<std::byte>> read(std::string path);
@@ -646,6 +653,13 @@ public:
     [[nodiscard]] runtime::task<undo_report> undo(op_id operation);
     [[nodiscard]] runtime::task<undo_report> undo_session(session_id session,
                                                           undo_options options = {});
+    // Signs a `delegation/1` to `request.agent` with this repository's principal key and stores it
+    // (liquid#538). liquid fills the subject (`delegation_subject`), issuer, dispatcher (the
+    // principal), repository (this one) and validity window. Refused for an agent without a TAAP
+    // id, for the principal itself, for no scopes or an empty one, and for a lifetime that is not
+    // positive or exceeds `delegation_maximum_lifetime`. Only a root delegation is issued here; a
+    // sub-delegation is signed by the agent it descends from.
+    [[nodiscard]] runtime::task<issued_delegation> issue_delegation(delegation_request request);
     [[nodiscard]] runtime::task<session> fork_session(session_options options);
     [[nodiscard]] runtime::task<session> open_session(session_id id,
                                                       session_open_options options = {});

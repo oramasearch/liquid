@@ -579,6 +579,28 @@ result<digest> delegation_subject(const actor& agent) {
         std::span{reinterpret_cast<const std::byte*>(agent.taap_id.data()), agent.taap_id.size()});
 }
 
+result<actor> local_agent(const actor& principal, std::string_view name) {
+    if (principal.taap_id.empty()) {
+        return std::unexpected(invalid("local agent principal has no TAAP id"));
+    }
+    if (principal.taap_id.find('/') != std::string::npos) {
+        return std::unexpected(invalid("local agent principal is itself a local agent"));
+    }
+    const auto lower_or_digit = [](char character) {
+        return (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9');
+    };
+    if (name.empty() || name.size() > 64 || !lower_or_digit(name.front())) {
+        return std::unexpected(invalid("local agent name must be 1 to 64 characters"));
+    }
+    for (const auto character : name) {
+        if (!lower_or_digit(character) && character != '.' && character != '_' &&
+            character != '-') {
+            return std::unexpected(invalid("local agent name uses a-z, 0-9, '.', '_' and '-'"));
+        }
+    }
+    return actor{.taap_id = principal.taap_id + "/agent/" + std::string{name}};
+}
+
 result<void> check_delegation_window(const attestation& value, std::chrono::sys_seconds now) {
     const auto found = std::ranges::find(
         value.attributes, std::string_view{"not_after"}, &attestation_attribute::name);

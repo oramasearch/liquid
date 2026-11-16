@@ -193,12 +193,18 @@ auto attribution_value(std::span<const line_attribution> values) -> cbor::value 
     auto lines = cbor::value::array{};
     lines.reserve(values.size());
     for (const auto& value : values) {
-        lines.push_back(map({{"line", value.line},
-                             {"text", value.text},
-                             {"actor", value.by.taap_id},
-                             {"session", to_string(value.session)},
-                             {"change", to_string(value.change.value)},
-                             {"agent", value.agent}}));
+        auto line = map({{"line", value.line},
+                         {"text", value.text},
+                         {"actor", value.by.taap_id},
+                         {"session", to_string(value.session)},
+                         {"change", to_string(value.change.value)},
+                         {"agent", value.agent}});
+        // The principal a delegated agent acted for (liquid#538); absent otherwise.
+        if (value.principal) {
+            std::get<cbor::value::map>(line.data).emplace_back("principal",
+                                                               value.principal->taap_id);
+        }
+        lines.push_back(std::move(line));
     }
     return cbor::value{std::move(lines)};
 }
@@ -217,7 +223,10 @@ auto decode_attribution_value(const cbor::value& source) -> result<std::vector<l
         const auto* session_text = text_field(value, "session");
         const auto* change_text = text_field(value, "change");
         const auto* agent = bool_field(value, "agent");
-        if (!line || *line == 0 || !text || !actor || !session_text || !change_text || !agent) {
+        const auto* principal_value = field(value, "principal");
+        const auto* principal = text_field(value, "principal");
+        if (!line || *line == 0 || !text || !actor || !session_text || !change_text || !agent ||
+            (principal_value && (!principal || principal->empty()))) {
             return std::unexpected(failure(errc::corrupt, "invalid daemon attribution line"));
         }
         auto session = parse_session_id(*session_text);
@@ -231,6 +240,9 @@ auto decode_attribution_value(const cbor::value& source) -> result<std::vector<l
                           .session = *session,
                           .change = {*change},
                           .agent = *agent});
+        if (principal) {
+            output.back().principal = liquid::actor{.taap_id = *principal};
+        }
     }
     return output;
 }
