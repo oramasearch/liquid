@@ -2228,30 +2228,33 @@ auto read_local_identity_locked(const std::filesystem::path& directory)
     return read_local_identity(directory);
 }
 
-auto make_local_signer(actor identity,
-                       identity_document document,
-                       std::string label,
-                       std::unique_ptr<identity_detail::key_backend> backend,
-                       std::optional<key> wrapping_key,
-                       const std::filesystem::path& directory) -> signer {
-    signer output;
-    output.impl_ = std::make_unique<signer::impl>();
-    output.impl_->identity = std::move(identity);
-    output.impl_->document = std::move(document);
-    output.impl_->label = std::move(label);
-    output.impl_->backend = std::move(backend);
-    output.impl_->wrapping_key = wrapping_key;
-    output.impl_->wrapping_directory = directory;
-    if (wrapping_key) {
-        crypto_wipe(wrapping_key->data(), wrapping_key->size());
+// An opened local identity: everything a signer holds. Only `local_signer`, a friend of `signer`,
+// turns it into one.
+struct local_identity {
+    actor identity;
+    identity_document document;
+    std::string label;
+    std::unique_ptr<identity_detail::key_backend> backend;
+    // The software identity's wrapping key, kept so a rotation in the same process does not ask
+    // the custody again.
+    std::optional<key> wrapping_key;
+
+    local_identity() = default;
+    local_identity(const local_identity&) = delete;
+    local_identity& operator=(const local_identity&) = delete;
+    local_identity(local_identity&& other) noexcept = default;
+    local_identity& operator=(local_identity&&) noexcept = default;
+    ~local_identity() {
+        if (wrapping_key) {
+            crypto_wipe(wrapping_key->data(), wrapping_key->size());
+        }
     }
-    return output;
-}
+};
 
 // Opens a stored identity's private key: a software key with the directory's wrapping key, which
 // its custody may have to unseal, or a hardware key through its custody.
 auto open_local_identity(std::filesystem::path directory, stored_local_identity stored)
-    -> runtime::task<signer> {
+    -> runtime::task<local_identity> {
     auto backend = std::unique_ptr<identity_detail::key_backend>{};
     auto kept_wrapping_key = std::optional<key>{};
     if (stored.identity.custody.empty() || stored.identity.custody == "software") {
@@ -2277,19 +2280,24 @@ auto open_local_identity(std::filesystem::path directory, stored_local_identity 
         }
         backend = std::move(*made);
     } else {
-        auto made = identity_detail::open_hardware_backend(stored.identity.custody, stored.sealed_key);
+        auto made =
+            identity_detail::open_hardware_backend(stored.identity.custody, stored.sealed_key);
         crypto_wipe(stored.sealed_key.data(), stored.sealed_key.size());
         if (!made) {
             co_return std::unexpected(made.error());
         }
         backend = std::move(*made);
     }
-    co_return make_local_signer(std::move(stored.identity),
-                                std::move(stored.document),
-                                std::move(stored.label),
-                                std::move(backend),
-                                kept_wrapping_key,
-                                directory);
+    auto output = local_identity{};
+    output.identity = std::move(stored.identity);
+    output.document = std::move(stored.document);
+    output.label = std::move(stored.label);
+    output.backend = std::move(backend);
+    output.wrapping_key = kept_wrapping_key;
+    if (kept_wrapping_key) {
+        crypto_wipe(kept_wrapping_key->data(), kept_wrapping_key->size());
+    }
+    co_return output;
 }
 
 // Writes a newly made identity into the directory. Called with the identity lock held, after
@@ -2334,6 +2342,24 @@ auto store_local_identity(const std::filesystem::path& directory,
 // or unseal the wrapping key) is done with the lock released.
 runtime::task<signer> identity_detail::local_signer() {
     const auto directory = liquid_home() / "identity";
+    const auto make_signer = [&directory](local_identity value) -> signer {
+        signer output;
+        output.impl_ = std::make_unique<signer::impl>();
+        output.impl_->identity = std::move(value.identity);
+        output.impl_->document = std::move(value.document);
+        output.impl_->label = std::move(value.label);
+        output.impl_->backend = std::move(value.backend);
+        output.impl_->wrapping_key = value.wrapping_key;
+        output.impl_->wrapping_directory = directory;
+        return output;
+    };
+    const auto open_existing = [&](stored_local_identity stored) -> runtime::task<signer> {
+        auto opened = co_await open_local_identity(directory, std::move(stored));
+        if (!opened) {
+            co_return std::unexpected(opened.error());
+        }
+        co_return make_signer(std::move(*opened));
+    };
     std::error_code code;
     std::filesystem::create_directories(directory, code);
     if (code) {
@@ -2345,7 +2371,7 @@ runtime::task<signer> identity_detail::local_signer() {
         co_return std::unexpected(existing.error());
     }
     if (*existing) {
-        co_return co_await open_local_identity(directory, std::move(**existing));
+        co_return co_await open_existing(std::move(**existing));
     }
 
     auto label = std::string{"liquid-device"};
@@ -2403,7 +2429,7 @@ runtime::task<signer> identity_detail::local_signer() {
     if (*existing) {
         lock->release();
         crypto_wipe(wrapping_key->data(), wrapping_key->size());
-        co_return co_await open_local_identity(directory, std::move(**existing));
+        co_return co_await open_existing(std::move(**existing));
     }
     auto private_material = backend->descriptor();
     auto stored =
@@ -2414,14 +2440,14 @@ runtime::task<signer> identity_detail::local_signer() {
         crypto_wipe(wrapping_key->data(), wrapping_key->size());
         co_return std::unexpected(stored.error());
     }
-    auto kept_wrapping_key = std::optional<key>{*wrapping_key};
+    auto created = local_identity{};
+    created.identity = std::move(identity);
+    created.document = std::move(document);
+    created.label = std::move(label);
+    created.backend = std::move(backend);
+    created.wrapping_key = *wrapping_key;
     crypto_wipe(wrapping_key->data(), wrapping_key->size());
-    co_return make_local_signer(std::move(identity),
-                                std::move(document),
-                                std::move(label),
-                                std::move(backend),
-                                kept_wrapping_key,
-                                directory);
+    co_return make_signer(std::move(created));
 }
 
 struct passphrase_provider::impl {
