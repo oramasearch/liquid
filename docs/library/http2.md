@@ -12,10 +12,18 @@ The connection tracks odd/even stream identifiers, multiplexes frames by stream,
 and keeps independent HPACK state in each direction.
 
 Frames supported by the implementation are DATA, HEADERS, CONTINUATION, RST_STREAM, SETTINGS,
-PING, GOAWAY, and WINDOW_UPDATE. HEADERS blocks are split and reassembled at the peer's advertised
-frame size. Both connection and stream send windows are decremented for DATA and restored when a
-receiver consumes it. A message larger than an advertised stream window therefore pauses until the
-peer sends WINDOW_UPDATE rather than exceeding the window.
+PING, GOAWAY, and WINDOW_UPDATE; PRIORITY and unknown frame types are ignored. HEADERS blocks are
+split at the peer's advertised frame size. Both connection and stream send windows are decremented
+for DATA and restored when a receiver consumes it. A message larger than an advertised stream window
+therefore pauses until the peer sends WINDOW_UPDATE rather than exceeding the window.
+
+Every received frame passes through one function, `receive_inbound`, which applies connection
+frames and every limit below. Header blocks are reassembled from HEADERS and CONTINUATION and
+decoded there, in the order they arrive, then queued for their stream; HPACK state therefore stays
+in step with the peer even when the caller reads streams in a different order, or a block belongs to
+a stream that was refused or already closed. A stream is forgotten once both directions have ended
+and the caller has read everything, or as soon as either side resets it. A server whose response is
+complete resets a request still being sent (RST_STREAM NO_ERROR) and drops what it did not read.
 
 `goaway` begins graceful connection shutdown; `wait_for_goaway` receives the peer's connection
 shutdown after active streams have completed.
@@ -26,6 +34,45 @@ indexed and literal header fields, never-indexed sensitive fields, and the Appen
 headers contain `content-type: application/grpc`; trailing headers carry `grpc-status` and
 `grpc-message`. A caller maps cancellation and a deadline expiry to RST_STREAM with CANCEL, then
 observes the terminal gRPC status.
+
+## Limits on the peer (liquid#412)
+
+The October 2026 security review (finding L-30) found that a peer could exhaust memory: two
+settings were applied in the wrong direction, nothing capped streams, header blocks or queued
+frames, and floods went unanswered. Each SETTINGS value this endpoint advertises now limits the
+peer, and each value the peer advertises limits only what this endpoint sends.
+
+| `connection_options` field | Default | Advertised as | Enforced on the peer |
+|---|---|---|---|
+| `initial_window_size` | 65,535 | `SETTINGS_INITIAL_WINDOW_SIZE` | DATA beyond a stream's receive window closes the connection with FLOW_CONTROL_ERROR. |
+| `max_frame_size` | 16,384 | `SETTINGS_MAX_FRAME_SIZE` | A larger frame closes the connection with FRAME_SIZE_ERROR, whatever the peer's own setting. |
+| `header_table_size` | 4,096 | `SETTINGS_HEADER_TABLE_SIZE` | The decoder refuses a dynamic table size update above it (COMPRESSION_ERROR). The peer's value only sets this endpoint's encoder table, capped at this field. |
+| `max_concurrent_streams` | 100 | `SETTINGS_MAX_CONCURRENT_STREAMS` | A stream opened past it is refused with RST_STREAM REFUSED_STREAM; its header block is still decoded. |
+| `max_header_list_size` | 16 KiB | `SETTINGS_MAX_HEADER_LIST_SIZE` | A compressed block (HEADERS plus CONTINUATION) or a decoded list larger than this closes the connection with ENHANCE_YOUR_CALM. |
+| `max_pending_bytes` | 16 MiB | none | Frames queued for streams the caller is not reading past this close the connection with ENHANCE_YOUR_CALM. |
+
+Flow control is honoured in both directions. Received DATA consumes the connection and stream
+windows when it arrives, and the credit goes back to the peer (WINDOW_UPDATE) only when the caller
+reads that DATA, so unread data is bounded by the windows advertised. At start the connection window
+is raised to one stream window more than `max_concurrent_streams` stream windows (bounded by
+`max_pending_bytes`): the streams the caller is not reading can never use it all, so a caller that
+reads one stream at a time, as `liquid serve reapi` does, cannot deadlock behind them. Padding is
+stripped from DATA and counts against the windows.
+
+Floods are counted with token buckets (`flood_limit`: a burst, refilled per second). Spending a
+bucket faster than it refills closes the connection with GOAWAY ENHANCE_YOUR_CALM:
+
+| Field | Default | What it counts |
+|---|---|---|
+| `resets` | 200, 100/s | Streams the peer resets (rapid reset, CVE-2023-44487) and streams refused over the concurrent-stream limit |
+| `pings` | 50, 10/s | PING frames that need an acknowledgement |
+| `settings` | 50, 10/s | SETTINGS frames that need an acknowledgement |
+| `empty_frames` | 100, 50/s | Empty DATA or CONTINUATION without an end flag, PRIORITY, unknown frame types, unsolicited acknowledgements, RST_STREAM on closed streams |
+
+A header block interrupted by any other frame is a PROTOCOL_ERROR (RFC 9113 section 6.10), which
+with the block-size cap ends the CONTINUATION flood. Every connection error sends GOAWAY with the
+error code and the last peer stream identifier before the connection's operation returns the error;
+ENHANCE_YOUR_CALM returns `errc::busy`, the others `errc::corrupt`.
 
 ## TLS and h2c
 
@@ -60,6 +107,28 @@ Huffman and dynamic-table state:
 ```sh
 build/tests/liquid-tests --gtest_filter='Http2*:*Grpc*'
 ```
+
+`tests/http2/test_limits.cpp` plays a hostile peer for each limit above: it writes raw frames into
+one end of a Capy in-memory stream pair, runs a server connection on the other until the input ends,
+and checks the frames the server wrote back (the REFUSED_STREAM resets, the GOAWAY code) and the
+state it kept. It covers the concurrent-stream cap, both directions of the two settings, an
+oversize frame, CONTINUATION and empty-CONTINUATION floods, an interrupted header block, indexed
+header expansion, rapid reset, stream state being forgotten, PING, SETTINGS and empty-DATA floods,
+window refill only on read, DATA beyond the stream window, the queued-bytes cap, and header blocks
+decoded in arrival order. `Http2Limits.SurvivesASeededRandomFrameCorpus` runs 2,000 seeded inputs of
+random frames through the fuzz harness's entry point on every ctest run.
+
+The libFuzzer harness `tests/http2/fuzz_connection.cpp` is built only on request, with Clang:
+
+```sh
+cmake -S . -B build-fuzz -G Ninja -DLIQUID_BUILD_FUZZERS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build-fuzz --target liquid-fuzz-http2
+build-fuzz/tests/liquid-fuzz-http2 -max_total_time=60
+```
+
+It compiles the HTTP/2 sources with the fuzzer, address and undefined-behaviour sanitizers and
+serves each input the way the REAPI server does. Fuzzing liquid's other parsers, and running the
+harnesses on a schedule, is liquid#407 (review finding L-25).
 
 `tools/reapi-peers/run-h2c-interop.sh build-linux` is the Docker proof for the Linux CI container.
 It starts the NativeLink configuration with host networking, then runs

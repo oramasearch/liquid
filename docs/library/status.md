@@ -275,7 +275,10 @@ model input ([`distribution.md`](distribution.md)). The dependency-free protobuf
 messages, and native tree/action/result conversions are implemented
 ([`reapi-codec.md`](reapi-codec.md)). The Corosio REAPI client provides CAS, ByteStream,
 ActionCache, and Execution RPCs; `wrap` and `build --profile` use its validated remote cache tier,
-and `liquid serve reapi` exposes liquid's CAS and ActionCache ([`reapi.md`](reapi.md)). Liquid's
+and `liquid serve reapi` exposes liquid's CAS and ActionCache ([`reapi.md`](reapi.md)). The HTTP/2
+transport under both enforces the limits it advertises (concurrent streams, header list and table
+sizes, frame size, flow control) and closes on rapid reset, CONTINUATION, PING and SETTINGS floods
+([`http2.md`](http2.md), liquid#412). Liquid's
 action-digest scheduler and TAAP-signed worker fleet are implemented, including one bounded requeue
 after worker loss, size-class placement from #18's recorded decision, REAPI Execution and
 ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces
