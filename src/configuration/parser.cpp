@@ -348,6 +348,14 @@ private:
             if (!item) {
                 return std::unexpected(item.error());
             }
+            if (item->text == "include") {
+                // An include names a file and is a top-level statement. Nested, it parsed as a
+                // record with no path, which the formatter then read past (liquid #407).
+                return std::unexpected(parse_failure(item->location,
+                                                     "field or nested record",
+                                                     "include",
+                                                     "include is a top-level statement"));
+            }
             if (item->text == "when") {
                 auto nested = parse_when(item->location);
                 if (!nested) {

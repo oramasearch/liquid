@@ -54,6 +54,10 @@ configure_file(
   "${CMAKE_CURRENT_BINARY_DIR}/generated/debian_path_packages.hpp"
   @ONLY)
 
+# Hardening (on by default), sanitizers and libFuzzer coverage for every C and C++ target,
+# dependencies included. Must precede the first dependency; see docs/build/hardening.md.
+include(cmake/Hardening.cmake)
+
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -249,6 +253,14 @@ if(LIQUID_BUILD_FRONTENDS)
     ${LIQUID_GRAMMAR_INCLUDES})
   target_compile_features(liquid_frontend_syntax PRIVATE c_std_11 cxx_std_26)
   target_compile_definitions(liquid_frontend_syntax PRIVATE TREE_SITTER_HIDE_SYMBOLS)
+  # Grammar scanners define `void *tree_sitter_<name>_external_scanner_create()` and their parser.c
+  # declares it `(void)`; the runtime calls it through `void *(*)(void)`. C17 makes the two
+  # compatible, but -fsanitize=function compares the unprototyped type exactly and reports every
+  # scanner. The check is turned off for this third-party C only (liquid #407).
+  if(LIQUID_SANITIZE_UNDEFINED)
+    target_compile_options(liquid_frontend_syntax PRIVATE
+      $<$<COMPILE_LANGUAGE:C>:-fno-sanitize=function>)
+  endif()
   set_target_properties(liquid_frontend_syntax PROPERTIES
     EXPORT_NAME detail_frontend_syntax
     POSITION_INDEPENDENT_CODE ON
@@ -374,10 +386,37 @@ set_target_properties(liquid_wrap_plan_objects PROPERTIES
   POSITION_INDEPENDENT_CODE ON)
 target_compile_features(liquid_wrap_plan_objects PRIVATE c_std_99)
 
-add_library(liquid-wrap-hook SHARED src/sandbox/wrap_hook.c
-  $<TARGET_OBJECTS:liquid_wrap_plan_objects>)
+# The hook is preloaded into uninstrumented build tools, so it cannot depend on a sanitizer
+# runtime (liquid #407). In a sanitizer build the wrap plan reader and BLAKE3 objects libliquid
+# uses are instrumented, so the hook gets its own copies compiled without a runtime.
+if(LIQUID_SANITIZE)
+  add_library(liquid_wrap_hook_plan_objects OBJECT src/sandbox/wrap_plan.c)
+  target_include_directories(liquid_wrap_hook_plan_objects PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${blake3_source_SOURCE_DIR}/c)
+  target_compile_features(liquid_wrap_hook_plan_objects PRIVATE c_std_99)
+  add_library(liquid_wrap_hook_blake3_objects OBJECT
+    $<TARGET_PROPERTY:liquid_blake3_objects,SOURCES>)
+  target_include_directories(liquid_wrap_hook_blake3_objects SYSTEM PRIVATE
+    ${blake3_source_SOURCE_DIR}/c)
+  target_compile_definitions(liquid_wrap_hook_blake3_objects PRIVATE
+    $<TARGET_PROPERTY:liquid_blake3_objects,COMPILE_DEFINITIONS>)
+  target_compile_features(liquid_wrap_hook_blake3_objects PRIVATE c_std_99)
+  set_target_properties(liquid_wrap_hook_plan_objects liquid_wrap_hook_blake3_objects PROPERTIES
+    C_EXTENSIONS OFF
+    C_VISIBILITY_PRESET hidden
+    POSITION_INDEPENDENT_CODE ON)
+  liquid_no_sanitizer_runtime(liquid_wrap_hook_plan_objects liquid_wrap_hook_blake3_objects)
+  add_library(liquid-wrap-hook SHARED src/sandbox/wrap_hook.c
+    $<TARGET_OBJECTS:liquid_wrap_hook_plan_objects>
+    $<TARGET_OBJECTS:liquid_wrap_hook_blake3_objects>)
+else()
+  add_library(liquid-wrap-hook SHARED src/sandbox/wrap_hook.c
+    $<TARGET_OBJECTS:liquid_wrap_plan_objects>)
+  target_link_libraries(liquid-wrap-hook PRIVATE liquid_blake3)
+endif()
 target_include_directories(liquid-wrap-hook PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(liquid-wrap-hook PRIVATE liquid_blake3)
+liquid_no_sanitizer_runtime(liquid-wrap-hook)
 set_target_properties(liquid-wrap-hook PROPERTIES
   OUTPUT_NAME liquid-wrap-hook
   C_VISIBILITY_PRESET hidden
@@ -404,6 +443,7 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(liquid-read-guard src/sandbox/read_guard.c)
   target_link_options(liquid-read-guard PRIVATE -static)
+  liquid_no_sanitizer_runtime(liquid-read-guard)
   target_compile_features(liquid-read-guard PRIVATE c_std_99)
 endif()
 
@@ -691,6 +731,14 @@ elseif(WIN32)
 endif()
 target_sources(libliquid PRIVATE $<TARGET_OBJECTS:liquid_metadata_objects>)
 add_library(liquid::liquid ALIAS libliquid)
+# An instrumented static archive needs the sanitizer runtime wherever it is linked, so the
+# installed package carries the link flags to consumers (tests/consumer builds one).
+if(LIQUID_SANITIZE)
+  foreach(LIQUID_SANITIZER IN LISTS LIQUID_SANITIZE)
+    target_link_options(libliquid INTERFACE -fsanitize=${LIQUID_SANITIZER})
+    target_link_options(liquid-hot INTERFACE -fsanitize=${LIQUID_SANITIZER})
+  endforeach()
+endif()
 set_target_properties(libliquid PROPERTIES
   OUTPUT_NAME liquid            # libliquid.a / libliquid.dylib / libliquid.so
   EXPORT_NAME liquid            # find_package(liquid) → liquid::liquid
@@ -1019,6 +1067,9 @@ if(LIQUID_BUILD_TESTS)
   endforeach()
   enable_testing()
   add_subdirectory(tests)
+endif()
+if(LIQUID_FUZZ)
+  add_subdirectory(fuzz)
 endif()
 
 # Optional benchmarks have their own dependencies and never enter the default build.

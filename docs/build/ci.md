@@ -60,7 +60,10 @@ is currently x86_64 only: GitHub-hosted arm64 Linux runners are not available to
 repository at no cost. Linux arm64 verification is deferred until a suitable runner is available.
 
 The sanitizer job is separate from the release-style matrix. It configures a Debug build with
-`-fsanitize=address,undefined` and runs CTest; a sanitizer finding fails the workflow.
+`-fsanitize=address,undefined` and runs CTest; a sanitizer finding fails the workflow. Those flags
+reach the C++ sources only. The local configuration `-DLIQUID_SANITIZE=address;undefined`
+instruments the C sources and the dependencies too, and is the one to use; no CI runs it
+([`hardening.md`](hardening.md)).
 
 The installer steps run after the ordinary suite. macOS projects the same native fixture twice and
 compares the unsigned packages byte for byte. It creates distinct self-signed application and

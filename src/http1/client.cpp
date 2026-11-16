@@ -7,6 +7,7 @@
 #include <charconv>
 #include <cstdint>
 #include <cstdlib>
+#include <exception>
 #include <limits>
 #include <string_view>
 #include <utility>
@@ -170,40 +171,6 @@ auto decode_chunked(std::string_view input) -> result<std::vector<std::byte>> {
     }
 }
 
-auto parse_response(std::string wire) -> result<response> {
-    const auto header_end = wire.find("\r\n\r\n");
-    if (header_end == std::string::npos) {
-        return std::unexpected(client_error(errc::corrupt, "HTTP response header is truncated"));
-    }
-    const auto header_text = std::string_view{wire}.substr(0, header_end + 4);
-    auto header = boost::http::response{header_text};
-    const auto body = std::string_view{wire}.substr(header_end + 4);
-    auto output = response{.status = static_cast<unsigned>(header.status()),
-                           .headers = header_fields(header_text)};
-    const auto transfer_encoding = header_value(output.headers, "transfer-encoding");
-    if (transfer_encoding == "chunked") {
-        auto decoded = decode_chunked(body);
-        if (!decoded) {
-            return std::unexpected(decoded.error());
-        }
-        output.body = std::move(*decoded);
-        return output;
-    }
-    const auto length_text = header_value(output.headers, "content-length");
-    if (!length_text.empty()) {
-        auto length = std::uint64_t{};
-        const auto parsed =
-            std::from_chars(length_text.data(), length_text.data() + length_text.size(), length);
-        if (parsed.ec != std::errc{} || parsed.ptr != length_text.data() + length_text.size() ||
-            length != body.size()) {
-            return std::unexpected(client_error(errc::corrupt, "invalid HTTP content length"));
-        }
-    }
-    const auto* first = reinterpret_cast<const std::byte*>(body.data());
-    output.body.assign(first, first + body.size());
-    return output;
-}
-
 auto target(const parsed_url& url, std::string_view suffix) -> std::string {
     auto output = url.path == "/" ? std::string{} : url.path;
     output += suffix;
@@ -259,6 +226,48 @@ auto exchange(Stream& stream, std::string wire) -> runtime::task<response> {
 }
 
 } // namespace
+
+auto parse_response(std::string wire) -> result<response> {
+    const auto header_end = wire.find("\r\n\r\n");
+    if (header_end == std::string::npos) {
+        return std::unexpected(client_error(errc::corrupt, "HTTP response header is truncated"));
+    }
+    const auto header_text = std::string_view{wire}.substr(0, header_end + 4);
+    // Boost.HTTP throws on a malformed status line or field; a server's bytes are untrusted, so
+    // that is a corrupt response, not an exception out of a result-returning parser (liquid #407).
+    auto status = unsigned{};
+    try {
+        const auto header = boost::http::response{header_text};
+        status = static_cast<unsigned>(header.status());
+    } catch (const std::exception& exception) {
+        return std::unexpected(client_error(
+            errc::corrupt, "HTTP response header is malformed", std::string{exception.what()}));
+    }
+    const auto body = std::string_view{wire}.substr(header_end + 4);
+    auto output = response{.status = status, .headers = header_fields(header_text)};
+    const auto transfer_encoding = header_value(output.headers, "transfer-encoding");
+    if (transfer_encoding == "chunked") {
+        auto decoded = decode_chunked(body);
+        if (!decoded) {
+            return std::unexpected(decoded.error());
+        }
+        output.body = std::move(*decoded);
+        return output;
+    }
+    const auto length_text = header_value(output.headers, "content-length");
+    if (!length_text.empty()) {
+        auto length = std::uint64_t{};
+        const auto parsed =
+            std::from_chars(length_text.data(), length_text.data() + length_text.size(), length);
+        if (parsed.ec != std::errc{} || parsed.ptr != length_text.data() + length_text.size() ||
+            length != body.size()) {
+            return std::unexpected(client_error(errc::corrupt, "invalid HTTP content length"));
+        }
+    }
+    const auto* first = reinterpret_cast<const std::byte*>(body.data());
+    output.body.assign(first, first + body.size());
+    return output;
+}
 
 result<void> validate_url(std::string_view url) {
     auto parsed = parse_url(url);

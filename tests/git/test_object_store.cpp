@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 
 #include <zlib.h>
 
@@ -677,6 +678,48 @@ TEST(GitObjectStore, refuses_a_corrupt_loose_object) {
     const auto object = store.read(*id);
     ASSERT_FALSE(object);
     EXPECT_EQ(object.error().code, liquid::errc::corrupt);
+}
+
+// liquid #407: a tree entry header without a space made parse_tree form header.data() + npos, an
+// out-of-bounds pointer that UndefinedBehaviorSanitizer reports in the sanitizer build.
+TEST(GitObjectStore, refuses_a_tree_entry_without_a_mode_separator) {
+    temporary_directory temporary;
+    auto payload = bytes("100644README");
+    payload.push_back(std::byte{});
+    payload.resize(payload.size() + 20, std::byte{0x11});
+    const auto id = liquid::git_detail::write_loose_object(
+        temporary.path(), liquid::git_detail::object_kind::tree, payload);
+    ASSERT_TRUE(id) << id.error().message;
+    liquid::git_detail::object_store store{temporary.path()};
+    const auto tree = store.read_tree(*id);
+    ASSERT_FALSE(tree);
+    EXPECT_EQ(tree.error().code, liquid::errc::corrupt);
+    EXPECT_EQ(tree.error().message, "invalid Git tree mode");
+}
+
+auto raw(std::initializer_list<int> values) -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>{};
+    for (const auto value : values) {
+        output.push_back(static_cast<std::byte>(value));
+    }
+    return output;
+}
+
+// liquid #407: a delta header declaring a 14 GB result was once reserved before any instruction was
+// read. A declared size no instruction stream of that length can produce is refused before it is
+// charged to the read budget.
+TEST(GitObjectStore, refuses_a_delta_whose_declared_size_cannot_be_produced) {
+    const auto base = bytes("hello world");
+    // Source size 11, result size 2^34 (LEB128 80 80 80 80 40), then one 5-byte insertion.
+    const auto delta = raw({11, 0x80, 0x80, 0x80, 0x80, 0x40, 5, 't', 'h', 'e', 'r', 'e'});
+    const auto applied = liquid::git_detail::apply_delta(base, delta);
+    ASSERT_FALSE(applied);
+    EXPECT_EQ(applied.error().message, "invalid Git delta sizes");
+    // A truthful delta still applies: copy "hello " then insert "there".
+    const auto good = raw({11, 11, 0x90, 6, 5, 't', 'h', 'e', 'r', 'e'});
+    const auto result = liquid::git_detail::apply_delta(base, good);
+    ASSERT_TRUE(result) << result.error().message;
+    EXPECT_EQ(*result, bytes("hello there"));
 }
 
 TEST(GitObjectStore, reads_packed_objects_and_deltas) {

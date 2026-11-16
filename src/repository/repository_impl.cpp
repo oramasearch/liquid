@@ -11908,6 +11908,15 @@ auto repository_detail::search_access::index_path(repository& source)
     return source.impl_->root_path / ".liquid" / "index";
 }
 
+auto repository_detail::testing::decode_drip_body(std::span<const std::byte> bytes)
+    -> result<std::size_t> {
+    auto decoded = decode_repository_drip(bytes);
+    if (!decoded) {
+        return std::unexpected(decoded.error());
+    }
+    return decoded->paths.size();
+}
+
 void repository_detail::testing::reset_directory_loads(repository& value) {
     if (value.impl_)
         value.impl_->directory_load_count = 0;

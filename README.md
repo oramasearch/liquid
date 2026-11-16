@@ -415,6 +415,7 @@ detail, and the [documentation index](docs/README.md) lists them all.
 | Follow a workflow end to end | [Guides](docs/guides/README.md) |
 | Look up a command or flag | [Generated CLI reference](docs/reference/cli/README.md) |
 | Configure, test or install liquid | [Local build](docs/build/local.md) |
+| Run the fuzzers and sanitizers, or check the hardening | [Hardening](docs/build/hardening.md) and [`fuzz/`](fuzz/README.md) |
 | Use the library | [libliquid](docs/library/libliquid.md) and the [public API map](docs/library/api-map.md) |
 | Understand a subsystem's design | [Library notes](docs/library/README.md) |
 

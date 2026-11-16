@@ -136,5 +136,6 @@ authoritative implementation inventory; [`features/`](features/) holds specifica
 | [`build/local.md`](build/local.md) | Building liquid on a workstation: prerequisites, configure, build, test, run, install, options, and the documentation checks. |
 | [`build/socket-fixtures.md`](build/socket-fixtures.md) | Unix-domain socket limits, bounded temporary fixtures, cleanup, and deep-worktree verification. |
 | [`build/linux-container.md`](build/linux-container.md) | The full suite in an unprivileged Linux container: run-time capability probes, the tests that skip and why, and every Linux failure classified (#348). |
+| [`build/hardening.md`](build/hardening.md) | Release hardening flags, sanitizer builds over every C and C++ source, the libFuzzer harnesses, how to run them locally and on the BuildKit lane, and the recorded runs. |
 | [`build/ci.md`](build/ci.md) | GitHub Actions platform matrix, sanitizer coverage, toolchains, the documentation-site job, and the local Linux container proof. |
 | [`build/phase-2-exit-lane-audit.md`](build/phase-2-exit-lane-audit.md) | Why the Phase 2 exit (#299) has not been demonstrated: each candidate machine checked for a FUSE mount, on 2026-09-08 and 2026-10-12, with commands, output and the decision needed. |
