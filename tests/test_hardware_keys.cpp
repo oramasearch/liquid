@@ -1138,6 +1138,13 @@ TEST(HardwareIdentity, wrong_algorithm_and_malformed_metadata_are_unauthorized) 
     EXPECT_EQ(malformed.error().code, liquid::errc::unauthorized);
 }
 
+// liquid#384: the verifier pins the policy issuer and the repository outside the repository.
+auto release_trust_for(const liquid::digest& repository, const liquid::signer& policy_signer)
+    -> liquid::release_trust {
+    return liquid::release_trust{.repository = repository,
+                                 .policy_issuers = {policy_signer.identity().taap_id}};
+}
+
 TEST(ReleaseApproval, threshold_counts_distinct_valid_identities) {
     auto policy_signer = open_identity("release-policy");
     auto first = open_identity("release-first");
@@ -1255,13 +1262,15 @@ TEST(ReleaseApproval, self_signed_approvals_naming_listed_signers_do_not_count) 
 
     select_identity_home("forged-third");
     trust_identities({&policy_signer});
-    auto unknown = liquid::verify_release(artifact, *policy, forged);
+    auto unknown = liquid::verify_release(
+        artifact, *policy, forged, release_trust_for(repository, policy_signer));
     ASSERT_TRUE(unknown) << unknown.error().message;
     EXPECT_FALSE(unknown->satisfied);
     EXPECT_TRUE(unknown->distinct_valid_signers.empty());
 
     trust_identities({&first, &second, &throwaway_one, &throwaway_two});
-    auto known = liquid::verify_release(artifact, *policy, forged);
+    auto known = liquid::verify_release(
+        artifact, *policy, forged, release_trust_for(repository, policy_signer));
     ASSERT_TRUE(known) << known.error().message;
     EXPECT_FALSE(known->satisfied) << "self-signed approvals met a 2-of-3 threshold";
     EXPECT_TRUE(known->distinct_valid_signers.empty());
@@ -1272,7 +1281,8 @@ TEST(ReleaseApproval, self_signed_approvals_naming_listed_signers_do_not_count) 
         liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v1", first));
     ASSERT_TRUE(real_first) << real_first.error().message;
     const auto mixed = std::array{*real_first, *forged_second};
-    auto one = liquid::verify_release(artifact, *policy, mixed);
+    auto one = liquid::verify_release(
+        artifact, *policy, mixed, release_trust_for(repository, policy_signer));
     ASSERT_TRUE(one) << one.error().message;
     EXPECT_FALSE(one->satisfied);
     EXPECT_EQ(one->distinct_valid_signers, std::vector<std::string>{first.identity().taap_id});
@@ -1305,7 +1315,8 @@ TEST(ReleaseApproval, fido2_eddsa_and_es256_approvals_meet_the_threshold) {
     ASSERT_TRUE(first_approval) << first_approval.error().message;
     ASSERT_TRUE(second_approval) << second_approval.error().message;
     const auto approvals = std::array{*first_approval, *second_approval};
-    auto result = liquid::verify_release(artifact, *policy, approvals);
+    auto result = liquid::verify_release(
+        artifact, *policy, approvals, release_trust_for(repository, policy_signer));
     ASSERT_TRUE(result) << result.error().message;
     EXPECT_TRUE(result->satisfied);
     EXPECT_EQ(result->distinct_valid_signers.size(), 2U);
