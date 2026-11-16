@@ -2,17 +2,17 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "liquid-9d976256c7bd",
-  "documentNamespace": "https://github.com/oramasearch/liquid/sbom/9d976256c7bde82bb58f88add18b29756ad5861a",
+  "name": "liquid-e226448f4c37",
+  "documentNamespace": "https://github.com/oramasearch/liquid/sbom/e226448f4c3722d0b4439072cadc0f200929f35d",
   "creationInfo": {
-    "created": "2026-11-16T06:39:14Z",
+    "created": "2026-11-16T06:39:27Z",
     "creators": [
       "Organization: OramaSearch, Inc.",
       "Tool: tools/sbom.py",
       "Tool: syft"
     ],
     "licenseListVersion": "3.29",
-    "comment": "Made from source commit 9d976256c7bde82bb58f88add18b29756ad5861a by tools/sbom.py."
+    "comment": "Made from source commit e226448f4c3722d0b4439072cadc0f200929f35d by tools/sbom.py."
   },
   "documentDescribes": [
     "SPDXRef-DocumentRoot"
@@ -273,7 +273,7 @@
     {
       "name": "liquid",
       "SPDXID": "SPDXRef-DocumentRoot",
-      "versionInfo": "9d976256c7bd",
+      "versionInfo": "e226448f4c37",
       "downloadLocation": "git+https://github.com/oramasearch/liquid.git",
       "homepage": "https://github.com/oramasearch/liquid",
       "filesAnalyzed": false,
