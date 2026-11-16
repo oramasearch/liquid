@@ -53,8 +53,9 @@ byte-identity tests; those helpers remain outside the public ABI.
 The CLI configuration case confirms that `log verify --timestamps` refuses to fetch when its log
 URL or explicit TSA anchor file is absent.
 `cli-verify-log` uses a loopback HTTP log fixture and a signed stored reproducibility attestation
-to require valid inclusion and reject missing, tampered, and unavailable inclusion through the
-`verify --log` CLI handler. Its test target compiles the private attestation encoder and canonical
+to refuse an unpinned log, require valid inclusion once pinned, and reject a log reporting a lower
+witness threshold than its pin, and missing, tampered, and unavailable inclusion, through the
+`verify --log` CLI handler (liquid #389). Its test target compiles the private attestation encoder and canonical
 CBOR dependency so it also covers a shared libliquid build with hidden symbols.
 `cli-verify-log-guide` reads the transparency guide's all-actions invocation and runs it through
 the built command parser.
@@ -138,6 +139,9 @@ witness quorum, every full and partial tile level, inclusion and consistency pro
 reauthentication, and altered or missing input. Its `cve_2026_56865` case keeps valid leaf bytes
 while changing a verified parent hash tile and requires the failure to name that tile. The skipped
 level case proves consistency verification completes the tile walk before requesting its proof.
+Its liquid #389 cases refuse a log that lowers its witness threshold, swaps its key, or counts a
+witness outside the pinned set, never read the log's own identity or configuration, and cover the
+`$LIQUID_HOME/trust/transparency/` pin file (round trip, malformed pins, missing pin, no replacement).
 `liquid-transparency-measure` times cold and cached verification of a synthetic `2^16`-leaf log.
 Admission tests cover policy round trips, every image decision, TLS and insecure CLI listeners,
 Kubernetes fixtures, policy-pinned checkpoint trust, valid inclusion, forged parent tiles,
@@ -224,7 +228,10 @@ actors and multi-round sync.
 
 `test_collaboration.cpp` covers speculative agent sessions, delegated publication, semantic leases,
 transient presence, epoch resynchronization, and line attribution across human and agent changes
-and a path move. `test_daemon.cpp` checks that the same attribution crosses the local wire, while
+and a path move. Its delegation cases prove the holding must-nevers of
+`docs/security/delegation-threat-model.md`: altered, unsigned, empty and foreign delegations are
+refused, sessions without a capability cannot publish or lease, leases and moves stay inside the
+scopes, finished sessions cannot be reused, and one session cannot release another's lease. `test_daemon.cpp` checks that the same attribution crosses the local wire, while
 `test_plugin_abi.c` is a real C plugin descriptor whose presence, lease, and attribution callbacks
 are driven by `test_plugin_abi.cpp`. `attribution_measure.cpp` records the 10,000-line query cost.
 `crdt/measure_epoch.cpp` records the documented compaction workload's bytes and load time.
@@ -233,11 +240,16 @@ server behind a small socket transport dispatched on the shared runtime, measure
 bytes across repeated pushes, pulls into an empty repository, and rejects a corrupted TAAP
 signature without changing state. It checks change-to-ref context, derives false fast-forward
 state for divergent history, applies mixed per-ref outcomes, preserves exact reasons, keeps
-all-refused and atomic pushes unchanged, retains uploaded objects, converts callback exceptions to
+all-refused and atomic pushes unchanged, discards a refused push's uploads, converts callback exceptions to
 refusals, and reads a legacy reply. Metadata-only receipt verifies tree and blob records while
 leaving every payload chunk remote. A chunk upload repeating one small compressed 16 MiB frame is
 refused, with nothing stored, once its frames declare more than the 64 MiB decoded budget, and
 accepted at the budget (liquid#435). Its CLI case starts the real `serve sync --allow-ref main`
+leaving every payload chunk remote. Its liquid#403 cases leave no uploaded object of a refused push in
+the store, keep uploads out of `find-missing` and range reads until a push authorizes them, refuse
+uploads and a push beyond the upload quota, keep a forged author from spending the named author's
+flow budget, and require `serve sync --token-file` to refuse a missing or wrong token.
+Its CLI case starts the real `serve sync --allow-ref main`
 refusals, reads a legacy reply, and proves a flow-refused push leaves repository metadata
 unchanged. Its CLI case starts the real `serve sync --allow-ref main`
 process, checks ordinary and atomic per-ref output, and invokes the real push and pull commands. The
@@ -247,6 +259,12 @@ Its sender tests use a hostile `remote_blob_source` to request an unrelated loca
 before or after a valid identity, with empty roots, and after a previous offer on the same session.
 Every such response is refused before any upload; algorithm-tag mismatches are also refused.
 Valid metadata and payload requests and an empty missing subset still succeed (liquid #446).
+Issue #420 cases set every trust-controlling repository key on a source (REAPI remote with peer
+verification off, client key and headers, restart hook, deployment control plane, agent rules, TUF
+state) and show that a direct import, an HTTP pull and a drive clone all leave them behind, and that
+a drive never writes a checkout-local path (`LIQUID_REPO`, `.liquid/`, `.liquid-store/`, build and
+wrap state) named in a peer's tree. `test_repository.cpp` checks that tree import never records
+those paths.
 The clone cases pull through an HTTP sync endpoint, force full hydration of a file above the
 ordinary drive threshold, confirm the persisted remote and stable JSON, and configure and build a
 small CMake project inside the checkout. A second clone resolves that checkout as a configured
@@ -333,6 +351,13 @@ The privileged Linux build suite also proves eligible actions reject and name a 
 `reapi/` covers the dependency-free protobuf wire forms, the pinned REAPI message fixtures,
 unknown-field retention, hash selection, and liquid record conversion. The codec stays private to
 libliquid, so this target compiles its private sources directly for static and shared builds.
+`reapi/test_server_auth.cpp` runs the real `serve reapi` with a bearer token and proves that
+unauthenticated or wrongly authenticated writes and reads are refused and store nothing (#415).
+`test_listener.cpp` covers the shared listener rules: loopback detection, the refusal of a
+non-loopback listener without TLS and authentication, token strength, owner-only token files,
+constant-time bearer comparison, and `serve_reapi` refusing a plaintext public address.
+`cli/serve-listen.cmake` (`cli-serve-listen`) requires the built CLI to refuse those listeners
+before binding.
 
 `consumer/` is an independent CMake project that finds the installed liquid package, then builds
 and runs an executable linked to `liquid::liquid`. `consumer-project-build` installs the already-
@@ -346,7 +371,16 @@ identity through the CLI, then decodes, re-encodes, and verifies the stored cano
 through the public API. `test_hardware_keys.cpp` drives CTAP2, PIV, and TPM command-level doubles,
 cross-backend identity rotation, private-key absence in CLI document output for software, FIDO2
 EdDSA/ES256, and PIV custody, malformed signature rejection, and threshold release approval
-including compromise-time refusal and refusal of signers whose identity chain is not trusted.
+including refusal of every approval by a key later declared compromised and of signers whose
+identity chain is not trusted. `Identity.BackdatedSignatureByCompromisedKeyIsRefused` shows that a
+signer-chosen `signed_at` before the declaration does not rescue a compromised key's signature, and
+`TransparencyTimestamp.SignatureTrustedTimeComesOnlyFromVerifiedEvidence` checks the trusted-time
+evidence that can (liquid#391).
+including compromise-time refusal, refusal of signers whose identity chain is not trusted, and the
+release trust root (liquid#384): a policy from an unpinned issuer, a policy under an empty issuer
+list, and a policy for another repository are refused, and a pinned issuer's policy for its own
+repository passes. `cli/release.cmake` proves the CLI refuses without
+`trust/release-policy-issuers` and refuses a policy replaced by an unpinned repository writer.
 Signer attribution (liquid#383) is covered where each verifier lives: `test_identity.cpp` (chain
 rules and the unknown-signer result), `test_sync.cpp` (identity frames), `attestation/`,
 `admission/`, `build/test_policy.cpp`, `test_hot_update.cpp`, and `cli/release.cmake`. Tests that
@@ -365,11 +399,25 @@ including compromise-time refusal and FIDO2 EdDSA/ES256 approvers. The FIDO2 dou
 WebAuthn/CTAP2 and TAAP/1, rejecting the double-hashed form liquid#81 removed. On Linux it also drives an installed `swtpm` through the TPM
 command transport.
 
+`test_identity_custody.cpp` covers how the local identity's signing key is held at rest
+(liquid#402): a watcher that stats every identity file during creation under a zero umask sees no
+mode but 0600, no temporary file is left, a passphrase-custody identity writes no clear wrapping
+key, a wrong, missing, or group-readable passphrase is refused, an injected passphrase source is
+asked once per signer, and a file-custody identity migrates to a sealed wrapping key. Because
+tests run without a terminal, `ctest-environment.cmake` (read by ctest before any test runs) sets
+`LIQUID_IDENTITY_KEY_CUSTODY=file` for every test process; the custody tests set their own value.
+Running a test binary directly on a machine without an identity needs the same setting.
+
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,
 repository storage round trip, the `liquid symbols` command, and the labelled tree-sitter fallback.
 Hot-update tests classify fixture pairs across all tiers, prove that comment-only output equality is
 tier 0, require ABI evidence for tier 2, reject unsigned patches, and reconstruct a two-patch
-composition. The Unix demo drives one Capy process across a signed tier-1 replacement; its tier-3
+composition. `HotUpdate.EmptySignerSetRefusesEveryPatch` and
+`HotUpdate.PatchFromAnUnlistedSignerIsRefused` cover the hot-update signer set (liquid#388): an
+empty set refuses every patch, and an identity whose chain is held but which is not listed is
+refused while a listed one is accepted. `test_trust.cpp` (`TrustFile.*`) covers the
+`$LIQUID_HOME/trust/` loader: a missing or empty file refuses and names the file, comments and
+duplicates are handled, and a name that is not a plain file name is refused. The Unix demo drives one Capy process across a signed tier-1 replacement; its tier-3
 case verifies the sandboxed restart-hook arguments where a FUSE backend is installed.
 `test_projection.cpp` imports the committed `fixtures/projection/root` install tree and covers
 package round trips, registry recognition, deterministic compression and output, OCI layers and
@@ -405,7 +453,8 @@ execution, explicit unavailable results, the deliberate regression and Linux pro
 Issue #286 adds `cli-project` for ordinary-repository projection and existing result-ID
 compatibility. `guides-projection` runs the documented file-to-package workflow natively,
 including equality of Debian bytes from a change and its root tree, without a mount.
-`test_log_url.cpp` covers HTTP log URL factory errors and all six legacy source operations.
+`test_log_url.cpp` covers HTTP log URL factory errors, including plain `http://` to a host that is
+not loopback (liquid #389), and all six legacy source operations.
 `cli-log-url` repeats these API tests and every malformed URL through the three log verbs
 with networking denied on macOS and Linux. See [the contract](../docs/library/transparency.md#http-url-validation-289).
 

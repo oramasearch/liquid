@@ -81,6 +81,15 @@ struct LIQUID_EXPORT hot_update_composition {
     std::vector<hot_update_patch> patches;
 };
 
+// Who may sign a hot-update patch (liquid#388). A patch is delivered only when a `hot_update/1`
+// attestation for it is issued by one of these TAAP identity ids and verifies through that
+// identity's chain in this machine's identity store. An empty list refuses every patch. The CLI
+// reads the list from `$LIQUID_HOME/trust/hot-update-signers`; the daemon uses the repository's own
+// signing identity, which signed the patch it just built.
+struct LIQUID_EXPORT hot_update_trust {
+    std::vector<std::string> signers;
+};
+
 struct LIQUID_EXPORT hot_update_apply_result {
     hot_update_outcome outcome{hot_update_outcome::restart};
     digest record{};
@@ -112,10 +121,10 @@ classify(repository& source, result_id old_result, result_id new_result);
 create_patch(repository& source, hot_update_plan plan, std::vector<std::byte> object);
 [[nodiscard]] LIQUID_EXPORT runtime::task<hot_update_patch_creation>
 create_patch(repository& source, hot_update_plan plan);
-[[nodiscard]] LIQUID_EXPORT runtime::task<hot_update_patch> verify_patch(repository& source,
-                                                                         digest record);
+[[nodiscard]] LIQUID_EXPORT runtime::task<hot_update_patch>
+verify_patch(repository& source, digest record, hot_update_trust trust);
 [[nodiscard]] LIQUID_EXPORT runtime::task<hot_update_apply_result>
-apply(repository& source, digest record, std::filesystem::path endpoint);
+apply(repository& source, digest record, std::filesystem::path endpoint, hot_update_trust trust);
 [[nodiscard]] LIQUID_EXPORT runtime::task<hot_update_apply_result>
 record_outcome(repository& source, hot_update_plan plan);
 [[nodiscard]] LIQUID_EXPORT runtime::task<hot_update_apply_result>
@@ -123,8 +132,8 @@ restart(repository& source,
         hot_update_plan plan,
         std::filesystem::path working_tree,
         std::vector<std::string> hook);
-[[nodiscard]] LIQUID_EXPORT runtime::task<hot_update_composition> status(repository& source,
-                                                                         result_id target);
+[[nodiscard]] LIQUID_EXPORT runtime::task<hot_update_composition>
+status(repository& source, result_id target, hot_update_trust trust);
 
 } // namespace hot_update
 

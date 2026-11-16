@@ -89,8 +89,26 @@ build-static/tests/liquid-attribution-measure build-static/attribution-measure-r
 
 These local measurements are context rather than a cross-host benchmark.
 
+## Threat model
+
+Delegated sessions are their own trust boundary. The threat model in
+[`../security/delegation-threat-model.md`](../security/delegation-threat-model.md) (liquid #418)
+lists every must-never for delegation acceptance, session authority, and session join and leave,
+where each is enforced, and the test that proves it. What holds: only a complete `delegation/1`
+signed by this repository's own principal starts a session, and publish and lease are refused
+outside the delegation's scopes and capabilities, at both ends of a move. What does not hold yet:
+revocation and expiry are not checked
+([#514](https://github.com/oramasearch/liquid/issues/514)), a delegation is not bound to the agent,
+dispatcher or repository using it ([#515](https://github.com/oramasearch/liquid/issues/515)),
+`open_session` trusts stored session authority without verifying it again
+([#516](https://github.com/oramasearch/liquid/issues/516)), and sub-delegation containment
+over-approximates scopes and does not link the chain
+([#517](https://github.com/oramasearch/liquid/issues/517)).
+
 ## How to verify
 
+The delegated-session must-nevers are proved by the `Collaboration` and `AttestationRegistry` tests
+named in the [threat model](../security/delegation-threat-model.md#must-nevers).
 `Collaboration.line_attribution_follows_changes_sessions_agents_and_moves` checks human and agent
 line ownership plus rename preservation. `Daemon.attribution_query_crosses_the_wire` compares the
 daemon result with the direct repository query. `cli-blame` checks the text and JSON contracts.

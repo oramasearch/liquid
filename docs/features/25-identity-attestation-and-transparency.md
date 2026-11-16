@@ -36,7 +36,9 @@ system reduces to.
 `delegation/1` is implemented by liquid #30. Its required attributes are scoped path globs,
 independent publish and lease capabilities, remaining delegation depth, and dispatcher; `model`
 is optional. Validation permits only attenuation, and session drips carry the delegation digest
-and agent actor in their signed version-3 body while older records remain decodable.
+and agent actor in their signed version-3 body while older records remain decodable. The threat
+model for delegation and the sessions that act under it, with the defects still open (#514 to
+#517), is [`../security/delegation-threat-model.md`](../security/delegation-threat-model.md).
 
 `scan_result/1` is implemented for local capture in Phase 1; its canonical record and verification
 rules are in [`../library/secret-scanning.md`](../library/secret-scanning.md#scan_result1).

@@ -58,7 +58,7 @@ owning issue in `error::context`.
 | `liquid/session.hpp` | #30, #41, #86, #248 | implemented | move-only speculative `session`, session/delegation options, atomic publish reports, semantic lease claims, transient presence, epoch values, and per-line actor/session/change attribution records |
 | `liquid/error.hpp` | #39, #200 | implemented | `errc`, including the named unconfigured-build result, `error`, `result<T>` |
 | `liquid/attestation.hpp` | #14, #61, #62 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM claims, attestation encoding, and profile-keyed verification |
-| `liquid/transparency.hpp` | #207, #210, #268, #289 | implemented | Lake checkpoint signature and witness quorum validation; entry/hash tiles, inclusion and consistency proofs, identity scans, Capy `log_source`, locally validated HTTP source factory and retained constructor errors, repository-backed or caller-pinned trust, RFC 3161 timestamp tokens, and RFC 4998 evidence chains with explicit TSA anchors |
+| `liquid/transparency.hpp` | #207, #210, #268, #289, #389 | implemented | Lake checkpoint signature and witness quorum validation; entry/hash tiles, inclusion and consistency proofs, identity scans, Capy `log_source`, locally validated HTTP source factory (plain HTTP only to loopback) and retained constructor errors, caller-pinned log key, witness set and threshold on every verifying operation, the `$LIQUID_HOME/trust/transparency/` pin file loader and writer, repository-backed trusted checkpoints, RFC 3161 timestamp tokens, and RFC 4998 evidence chains with explicit TSA anchors |
 | `liquid/admission.hpp` | #203, #238, #268 | implemented | versioned policy and CBOR/JSON decision codecs, named policy-directory options, per-policy transparency mode and trust, rule-attributed reasons and considered evidence with log outcomes, coroutine attestation-source and transparency-verifier interfaces, shared image review, and admission server options including bounded replay |
 | `liquid/attestation.hpp` | #14, #61, #62, #203 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM and image claims, attestation encoding, profile-keyed verification, and image-attestation minting |
 | `liquid/attestation.hpp` | #14, #61, #62, #76 | implemented | registered TAAP profile schemas, typed attributes and commitments, structured SLSA v1 provenance, signed SBOM and platform-signature claims, attestation encoding, and profile-keyed verification |
@@ -134,7 +134,8 @@ owning issue in `error::context`.
 | `liquid/daemon.hpp` | #21, #23, #193, #195, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets including configured drive sync, per-target cursor status, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
 | `liquid/daemon.hpp` | #21, #23, #85, #193, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, flow watermarks and in-process consumer lag, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
-| `liquid/reapi.hpp` | #16 | implemented | `reapi_serve_options` and the coroutine-native repository CAS/ActionCache server entry point |
+| `liquid/reapi.hpp` | #16, #415 | implemented | `reapi_serve_options` with its listener security and the coroutine-native repository CAS/ActionCache server entry point |
+| `liquid/listener.hpp` | #415, #403 | implemented | `listener_security` (TLS, mutual TLS, bearer token), the loopback-only default check, owner-only token files, and constant-time bearer comparison |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
 | `liquid/sync.hpp` | #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
 | `liquid/forge.hpp` | #201 | implemented | plain review, comment, mapped-anchor, branch-protection, and polling-event values plus a move-only coroutine client and watch; HTTP and JSON remain private |
@@ -711,6 +712,9 @@ struct reapi_serve_options {
   std::filesystem::path store_directory;
   std::string listen, instance_name;
   reapi_upload_limits uploads;
+struct reapi_serve_options {
+    std::filesystem::path store_directory; std::string listen, instance_name;
+    listener_security security;
 };
 runtime::task<void> serve_reapi(reapi_serve_options);
 ```
@@ -719,6 +723,25 @@ The server exposes the repository's SHA-256 CAS, ByteStream, Capabilities, and A
 not expose transport implementation types. `uploads` bounds retained payload capacity, upload count,
 resource-name length, idle expiry and active handling time; the same policy is available through
 `scheduler_options::uploads`. Defaults and CLI configuration are in [reapi.md](reapi.md).
+not expose transport implementation types. A non-loopback `listen` is refused unless `security`
+has TLS and a bearer token or a client CA ([`reapi.md`](reapi.md#listener-security-liquid415)).
+
+### `liquid/listener.hpp`
+
+```cpp
+struct listener_security {
+    std::optional<std::filesystem::path> tls_certificate, tls_key, client_certificate_authority;
+    std::string bearer_token;
+};
+bool is_loopback_address(std::string_view host) noexcept;
+result<void> validate_listener_security(bool loopback, const listener_security&);
+result<std::string> read_token_file(const std::filesystem::path&);
+bool bearer_authorized(std::string_view expected, std::string_view authorization) noexcept;
+```
+
+Shared by `serve_reapi` and the `liquid serve sync` adapter. Plaintext is served only on loopback.
+`sync_server_options` adds `upload_quota_bytes`, `upload_ttl`, and `staging_directory` for the
+upload quarantine that keeps a push's objects out of the store until it is authorized (#403).
 
 ### `liquid/sync.hpp`
 
@@ -939,16 +962,20 @@ struct release_verification {
   std::vector<std::string> distinct_valid_signers;
   std::vector<std::string> missing;
 };
+struct release_trust { digest repository;                       // liquid#384: held outside the
+                       std::vector<std::string> policy_issuers; }; // repository; empty refuses all
 runtime::task<release_policy> make_release_policy(digest repository, std::string role,
   std::uint64_t threshold, std::vector<std::string> signers, std::string not_after,
   signer& policy_signer);
 runtime::task<release_approval> approve_release(digest artifact, const release_policy&,
   std::string release, signer& approving_signer);
 result<release_verification> verify_release(digest artifact, const release_policy&,
-  std::span<const release_approval> approvals, std::chrono::sys_seconds now = {});
+  std::span<const release_approval> approvals, const release_trust&,
+  std::chrono::sys_seconds now = {});
 ```
 
-The policy is a verified `release_policy/1` repository-subject attestation and each approval is a
+The policy is a verified `release_policy/1` repository-subject attestation, issued by an identity
+in `release_trust::policy_issuers` and naming `release_trust::repository`, and each approval is a
 verified `release_approval/1` artifact-subject attestation. The threshold counts distinct allowed
 TAAP identity identifiers. [release-approval.md](release-approval.md) defines expiry, compromise,
 and TUF alignment.
@@ -1815,6 +1842,20 @@ class signer {
 };
 result<bool> verify(const actor&, std::string_view artifact_type, std::span<const std::byte> canonical_body, const signature&);
 result<verified_identity> verify_chain(std::span<const identity_document> documents);
+struct signature_timestamp { std::vector<std::byte> rfc3161_token, evidence_record;
+                             x509::trust_anchor_set trust; };          // exactly one evidence field
+result<std::string> trusted_signature_time(const signature&, const signature_timestamp&);
+result<bool> verify_with_trusted_time(const actor&, std::string_view artifact_type,
+    std::span<const std::byte> canonical_body, const signature&, const signature_timestamp&);
+result<bool> verify_with_trusted_time(const actor&, std::span<const identity_document> chain,
+    std::string_view, std::span<const std::byte>, const signature&, const signature_timestamp&);
+struct identity_custody_options { std::string custody;            // passphrase | keychain | <custody URI> | file
+  std::function<result<std::string>(bool confirm)> passphrase; };   // asked when no passphrase file is set
+void set_identity_custody_options(identity_custody_options);      // process-wide, read by local_signer
+struct identity_custody_status { std::string custody, kind; bool file_permissions_only, clear_copy_present;
+                                 std::filesystem::path path; };
+result<identity_custody_status> local_identity_custody();           // reads, never unseals (#402)
+runtime::task<identity_custody_status> migrate_local_identity_custody(std::string custody);
 struct signature { std::string algorithm; std::string signing_key_identifier; std::string signing_key_label;
                    std::string signature_purpose; std::string signed_at; std::vector<std::byte> bytes;
                    std::vector<std::byte> authenticator_data, client_data_hash; };   // TAAP/1 §6.7 plus FIDO2 fields
@@ -1875,14 +1916,15 @@ runtime::task<hot_update_plan> classify(repository&, result_id old, result_id ne
 runtime::task<hot_update_patch_creation> create_patch(repository&, hot_update_plan,
                                                        std::vector<std::byte> object);
 runtime::task<hot_update_patch_creation> create_patch(repository&, hot_update_plan);
-runtime::task<hot_update_patch> verify_patch(repository&, digest record);
+struct hot_update_trust { std::vector<std::string> signers; };   // liquid#388; empty refuses all
+runtime::task<hot_update_patch> verify_patch(repository&, digest record, hot_update_trust);
 runtime::task<hot_update_apply_result> apply(repository&, digest record,
-                                             std::filesystem::path endpoint);
+                                             std::filesystem::path endpoint, hot_update_trust);
 runtime::task<hot_update_apply_result> record_outcome(repository&, hot_update_plan);
 runtime::task<hot_update_apply_result> restart(repository&, hot_update_plan,
                                                std::filesystem::path working_tree,
                                                std::vector<std::string> hook);
-runtime::task<hot_update_composition> status(repository&, result_id target);
+runtime::task<hot_update_composition> status(repository&, result_id target, hot_update_trust);
 }
 ```
 
@@ -1982,9 +2024,11 @@ verification distinguishes *unsigned* from *invalid*.
 For §5.5 and §18.7, `compromised_keys` is an optional signed identity-document array of
 `{ key_fingerprint_base32, declared_at, reason? }`; its fingerprint is SHA-512/256 of the
 canonical public-key object, encoded as unpadded uppercase base32, and `declared_at` is RFC 3339
-UTC. A successor naming its predecessor key there may carry only the new-key signature. Signatures
-from that key at or after `declared_at` fail; earlier signatures remain valid and
-`verified_identity` reports compromised history. `signer::rotate` persists the chain under
+UTC. A successor naming its predecessor key there may carry only the new-key signature, and
+`verified_identity` reports compromised history. `verify` refuses every signature by that key,
+whatever its signer-chosen `signed_at` says; `verify_with_trusted_time` accepts one only with
+`signature_timestamp` evidence (an RFC 3161 token or RFC 4998 evidence record over the signature
+bytes, checked against caller-supplied TSA roots) that predates `declared_at` (#391). `signer::rotate` persists the chain under
 `identity/<identity-fingerprint>/documents/NNN.cbor`, replaces the active local private key after
 the successor is signed, and `verify_chain` returns the current key set. Initial and successor
 documents share the `identity_document` type. `signer::document()` exposes the held signed public
@@ -1992,6 +2036,9 @@ document used by `identity show --document`, without accessing the backend or si
 canonical CBOR, `decode_identity_document` rejects malformed or non-canonical input, and
 `decode_signature` parses a canonical TAAP/1 signature object. Decoding is separate from
 `verify_document` and `verify_chain` so callers explicitly choose their trust policy.
+The local identity's wrapping key is held by the custody `identity_custody_options` selects
+(passphrase, macOS Keychain, a key custody URI, or explicit file-permission-only `file`); see
+[`identity.md`](identity.md#how-the-software-signing-key-is-protected-at-rest-liquid-402) (#402).
 `passphrase_provider`, `key_file_provider`, and `keyring` are implemented for encrypted store
 objects. The keyring retains held data-key versions, rotates future writes, rewraps every held
 version when the KEK changes, and records revocation after deleting a wrapped version. TPM PCR

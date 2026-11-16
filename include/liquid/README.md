@@ -53,6 +53,13 @@ attribution records used by the repository and daemon APIs.
 `tuf.hpp` defines the repository-backed trusted-root bootstrap, ordered metadata update verifier,
 and complete target-byte verification gate used by registry and drive clients.
 
+`listener.hpp` defines `listener_security`, the TLS, mutual-TLS and bearer-token configuration of
+the REAPI and sync listeners, and the checks they share: only a loopback listener may run without
+TLS and client authentication, tokens come from owner-only files, and bearer comparison is
+constant-time. `reapi.hpp` carries it in `reapi_serve_options::security`; the `liquid serve sync`
+adapter applies the same rules. `sync_server_options` bounds the upload quarantine with
+`upload_quota_bytes` and `upload_ttl` and places it under `staging_directory`.
+
 `abi.hpp` defines synchronous linked-binary extraction and diffing values. Repository-backed ABI
 lookup remains asynchronous in `repository.hpp`, and wrapper compatibility events are part of
 `build.hpp`. Private ELF, Mach-O, and PE reader details do not enter the installed headers.
@@ -95,4 +102,8 @@ pinned to a SHA-256 digest; the private HTTP client and control-plane JSON stay 
 
 `transparency.hpp` provides `http_log_source::create()` for local URL validation through
 `result<http_log_source>`. Existing string construction retains errors for request operations;
-see [the contract](../../docs/library/transparency.md#http-url-validation-289).
+see [the contract](../../docs/library/transparency.md#http-url-validation-289). Every verifying
+`log_client` operation takes the caller's `log_trust` pin, and `load_log_trust`,
+`save_log_trust`, `parse_log_trust` and `format_log_trust` handle the
+`$LIQUID_HOME/trust/transparency/` pin file
+([pinned trust](../../docs/library/transparency.md#pinned-log-key-and-witness-policy-389)).

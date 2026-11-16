@@ -61,13 +61,39 @@ patch { v:1, kind:"patch", supersedes:result_id, target:result_id,
 
 `object` identifies the frontend's relocatable replacement object. `create_patch` stores the object
 and record, signs a `hot_update/1` attestation, and indexes the record by target. `verify_patch`
-requires a matching valid signature before reading or delivering the object. The signature counts
-only when the issuer's name is bound to its key by an identity chain this machine holds (liquid#383):
-a patch attested by an identity with no stored chain is refused with `hot-update attestation is
-invalid: unknown signer`, before the object is read (`HotUpdate.PatchFromAnUnknownSignerIsRefused`).
-Which identities may sign a patch at all is a separate allow-list, liquid#388. `hot_update::status`
-walks the signed `supersedes` chain and returns the base artifact plus every patch in application
-order, so composition remains reconstructible.
+requires a matching valid signature from an allowed signer before reading or delivering the object
+(next section). `hot_update::status` walks the signed `supersedes` chain, verifying every patch the
+same way, and returns the base artifact plus every patch in application order, so composition
+remains reconstructible.
+
+### Who may sign a patch
+
+A patch is a shared library loaded into a running process, so accepting one is running its code.
+Anyone who can add a record and an attestation to the repository (sync, a shared checkout) can
+offer one, so a valid signature is not enough (liquid#388). `verify_patch`, `apply` and `status`
+take a `hot_update_trust` record, `signers`: the TAAP identity ids allowed to sign a patch. A
+patch is delivered only when a matching `hot_update/1` attestation is issued by a listed identity
+**and** verifies through that identity's chain in this machine's identity store (liquid#383). The
+key carried in the record is never trusted.
+
+- **An empty list refuses every patch** (`no hot-update signers are configured`).
+- An attestation from an identity outside the list is ignored, however valid its signature and
+  chain; when no listed identity signed, the patch is refused with `hot-update patch is not signed
+  by a configured hot-update signer` (`HotUpdate.PatchFromAnUnlistedSignerIsRefused`).
+- A listed identity with no stored chain is an unknown signer, refused with `hot-update attestation
+  is invalid: unknown signer` (`HotUpdate.PatchFromAnUnknownSignerIsRefused`).
+
+Where the list comes from:
+
+| Caller | Signer set |
+|---|---|
+| `liquid hot-update apply` and `status` | `$LIQUID_HOME/trust/hot-update-signers`, one identity id per line ([identity.md](identity.md#local-trust-files)). A missing or empty file refuses the command and names the file to create. The repository never supplies it. |
+| The daemon's `hot-update` target | The repository's own signing identity only: the daemon delivers the patch it has just built and signed, never one it received. |
+| A libliquid caller | The `hot_update_trust` it passes. |
+
+Typically the file lists the build identity that produces patches for this machine:
+`liquid identity show --json` on the build machine prints its `id`, and `liquid identity show
+--chain` / `liquid identity trust <chain>` moves its chain here.
 
 Tier 0 and restart write a canonical `hot-update-outcome` record containing the old and new results,
 tier, outcome, symbols, and classifier evidence. It is signed with the same profile and indexed as
@@ -99,7 +125,10 @@ bypass its registered slot cannot be redirected.
 ## Restart contract and daemon
 
 Repository `config.hot_update` persists a `restart_hook` argument vector and configured targets of
-`{name, endpoint}`. A configured target requires a non-empty restart hook. The daemon's ordered
+`{name, endpoint}`. A configured target requires a non-empty restart hook. The configuration is
+local to the checkout that set it through `repository_options::hot_update`: clone, pull, drive sync
+and composition never carry it, so a hook named by a remote repository never runs (liquid #420,
+[sync.md](sync.md#trust-configuration-stays-with-the-checkout-that-set-it)). The daemon's ordered
 `hot-update` target runs after graph invalidation for every drip, builds each configured target,
 selects its evidence-bearing result, compares it with `hot_update/current/<name>`, and then applies
 the plan.
@@ -131,8 +160,8 @@ The tier-1 line names the `input.txt` drip and includes one process id plus
 on Linux or macOS with macFUSE. A macOS host without macFUSE prints the explicit sandbox-backend
 skip reason.
 
-`HotUpdate.*` covers comment, body, additive, signature/layout, missing-frontend, signed-chain, and
-unsigned-patch cases. `HotUpdateDemo.TierTwoLoadsAnAdditiveObject` verifies load-only tier-2
+`HotUpdate.*` covers comment, body, additive, signature/layout, missing-frontend, signed-chain,
+unsigned-patch, unknown-signer, unlisted-signer, and empty-signer-set cases. `HotUpdateDemo.TierTwoLoadsAnAdditiveObject` verifies load-only tier-2
 delivery without an existing entry slot. `HotUpdateDemo.TierOnePatchChangesARunningCapyLoop` drives the configured
 daemon with a source drip and observes `value=1` followed by `value=2` in the same process.
 `HotUpdateDemo.TierThreeInvokesRestartHook` verifies the sandboxed hook and its appended arguments

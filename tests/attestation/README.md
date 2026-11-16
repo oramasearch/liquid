@@ -9,6 +9,8 @@ The `delta/1` example pins source, target, algorithm, and delta-record attribute
 The `hot_update/1` example pins old and new results, tier, symbols, object, record, and outcome.
 The `image_provenance/1` example pins the digest-reference, tree, and optional result fields used by
 admission.
-The `delegation/1` case validates scoped, attenuation-only agent authority.
+The `delegation/1` cases validate scoped, attenuation-only agent authority, refuse other profiles
+and incomplete or duplicated attributes, and require each sub-delegation to reduce
+`depth_remaining` without adding a capability.
 The release policy and approval examples pin repository/artifact subject kinds and the complete
 threshold, signer, expiry, policy-digest, and release-name schemas.

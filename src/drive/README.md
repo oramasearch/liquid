@@ -6,6 +6,10 @@ mutually synchronized tree digests, the pull cursor, interruption marker, bounde
 the latest per-reference outcomes, device policy, explicit path states, hydration records, and the
 last offline reason.
 
+Checkout-local paths (`repository/local_state.hpp`) are skipped by the walk, dropped from every
+flattened tree, and refused by publication, so a peer's tree never writes the repository marker,
+the store, or `.liquid/` state (liquid #420).
+
 Every reconciliation starts with a full filesystem walk. Watcher events only request another run,
 so overflow and coalescing cannot make the stored tree authoritative over disk. Directory walks and
 publication syscalls use `runtime::offload`; file contents enter and leave the store one chunk at a

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -16,6 +17,7 @@
 #include "liquid/error.hpp"
 #include "liquid/export.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/x509.hpp"
 
 namespace liquid {
 
@@ -138,6 +140,40 @@ inline constexpr std::string_view unverified_signer_label = "signed by an unveri
                                                 std::span<const std::byte> canonical_body,
                                                 const signature& signed_value);
 
+// Third-party evidence of when a signature existed (liquid #391): either an RFC 3161
+// TimeStampToken or an RFC 4998 evidence record whose initial archive timestamp covers the
+// signature, with a message imprint of SHA-256 over the signature's `bytes`. It is checked against
+// `trust`, the timestamp-authority roots the caller trusts; never take `trust` from a repository,
+// a peer or the evidence itself. Set exactly one of the two evidence fields.
+struct LIQUID_EXPORT signature_timestamp {
+    std::vector<std::byte> rfc3161_token;
+    std::vector<std::byte> evidence_record;
+    x509::trust_anchor_set trust;
+};
+
+// Verifies `evidence` for `signed_value` and returns the time it proves, as an RFC 3339 UTC time
+// ("YYYY-MM-DDTHH:MM:SSZ"). A signature's own `signed_at` is the signer's claim and proves nothing.
+[[nodiscard]] LIQUID_EXPORT result<std::string>
+trusted_signature_time(const signature& signed_value, const signature_timestamp& evidence);
+
+// A key named in a compromise declaration verifies no signature through `verify`, whatever its
+// `signed_at` says: whoever holds the compromised key can choose that field. These variants accept
+// such a signature only when `evidence` proves, by third-party time, that it existed strictly
+// before the declaration. For any other key they behave as `verify`.
+[[nodiscard]] LIQUID_EXPORT result<bool>
+verify_with_trusted_time(const actor& by,
+                         std::string_view artifact_type,
+                         std::span<const std::byte> canonical_body,
+                         const signature& signed_value,
+                         const signature_timestamp& evidence);
+[[nodiscard]] LIQUID_EXPORT result<bool>
+verify_with_trusted_time(const actor& by,
+                         std::span<const identity_document> chain,
+                         std::string_view artifact_type,
+                         std::span<const std::byte> canonical_body,
+                         const signature& signed_value,
+                         const signature_timestamp& evidence);
+
 // Checks only that `key` made the signature. It says nothing about who holds the key: use it
 // solely for a key the caller itself bound to a name, such as a session key it minted and stored.
 // A key taken from the record being checked is not bound: that signature is "signed by an
@@ -197,6 +233,53 @@ load_identity_chain(std::string_view taap_id);
 encode_identity_chain(std::span<const identity_document> chain);
 [[nodiscard]] LIQUID_EXPORT result<std::vector<identity_document>>
 decode_identity_chain(std::span<const std::byte> encoded);
+
+// How the local identity's software signing key is protected at rest (liquid #402). The key file
+// is sealed under a 32-byte wrapping key, and the wrapping key is itself held by one custody:
+//
+//   "passphrase"  sealed under an Argon2i key derived from a passphrase. The passphrase comes from
+//                 the file named by LIQUID_IDENTITY_PASSPHRASE_FILE (owner-only mode), else from
+//                 `passphrase` below (the CLI prompts on the terminal). Never from an argument.
+//   "keychain"    a random key-encryption key in the macOS login Keychain (macOS only).
+//   a custody URI any URI `key_provider_from_uri` accepts, for example "tpm:pcrs=0,7".
+//   "file"        the wrapping key in clear in `.wrapping.key` beside the key file: the signing
+//                 key is then protected only by file permissions. An explicit opt-in for headless
+//                 hosts; identities created before #402 are in this state.
+//
+// `custody` empty means LIQUID_IDENTITY_KEY_CUSTODY, else "keychain" on macOS and "passphrase"
+// elsewhere. The custody is chosen when the identity is created; `migrate_local_identity_custody`
+// changes it later.
+struct LIQUID_EXPORT identity_custody_options {
+    std::string custody;
+    // Asked for the passphrase when no passphrase file is configured. `confirm` is true when a new
+    // passphrase is being chosen, so an interactive source can ask twice.
+    std::function<result<std::string>(bool confirm)> passphrase;
+};
+
+// Sets the process-wide custody options used by `identity_detail::local_signer`.
+LIQUID_EXPORT void set_identity_custody_options(identity_custody_options options);
+
+struct LIQUID_EXPORT identity_custody_status {
+    // The custody URI recorded for the wrapping key ("passphrase", "keychain:...", "tpm:..."), or
+    // "file" for a wrapping key in clear, or "none" when no local identity exists yet.
+    std::string custody;
+    // The custody kind: the URI scheme ("passphrase", "keychain", "tpm", "file", ..., "none").
+    std::string kind;
+    // True when nothing but file permissions protects the signing key.
+    bool file_permissions_only{};
+    // True when a clear `.wrapping.key` is still on disk beside a sealed wrapping key.
+    bool clear_copy_present{};
+    std::filesystem::path path;
+};
+
+// Reports how the local identity's wrapping key is held, without unsealing it.
+[[nodiscard]] LIQUID_EXPORT result<identity_custody_status> local_identity_custody();
+
+// Re-protects the local identity's existing wrapping key under `custody` (same values as
+// `identity_custody_options::custody`; empty selects the default) and removes the previous form,
+// including a clear `.wrapping.key`. The signing key and identity documents do not change.
+[[nodiscard]] LIQUID_EXPORT runtime::task<identity_custody_status>
+migrate_local_identity_custody(std::string custody);
 
 struct LIQUID_EXPORT argon2_parameters {
     std::uint32_t memory_kib{64U * 1024U};
@@ -354,5 +437,18 @@ private:
     friend class store_detail::store_backend;
     friend class encryption_detail::leaf_cipher;
 };
+
+// Trust anchors that a repository can never supply live in this machine's liquid home, under
+// `trust/<name>` (`$LIQUID_HOME/trust/<name>`, else `$HOME/.liquid/trust/<name>`). Nothing there
+// is read from a repository, a clone, a sync peer or a log. Library callers that keep their own
+// configuration pass the identities to the API directly and need not use these files.
+[[nodiscard]] LIQUID_EXPORT std::filesystem::path trust_file_path(std::string_view name);
+
+// Reads `trust/<name>`: one TAAP identity id per line; blank lines and text after `#` are
+// ignored, and a repeated id is kept once. A missing or empty file is an `errc::unauthorized`
+// error whose message names the file to create, so a caller that refuses every error stays
+// closed. `name` is a plain file name such as `hot-update-signers`.
+[[nodiscard]] LIQUID_EXPORT result<std::vector<std::string>>
+load_trusted_identities(std::string_view name);
 
 } // namespace liquid

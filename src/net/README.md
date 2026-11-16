@@ -10,4 +10,9 @@ A response carries its header fields as well as its status and body.
 RFC 9110) into the wait it asks for. Repository sync uses it to retry a `503` or `429` that
 carries the header ([`docs/library/sync.md`](../../docs/library/sync.md)).
 
+`listener.cpp` implements the public `liquid/listener.hpp` checks shared by the REAPI and sync
+listeners: loopback detection through Corosio's address parsers, the rule that a non-loopback
+listener needs TLS plus a bearer token or a client CA, owner-only token files, and the
+constant-time bearer comparison (SHA-256 of both tokens, compared without an early exit).
+
 Public headers expose only Capy tasks and liquid values. Boost.HTTP and Corosio remain private.

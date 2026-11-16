@@ -15,5 +15,6 @@ layout and version remain covered.
 `projection.cpp` covers the Tier A package, OCI image, Helm, script, and ownership request/report
 API. `install.cpp` covers the canonical intent values and atomic-generation task API.
 `projection.cpp` covers the Tier A package, OCI image, and Helm request/report API.
+`listener.cpp` compiles the listener security values and checks independently.
 `tiers.cpp` compiles and links the synchronous registry-derived support matrix as an isolated
 public include.

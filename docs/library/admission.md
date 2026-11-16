@@ -59,7 +59,8 @@ over the documented environment variables.
 
 Within `log`, `mode` is `deny` or `verify`. `deny` is the explicit fail-closed selection: every
 otherwise-valid attestation is refused with `transparency.policy_denied`. `verify` requires a
-valid HTTP or HTTPS Lake URL, one Ed25519 log identity key, and a
+valid HTTPS Lake URL (plain HTTP only to a loopback host, liquid #389), one Ed25519 log identity
+key, and a
 witness threshold no larger than the configured witness list. Identity and witness keys are
 32-byte lowercase hexadecimal values. The checkpoint signer must equal the configured TAAP id;
 Lake's `/v1/identity` and `/v1/transparency_log_configuration` responses are not trust anchors for

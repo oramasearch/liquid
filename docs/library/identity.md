@@ -90,9 +90,28 @@ on disk.
 `{ key_fingerprint_base32, declared_at, reason? }`: the fingerprint is unpadded uppercase base32
 of SHA-512/256 over the key's canonical public-key object, `declared_at` is an RFC 3339 UTC time,
 and `reason` is optional. A successor may omit the old-key signature only when its own
-`compromised_keys` names the predecessor key. A signature from that key at or after `declared_at`
-is invalid; one made before it is valid but the resulting `verified_identity` reports compromised
-history.
+`compromised_keys` names the predecessor key, and the resulting `verified_identity` reports
+compromised history.
+
+A key named in a compromise declaration verifies **no** signature through `verify`, whatever the
+signature's `signed_at` says (liquid #391). `signed_at` is chosen by the signer, so whoever holds
+the compromised key can set it before `declared_at`; comparing the two, as liquid did before #391,
+let a thief backdate signatures. Such a signature is accepted only by `verify_with_trusted_time`,
+and only when its `signature_timestamp` evidence proves by third-party time that it existed strictly
+before `declared_at`: an RFC 3161 TimeStampToken, or an RFC 4998 evidence record whose initial
+archive timestamp covers it, with a message imprint of SHA-256 over the signature bytes, verified
+by liquid's TSA verifier ([transparency](transparency.md)) against timestamp-authority roots the
+caller supplies. `trusted_signature_time` returns that time. A signature made before the compromise
+without such evidence is refused: re-sign the artifact with the new key, or timestamp signatures
+when they are made. Signatures by a key that was never declared compromised need no evidence.
+
+What is not wired yet: no signing path requests an RFC 3161 token, and no record format (drip,
+change, release approval, attestation) carries one beside its signature, so today every signature
+by a declared-compromised key is refused. The CLI configures no timestamp-authority roots. A
+transparency-log inclusion proof cannot serve as trusted time: liquid's checkpoints carry no
+integrated time. Test: `Identity.BackdatedSignatureByCompromisedKeyIsRefused` (stored and carried
+chain, invalid evidence) and `TransparencyTimestamp.SignatureTrustedTimeComesOnlyFromVerifiedEvidence`
+(the evidence check against the TSA fixture).
 
 Documents are retained as canonical CBOR at
 `$LIQUID_HOME/identity/<identity-fingerprint>/documents/NNN.cbor`; the legacy current-document
@@ -208,9 +227,30 @@ A chain reaches a verifier in one of three ways:
 | **By hand** | `liquid identity show --chain` prints the whole chain as unpadded base64url; `liquid identity trust <chain>` (or `-` for standard input) verifies and stores it on another machine. This is how a release verifier, an admission server, a worker scheduler, or a build-policy checker learns the identities it should accept. |
 | **With the request** | A service that receives a chain with each request, such as lake's TAAP sign-in, passes it to `verify(actor, chain, ...)` or `attestation_verification_options::issuer_chain`. |
 
-Trusting a chain answers *who signed*, not *whether that signer may do this*. Who may issue a release
-policy or a hot-update patch is a separate allow-list (liquid#384, liquid#388); build policy and
-admission policy already name the identities they accept.
+Trusting a chain answers *who signed*, not *whether that signer may do this*. Chains arrive by sync
+from anyone who writes the repository, so a held chain is never an authorization. Decisions that
+must not be controlled by a repository take their allow-list from this machine's trust files
+(below); build policy and admission policy already name the identities they accept.
+
+### Local trust files
+
+A trust anchor that a repository can never supply lives under the liquid home, in
+`$LIQUID_HOME/trust/<name>` (else `$HOME/.liquid/trust/<name>`). Nothing there is read from a
+repository, a clone, a sync peer or a log. `trust_file_path(name)` names the file and
+`load_trusted_identities(name)` reads it: one TAAP identity id per line, blank lines and text after
+`#` ignored, a repeated id kept once, and a line with two values refused. **A missing or empty file
+is an `errc::unauthorized` error naming the file to create**, so a command that needs one fails
+closed until the operator writes it. The library APIs that use these lists take them as explicit
+parameters, so lake, liquify and other libliquid callers pass their own; the `liquid` binary loads
+them from these files.
+
+| File | Who it lists | Used by |
+|---|---|---|
+| `trust/hot-update-signers` | Identities whose signed patch `liquid hot-update apply` and `status` accept | [hot-update.md](hot-update.md#who-may-sign-a-patch) (liquid#388) |
+| `trust/release-policy-issuers` | Identities allowed to issue the release policy `liquid release verify` accepts | [release-approval.md](release-approval.md#trust-root) (liquid#384) |
+
+Each listed identity must also have its chain in the identity store (`liquid identity trust`): the
+list says who may act, the chain proves that a signature is theirs.
 
 `signer::rotate_to(custody, compromise?)` selects `software`, `fido2`, or `piv:9c`. The successor
 document includes the custody name, changes `key_algorithm` and `key_fingerprint`, and otherwise
@@ -266,10 +306,59 @@ performs no device I/O.
 
 Identities live at `$LIQUID_HOME/identity` or `~/.liquid/identity`. `<fingerprint>.key` holds the
 encrypted active private key, `<fingerprint>.pub` the active public key, and
-`<fingerprint>.identity.cbor` the current document. The owner-only local wrapping-key provider and
-software private key are never logged; `signer` wipes its secret material on destruction.
-Hardware `.key` records contain only the public credential descriptor needed to find the token key
-again.
+`<fingerprint>.identity.cbor` the current document. The wrapping key and software private key are
+never logged; `signer` wipes its secret material on destruction. Hardware `.key` records contain
+only the public credential descriptor needed to find the token key again.
+
+### How the software signing key is protected at rest (liquid #402)
+
+A software `<fingerprint>.key` is sealed (XChaCha20-Poly1305) under a random 32-byte **wrapping
+key**. What protects the signing key is therefore whatever holds the wrapping key, its
+**custody**:
+
+| Custody | Where the wrapping key is | What an attacker who reads the identity directory needs |
+|---|---|---|
+| `passphrase` | `.wrapping.sealed`, sealed under an Argon2i key (64 MiB, 3 passes) derived from a passphrase | the passphrase |
+| `keychain` (macOS) | `.wrapping.sealed`, sealed under a random key held in the login Keychain (service `dev.liquid.custody`, not synchronised) | access to the unlocked Keychain as the user |
+| a key custody URI (`tpm:pcrs=0,7`, `age:...`, `aws-kms:...`, `gcp-kms:...`, `azure-kv:...`, `lake:...`) | `.wrapping.sealed`, sealed by that provider ([encryption](encryption.md)) | what that provider requires |
+| `file` | `.wrapping.key`, **in clear**, beside the key | nothing more: **the signing key is protected only by file permissions** |
+
+The custody is chosen when the identity is created: `identity_custody_options::custody`, else
+`LIQUID_IDENTITY_KEY_CUSTODY`, else `keychain` on macOS and `passphrase` elsewhere. A passphrase is
+read from the file named by `LIQUID_IDENTITY_PASSPHRASE_FILE` (it must be owner-only; one trailing
+newline is dropped), else from the injected `identity_custody_options::passphrase` source; the CLI
+installs a source that prompts on the terminal without echo. A passphrase is never taken from a
+command-line argument. With no passphrase available, creation fails with `errc::unauthorized` and
+writes no key. A wrong passphrase fails the same way. The signer keeps the unsealed wrapping key in
+memory, as it keeps the signing key, so a rotation in the same process does not ask again.
+
+`file` custody is an explicit opt-in for headless hosts and test runs that have no terminal and no
+other custody; the test suite sets `LIQUID_IDENTITY_KEY_CUSTODY=file` for every test process. It is
+what every identity created before #402 has. Such identities keep loading unchanged, `liquid
+identity show` reports `wrapping_key_custody=file` and `file_permissions_only=true` and prints a
+warning, and `liquid identity custody --to <custody>` (`migrate_local_identity_custody`) seals the
+existing wrapping key under another custody and deletes `.wrapping.key`. The signing key and the
+identity documents do not change. Deleting a file does not erase its old blocks from the device;
+treat a key that was ever in `file` custody on a shared or lost disk as exposed and rotate it.
+Moving away from `keychain` leaves the Keychain item in place.
+
+Every identity file (key, public key, documents, wrapping key, trusted chains) is written whole
+under a random temporary name created with `open(O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600)`,
+synced, and renamed into place, so it never exists with a wider mode and a crash leaves either the
+old file or the new one. On Windows the temporary file is created by `CreateFileW` with a protected
+DACL granting full control to the current user only (`D:P(A;;FA;;;<user SID>)`) and moved into
+place with `MoveFileExW`. The identity directory is set to mode 0700 on POSIX. A clear
+`.wrapping.key` or a passphrase file with any group or other permission bit is refused.
+
+Linux has no desktop-keystore custody yet: the Secret Service is a D-Bus API, and liquid has no
+D-Bus client. Passphrase or TPM custody are the Linux choices.
+
+Tests: `IdentityCustody.KeyFilesNeverExistWithAWiderMode`,
+`IdentityCustody.FileCustodyIsReportedAsFilePermissionsOnly`,
+`IdentityCustody.PassphraseCustodyStoresNoClearWrappingKey`,
+`IdentityCustody.PassphraseFileMustBeOwnerOnly`, `IdentityCustody.InjectedPassphraseSourceIsAskedOnce`,
+and `IdentityCustody.FileCustodyMigratesToPassphrase`. The Keychain provider has no automated test:
+it needs an unlocked login Keychain.
 
 Creating the local identity is atomic
 ([#349](https://github.com/oramasearch/liquid/issues/349)). `local_signer` reads and creates it

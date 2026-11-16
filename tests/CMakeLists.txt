@@ -6,6 +6,10 @@ set(LIQUID_HTTP2_TEST_SOURCES
   ${PROJECT_SOURCE_DIR}/src/http2/grpc.cpp
   ${PROJECT_SOURCE_DIR}/src/http2/hpack.cpp)
 
+# Settings every test process inherits; see the file.
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/ctest-environment.cmake")
+
 find_program(LIQUID_PYTHON_EXECUTABLE NAMES python3 python REQUIRED)
 add_test(NAME docs-links
   COMMAND ${LIQUID_PYTHON_EXECUTABLE}
@@ -30,14 +34,17 @@ add_executable(liquid-tests
   http2/test_codecs.cpp
   http2/test_limits.cpp
   test_identity.cpp
+  test_identity_custody.cpp
   test_install.cpp
   test_hardware_keys.cpp
+  test_listener.cpp
   test_node_store.cpp
   test_object.cpp
   test_projection.cpp
   test_plugin_abi.c
   test_plugin_abi.cpp
   test_remote.cpp
+  test_trust.cpp
   reapi/test_wire.cpp
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
@@ -141,7 +148,8 @@ if(BUILD_SHARED_LIBS)
   target_compile_definitions(liquid-tests PRIVATE LIQUID_SHARED_TEST_BUILD=1)
 endif()
 if(UNIX)
-  target_sources(liquid-tests PRIVATE test_sync.cpp test_runtime_sockets.cpp admission/test_server.cpp)
+  target_sources(liquid-tests PRIVATE test_sync.cpp test_runtime_sockets.cpp admission/test_server.cpp
+    reapi/test_server_auth.cpp)
 endif()
 target_link_libraries(liquid-tests PRIVATE
   # liquid_forge_double links liquid::liquid publicly, so naming it here too put
@@ -621,6 +629,13 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_LOCK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/lock-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/locks.cmake)
+  if(UNIX)
+    add_test(NAME cli-serve-listen
+      COMMAND ${CMAKE_COMMAND}
+        -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+        -DLIQUID_SERVE_ROOT=${CMAKE_CURRENT_BINARY_DIR}/serve-listen-cli
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/serve-listen.cmake)
+  endif()
   set(LIQUID_LOG_URL_SANDBOX_ARGS)
   if(UNIX)
     list(APPEND LIQUID_LOG_URL_SANDBOX_ARGS
@@ -1034,6 +1049,7 @@ add_executable(liquid-header-tests
   headers/install.cpp
   headers/import.cpp
   headers/liquid.cpp
+  headers/listener.cpp
   headers/node_store.cpp
   headers/main.cpp
   headers/object.cpp

@@ -70,7 +70,7 @@ built binary under the build directory before CTest compares it with the committ
 | `daemon` | `daemon [start \| stop \| --shutdown]` | Start or stop the checkout daemon; stopping with none running says `no daemon is running`. | available on macOS and Linux |
 | `search` | `search [--explain] <query> [--ref <name>] [--limit <count>]` | Search paths and contents or explain the executed plan. | available |
 | `inspect` | `inspect <path\|digest> [--json]` | Show the selected format codec, tier, and decoded entry tree. | available |
-| `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, or `log scan <log-url> <identity>` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
+| `log` | `log [--ops] [--json]`, `log timestamps <log-url>`, `log verify --timestamps`, `log verify <log-url> <attestation-base64url>`, `log consistency <log-url>`, `log scan <log-url> <identity>`, or `log trust <log-url> [--confirm <fingerprint>]` | Show change history and verify Lake timestamp evidence or transparency-log responses. | available |
 | `history` | `history <path> [--restore <change>]` | Show stable-node path history or restore a version as a new drip. | available |
 | `blame` | `blame <path> [--json]` | Show the session and change that last wrote each line. | available on macOS and Linux |
 | `drive` | `drive <sync <folder> <remote> [--watch]\|status [folder]\|pin <path>\|unpin <path>>` | Synchronize, inspect, pin, or unpin a configured drive folder. | available |
@@ -332,7 +332,13 @@ Lake checkpoint, tile, and proof authentication remains the separate `#207` veri
 signed Lake checkpoint and records trusted state. `log consistency <log-url>` accepts only an
 append-only extension of that record. `log scan <log-url> <identity>` validates the bulk tiles and
 prints matching canonical attestations. `verify --log <log-url>` requires inclusion for every
-agreeing reproducibility attestation.
+agreeing reproducibility attestation. Each of them checks the log against its pin in
+`$LIQUID_HOME/trust/transparency/` (the log's key, witnesses, and threshold) and refuses when there
+is no pin; nothing the log says about its own key or witnesses is trusted. `log trust <log-url>`
+prints what the log claims and a fingerprint, and pins nothing; `log trust <log-url> --confirm
+<fingerprint>` writes the pin only if the log still matches that fingerprint. Plain `http://` log
+URLs are refused unless the host is loopback
+([pin format](../library/transparency.md#pinned-log-key-and-witness-policy-389)).
 
 `anchor` parses a one-based line and uses column one, then calls `repository::map_anchor`. Its
 output is `<path>:<line>:<column>@<target> moved=<bool> approximate=<bool> deleted=<bool>`.
@@ -366,9 +372,12 @@ writes an explicit online-only rule. See [`drive.md`](drive.md).
 `oramasearch/http`. It listens on `127.0.0.1:8080` unless `--listen` or `--port` overrides the
 listener. Each repeated `--allow-ref <glob>` permits reference updates whose names match that
 pattern; `*` matches any sequence and `?` one character. Supplying the flag refuses each ref outside
-all allowed patterns while applying allowed refs unless the client requested `--atomic`. Without it
-there is no built-in authentication policy, so the default is appropriate for local use; network
-services embed the public server with their own authorization callback.
+all allowed patterns while applying allowed refs unless the client requested `--atomic`. A
+non-loopback `--listen` is refused unless `--tls-cert` and `--tls-key` are given with
+`--token-file <path>` (a bearer token in an owner-only file, required on every route; clients send it
+from `LIQUID_TOKEN`) or `--client-ca <path>`. Uploads are quarantined until a push authorizes them;
+`--upload-quota <bytes>` bounds the quarantine (default 1 GiB). See
+[`../library/sync.md`](../library/sync.md#local-server-command).
 `serve admission` loads either one JSON policy as `default` with `--policy`, or every
 `<name>.json` in `--policies <dir>`, as documented in
 [`../library/admission.md`](../library/admission.md). Named sets are served at `/admit/<name>` and
@@ -436,7 +445,9 @@ and the signer identity.
 writes `.liquid/release/policy.cbor`. `--role` defaults to `targets`; `--not-after` accepts an RFC
 3339 UTC expiry. `release approve <artifact>` writes the current identity's approval, and `release
 verify <artifact>` counts distinct valid allowed identities, prints missing identities, and exits 1
-when the policy threshold is not met. See
+when the policy threshold is not met. It accepts the policy only from an issuer listed in
+`$LIQUID_HOME/trust/release-policy-issuers` and only for the repository it runs in; a missing or
+empty file refuses. See
 [`../library/release-approval.md`](../library/release-approval.md) for the signed profiles and trust
 models.
 `resolve` reads a liquid repository's visible `packages/` tree when `<path>/.liquid-store` exists.
@@ -472,8 +483,9 @@ paths, and `revalidated` (`disjoint`, `forced`, or null) from the signed body.
 `log verify <log-url> <attestation-base64url>` validates exact canonical-TAAP inclusion in a
 signed checkpoint and records it in the current repository. `log consistency <log-url>` advances
 that record only when Lake provides a valid append-only proof. `log scan <log-url> <identity>`
-lists canonical entries naming the identity. A first accepted checkpoint prints
-`bootstrap_warning=true`; operators should record that trust decision. `verify --log <log-url>`
+lists canonical entries naming the identity. Every one of them needs the log's pin first (`log
+trust`, liquid #389). A first accepted checkpoint prints `bootstrap_warning=true`; operators should
+record that trust decision. `verify --log <log-url>`
 requires the agreeing action's reproducibility attestation to be included in the same verified log.
 The existing `log --ops` and `log --json` options may be supplied in either order.
 
@@ -674,7 +686,11 @@ remote tier counts in text and JSON.
 `liquid wrap` and `liquid build --profile` accept `--remote <endpoint>`, instance, TLS, custom
 header, deadline, and publication flags described in [`../library/reapi.md`](../library/reapi.md).
 Remote publication is off unless `--remote-publish` is supplied. `liquid serve reapi --listen
-<address> [--instance <name>]` exposes the current repository's SHA-256 CAS and ActionCache.
+<address> [--instance <name>]` exposes the current repository's SHA-256 CAS and ActionCache. It
+listens on loopback (`127.0.0.1:50051`) by default and refuses any other address unless
+`--tls-cert` and `--tls-key` are given together with `--token-file <path>` (a bearer token in a
+file only its owner can read, required on every RPC) or `--client-ca <path>` (mutual TLS); there is
+no plaintext mode off loopback ([`../library/reapi.md`](../library/reapi.md#listener-security-liquid415)).
 `--scheduler <endpoint>` selects liquid's scheduler beside the stock `--remote` REAPI backend and
 preserves the scheduler's signed scheduling record. `liquid scheduler` and `liquid worker` accept
 the flags and environment variables listed in [`../library/workers.md`](../library/workers.md).
@@ -692,8 +708,9 @@ outside every live root is reported as due for eviction by the next collection.
 `hot-update classify <old> <new> [--json]` prints the tier, first-class outcome, changed symbols,
 evidence records, and reason. Missing frontend evidence is tier 4 rather than a command error.
 `hot-update apply <patch> --endpoint <path>` verifies the `hot_update/1` signature before sending
-the object to the program's local endpoint. `hot-update status <result> [--json]` walks the signed
-chain and lists the original artifact followed by each patch in application order. Configuration
+the object to the program's local endpoint; the signer must be listed in
+`$LIQUID_HOME/trust/hot-update-signers`, and a missing or empty file refuses every patch.
+`hot-update status <result> [--json]` walks the signed chain and lists the original artifact followed by each patch in application order. Configuration
 and safety rules are in [`../library/hot-update.md`](../library/hot-update.md).
 `sbom` accepts a produced path and exactly one output-format flag. In a liquid repository or
 wrapped project it verifies and prints the result-bound `sbom/1` attestation and its graph-derived

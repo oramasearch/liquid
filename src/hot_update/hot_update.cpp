@@ -832,7 +832,14 @@ runtime::task<hot_update_patch_creation> create_patch(repository& source,
     co_return co_await create_patch(source, std::move(plan_value), std::move(*object));
 }
 
-runtime::task<hot_update_patch> verify_patch(repository& source, digest record) {
+runtime::task<hot_update_patch>
+verify_patch(repository& source, digest record, hot_update_trust trust) {
+    // liquid#388: the patch is a shared library loaded into a running process, so only a
+    // configured signer may authorize it. With no signer configured, no patch is delivered.
+    if (trust.signers.empty()) {
+        co_return std::unexpected(failure(
+            errc::unauthorized, "no hot-update signers are configured; every patch is refused"));
+    }
     auto bytes_value = co_await repository_detail::build_access::get(source, record);
     if (!bytes_value) {
         co_return std::unexpected(bytes_value.error());
@@ -842,6 +849,8 @@ runtime::task<hot_update_patch> verify_patch(repository& source, digest record) 
         co_return std::unexpected(value.error());
     }
     auto page = record_page_options{};
+    auto invalid = std::optional<std::string>{};
+    auto untrusted = false;
     while (true) {
         auto statements = co_await source.attestations(value->target.value, page);
         if (!statements) {
@@ -851,13 +860,21 @@ runtime::task<hot_update_patch> verify_patch(repository& source, digest record) 
             if (!patch_attestation_matches(item.value, *value, record)) {
                 continue;
             }
+            // An attestation from an identity outside the signer set never counts, however
+            // valid its signature and chain; it does not hide a trusted one stored later.
+            if (!std::ranges::contains(trust.signers, item.value.issuer.taap_id)) {
+                untrusted = true;
+                continue;
+            }
+            // The issuer's name is bound to a key only through its identity chain in this
+            // machine's identity store; the key carried in the record is not trusted.
             auto verified = verify_attestation(item.value);
             if (!verified) {
                 co_return std::unexpected(verified.error());
             }
             if (!verified->verified) {
-                co_return std::unexpected(failure(
-                    errc::unauthorized, "hot-update attestation is invalid: " + verified->reason));
+                invalid = verified->reason;
+                continue;
             }
             co_return *value;
         }
@@ -866,12 +883,21 @@ runtime::task<hot_update_patch> verify_patch(repository& source, digest record) 
         }
         page.cursor = statements->next;
     }
+    if (invalid) {
+        co_return std::unexpected(
+            failure(errc::unauthorized, "hot-update attestation is invalid: " + *invalid));
+    }
+    if (untrusted) {
+        co_return std::unexpected(
+            failure(errc::unauthorized,
+                    "hot-update patch is not signed by a configured hot-update signer"));
+    }
     co_return std::unexpected(failure(errc::unauthorized, "hot-update patch is unsigned"));
 }
 
 runtime::task<hot_update_apply_result>
-apply(repository& source, digest record, std::filesystem::path endpoint) {
-    auto value = co_await verify_patch(source, record);
+apply(repository& source, digest record, std::filesystem::path endpoint, hot_update_trust trust) {
+    auto value = co_await verify_patch(source, record, std::move(trust));
     if (!value) {
         co_return std::unexpected(value.error());
     }
@@ -993,7 +1019,8 @@ runtime::task<hot_update_apply_result> restart(repository& source,
     co_return co_await record_outcome(source, std::move(plan_value));
 }
 
-runtime::task<hot_update_composition> status(repository& source, result_id target) {
+runtime::task<hot_update_composition>
+status(repository& source, result_id target, hot_update_trust trust) {
     auto output = hot_update_composition{.artifact = target};
     auto visited = std::set<std::string>{};
     auto current = target;
@@ -1023,7 +1050,7 @@ runtime::task<hot_update_composition> status(repository& source, result_id targe
         if (!record) {
             co_return std::unexpected(record.error());
         }
-        auto value = co_await verify_patch(source, *record);
+        auto value = co_await verify_patch(source, *record, trust);
         if (!value) {
             co_return std::unexpected(value.error());
         }

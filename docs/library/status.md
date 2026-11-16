@@ -67,6 +67,28 @@ authenticated pusher, never to a record's claimed author (#508).
 double-hashed form is rejected. Proof is independent OpenSSL vectors and protocol-conforming doubles;
 no physical authenticator run exists yet ([`identity.md`](identity.md)).
 
+**Compromised keys (#391).** A key named in a compromise declaration verifies no signature through
+`verify`: its `signed_at` is the signer's own claim and can be backdated. `verify_with_trusted_time`
+accepts one only with an RFC 3161 token or RFC 4998 evidence record over the signature that a
+caller-trusted TSA dates before the declaration. No record format carries such evidence yet, so
+every signature by a declared-compromised key is refused today
+([`identity.md`](identity.md#rotation)).
+
+**Identity key custody (#402).** Every identity file is created owner-only and atomically (mode
+0600 through `open(O_CREAT|O_EXCL|O_NOFOLLOW)`, or an owner-only DACL on Windows, then a rename).
+A new software identity seals its wrapping key under a passphrase (`LIQUID_IDENTITY_PASSPHRASE_FILE`
+or a terminal prompt), the macOS Keychain, or a key custody URI (default: `keychain` on macOS,
+`passphrase` elsewhere); a clear `.wrapping.key`, which leaves the key protected only by file
+permissions, is written only for explicit `file` custody. Older identities keep loading;
+`liquid identity show` reports and warns about their custody, and `liquid identity custody --to`
+migrates them ([`identity.md`](identity.md#how-the-software-signing-key-is-protected-at-rest-liquid-402)).
+
+**Release trust root (#384).** `verify_release` takes a `release_trust` held outside the
+repository: the policy's issuer must be listed (`$LIQUID_HOME/trust/release-policy-issuers` for
+`liquid release verify`) and verify through its identity chain, and the policy's subject must be
+the repository being released. A missing or empty issuer list refuses every policy
+([`release-approval.md`](release-approval.md#trust-root)).
+
 **Public API.** The public error, digest, identity document codec, signature decoder, and release
 approval APIs are implemented, including BLAKE3, SHA-256, and keyed BLAKE3 identifiers
 ([`api-map.md`](api-map.md), [`hash-agility.md`](hash-agility.md), [`identity.md`](identity.md),
@@ -180,6 +202,17 @@ time (liquid#435).
 Send rejects any missing-object
 response containing a digest outside the current offered root closure before any upload
 (liquid #446).
+Issue #420 confirms that no
+trust-controlling repository configuration (the REAPI remote and its TLS, key and header settings,
+the hot-update restart hook, policy, deployment, TUF state) travels with clone, sync or composition,
+and makes checkout-local paths (`LIQUID_REPO`, `.liquid/`, `.liquid-store/` and liquid's other
+state directories) impossible to import into a tree or to write from a peer's tree
+([`sync.md`](sync.md#trust-configuration-stays-with-the-checkout-that-set-it)).
+Uploads wait in a quota-bounded
+quarantine and enter the store only when a push that reaches them is authorized; a refused push
+leaves nothing behind, and flow admission spends an author's budget only for items signed by that
+author. `serve sync` binds loopback by default and refuses any other address without TLS and a
+bearer token or client CA (#403).
 
 **Drive.** Issue #195 adds the persisted three-tree drive client, named concurrent conflict values,
 interrupted-transfer resume, per-reference refusal reporting, stable-node path history and restore,
@@ -211,7 +244,13 @@ full or partial tile is reauthenticated through its parents to the selected chec
 tile bytes receive the same complete walk, and consistency verification completes that walk before
 it requests a proof. HTTP log source construction reports invalid URLs through the public
 result model; legacy request operations retain the validation error. `log scan`, `log consistency`,
-and `log verify` reject malformed URLs locally with exit 2 (liquid #289).
+and `log verify` reject malformed URLs locally with exit 2 (liquid #289), and plain `http://` is
+refused unless the host is loopback. The log's key, witness set, and witness threshold come only
+from a pin the caller supplies, never from the log: the CLI reads it from
+`$LIQUID_HOME/trust/transparency/` and refuses when none exists, a pinned threshold cannot be
+lowered by the log, a key change is refused, and cosignatures from unpinned witnesses do not count.
+`liquid log trust <log-url> [--confirm <fingerprint>]` is the explicit, confirmed first-use pin
+(liquid #389).
 Complete transparency inclusion verification checks signed checkpoints, witness quorum, tiles, and
 proofs before log mode accepts a record. Strict DER, CMS, and X.509 parsing plus verification-only
 RSA and ECDSA validate RFC 3161 checkpoint timestamps and RFC 4998 renewal chains against
@@ -326,7 +365,9 @@ sizes, frame size, flow control) and closes on rapid reset, CONTINUATION, PING a
 ([`http2.md`](http2.md), liquid#412). The server reads each request one bounded message at a time
 and refuses a message over 5 MiB with `RESOURCE_EXHAUSTED` (#451). Both REAPI listeners bound
 retained ByteStream uploads by size, total allocated capacity, count and idle expiry and active
-Write deadlines; failed Writes release their buffers (liquid #444). Liquid's
+Write deadlines; failed Writes release their buffers (liquid #444). It binds loopback by default
+and refuses any other address unless it has TLS and a bearer token or a client CA; a configured
+token is required, compared in constant time, on every RPC (#415). Liquid's
 action-digest scheduler and TAAP-signed worker fleet are implemented, including one bounded requeue
 after worker loss, size-class placement from #18's recorded decision, REAPI Execution and
 ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces
@@ -417,7 +458,10 @@ and `liquid symbols <path>` ([`symbols.md`](symbols.md)).
 patch and restart records, the versioned `liquid-hot` cooperative C runtime for macOS arm64 and
 Linux x86_64, sandboxed restart hooks, reconstructible base-plus-patch status, and a drip-driven
 daemon target. Tier 2 verifies the #27 descriptors referenced by both signed results and otherwise
-returns the tier-3 restart outcome ([`hot-update.md`](hot-update.md)). Issue #305 gives the tier-1
+returns the tier-3 restart outcome ([`hot-update.md`](hot-update.md)). A patch is delivered only
+when its signer is in the configured hot-update signer set (`$LIQUID_HOME/trust/hot-update-signers`
+for the CLI, the repository's own identity for the daemon) and verifies through its identity chain;
+a missing or empty set refuses every patch (#388). Issue #305 gives the tier-1
 demo a scoped, bounded socket path and makes overlong runtime endpoints report the native limit
 and path ([socket fixtures](../build/socket-fixtures.md)).
 
@@ -593,7 +637,24 @@ Git objects and protobuf. Their first runs found five defects, fixed in the same
   is listed as signed by an unverified key and satisfies no policy; it is not migrated (#452). An
   identity that recovered from a compromise without its old key's
   signature is trusted elsewhere only by `liquid identity trust --accept-compromise-rotation`.
-  Who may issue a release policy or a hot-update patch is still open (#384, #388).
+- Signatures by a key later declared compromised are refused even when made before the
+  declaration (#391): no signing path requests an RFC 3161 token and no drip, change, approval or
+  attestation record carries one, and the CLI configures no TSA roots.
+- A host without a terminal, a passphrase file or another custody cannot create a software
+  identity until `LIQUID_IDENTITY_KEY_CUSTODY` is set (#402); `file` is the explicit opt-in for
+  file-permission-only protection. Linux has no Secret Service custody (no D-Bus client), and the
+  macOS Keychain custody has no automated test.
+- Delegated sessions do not check revocation or expiry (#514), do not bind a delegation to its
+  agent, dispatcher or repository (#515), trust stored session authority on reopen (#516), and
+  accept sub-delegations that broaden scopes (#517); see
+  [`../security/delegation-threat-model.md`](../security/delegation-threat-model.md).
+- `liquid push` and `liquid pull` cannot present a TLS client certificate, so they reach a
+  `serve sync --client-ca` listener only through another client; `--token-file` works with them.
+  Sync flow budgets are per author, so replaying an author's genuinely signed records still spends
+  that author's budget (#403).
+- `liquid scheduler` serves the REAPI listener without the #415 TLS and token options. A REAPI
+  client CA file must hold a single certificate: the vendored Corosio TLS context loads only the
+  first certificate of a CA file.
 - The executable-aware delta algorithm id is reserved and unused.
 - The data-branch reflink fast path requires local cluster control metadata.
 - The projection page has no recorded credentialed Apple notarisation proof; image booting is

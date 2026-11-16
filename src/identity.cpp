@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +13,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <set>
@@ -21,6 +23,8 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+// After windows.h.
+#include <sddl.h>
 #else
 #include <cerrno>
 #include <fcntl.h>
@@ -37,6 +41,7 @@
 #include "identity/key_version.hpp"
 #include "identity/keys/backend.hpp"
 #include "identity/taap.hpp"
+#include "liquid/transparency.hpp"
 #include "monocypher-ed25519.h"
 #include "monocypher.h"
 #include "store/pack.hpp"
@@ -374,7 +379,9 @@ auto read_bytes(const std::filesystem::path& path) -> result<std::vector<std::by
 
 // Files under the identity directory are never written in place: a reader, a crash or a second
 // first use must never see a partly written key (liquid#349). Each write goes to a temporary file
-// unique to this writer, is flushed to disk, and only then is moved into place.
+// unique to this writer, is flushed to disk, and only then is moved into place. The temporary file
+// is created owner-only (POSIX mode 0600 through open(2), or an owner-only DACL on Windows), so no
+// identity file exists, even briefly, with a wider mode.
 auto temporary_sibling(const std::filesystem::path& path) -> std::filesystem::path {
     thread_local auto engine = std::mt19937_64{std::random_device{}()};
 #if defined(_WIN32)
@@ -385,30 +392,114 @@ auto temporary_sibling(const std::filesystem::path& path) -> std::filesystem::pa
     return path.string() + "." + std::to_string(process) + "." + std::to_string(engine()) + ".tmp";
 }
 
+namespace {
+
 #if defined(_WIN32)
+
+struct local_memory {
+    void operator()(void* value) const noexcept {
+        if (value != nullptr) {
+            LocalFree(value);
+        }
+    }
+};
+
+auto windows_failure(std::string_view operation, const std::filesystem::path& path) -> error {
+    const auto code = std::error_code{static_cast<int>(GetLastError()), std::system_category()};
+    return identity_error(errc::io,
+                          std::format("cannot {} identity file: {}", operation, code.message()),
+                          path.string());
+}
+
+// A protected DACL with one entry: full control for the user this process runs as. Nothing is
+// inherited from the directory, so no other account, group or administrator ACE applies.
+auto owner_only_descriptor() -> result<std::unique_ptr<void, local_memory>> {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        return std::unexpected(windows_failure("read the process token for", {}));
+    }
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    auto buffer =
+        std::vector<std::uint64_t>((size + sizeof(std::uint64_t) - 1) / sizeof(std::uint64_t));
+    if (size == 0 || !GetTokenInformation(token, TokenUser, buffer.data(), size, &size)) {
+        CloseHandle(token);
+        return std::unexpected(windows_failure("read the process user for", {}));
+    }
+    CloseHandle(token);
+    const auto* user = reinterpret_cast<const TOKEN_USER*>(buffer.data());
+    LPWSTR sid_text = nullptr;
+    if (!ConvertSidToStringSidW(user->User.Sid, &sid_text)) {
+        return std::unexpected(windows_failure("name the process user for", {}));
+    }
+    auto sddl = std::wstring{L"D:P(A;;FA;;;"} + sid_text + L")";
+    LocalFree(sid_text);
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) {
+        return std::unexpected(windows_failure("build the owner-only ACL for", {}));
+    }
+    return std::unique_ptr<void, local_memory>{descriptor};
+}
+
+// Creates `temporary` with the owner-only DACL, never over an existing file, and writes `value` to
+// it, flushed to disk. On failure the temporary file is removed.
 auto write_temporary(const std::filesystem::path& temporary, std::span<const std::byte> value)
     -> result<void> {
-    const auto file = CreateFileW(
-        temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) {
-        return std::unexpected(
-            identity_error(errc::io, "cannot write identity file", temporary.string()));
+    auto descriptor = owner_only_descriptor();
+    if (!descriptor) {
+        return std::unexpected(descriptor.error());
     }
-    auto written = DWORD{};
-    const auto ok =
-        WriteFile(file, value.data(), static_cast<DWORD>(value.size()), &written, nullptr) &&
-        written == value.size() && FlushFileBuffers(file);
-    CloseHandle(file);
-    if (!ok) {
+    auto attributes = SECURITY_ATTRIBUTES{};
+    attributes.nLength = sizeof(attributes);
+    attributes.lpSecurityDescriptor = descriptor->get();
+    attributes.bInheritHandle = FALSE;
+    const auto handle = CreateFileW(temporary.c_str(),
+                                    GENERIC_WRITE,
+                                    0,
+                                    &attributes,
+                                    CREATE_NEW,
+                                    FILE_ATTRIBUTE_NORMAL,
+                                    nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return std::unexpected(windows_failure("create", temporary));
+    }
+    const auto discard = [&](std::string_view operation) -> result<void> {
+        auto failure = windows_failure(operation, temporary);
+        CloseHandle(handle);
         DeleteFileW(temporary.c_str());
-        return std::unexpected(
-            identity_error(errc::io, "cannot write identity file", temporary.string()));
+        return std::unexpected(std::move(failure));
+    };
+    constexpr std::size_t largest_write = std::size_t{1} << 30U;
+    auto remaining = value;
+    while (!remaining.empty()) {
+        const auto chunk = remaining.size() > largest_write ? largest_write : remaining.size();
+        DWORD written = 0;
+        if (!WriteFile(handle, remaining.data(), static_cast<DWORD>(chunk), &written, nullptr)) {
+            return discard("write");
+        }
+        remaining = remaining.subspan(written);
     }
+    if (!FlushFileBuffers(handle)) {
+        return discard("flush");
+    }
+    CloseHandle(handle);
     return {};
 }
+
 #else
+
+auto posix_failure(std::string_view operation, int code, const std::filesystem::path& path)
+    -> error {
+    return identity_error(
+        errc::io,
+        std::format("cannot {} identity file: {}", operation, std::strerror(code)),
+        path.string());
+}
+
 auto sync_directory(const std::filesystem::path& directory) -> void {
-    const auto descriptor = ::open(directory.c_str(), O_RDONLY | O_CLOEXEC);
+    const auto target = directory.empty() ? std::filesystem::path{"."} : directory;
+    const auto descriptor = ::open(target.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (descriptor < 0) {
         return;
     }
@@ -416,12 +507,23 @@ auto sync_directory(const std::filesystem::path& directory) -> void {
     static_cast<void>(::close(descriptor));
 }
 
+// Creates `temporary` owner-only, never over an existing file or through a symbolic link, and
+// writes `value` to it, flushed to disk. On failure the temporary file is removed.
 auto write_temporary(const std::filesystem::path& temporary, std::span<const std::byte> value)
     -> result<void> {
-    const auto descriptor =
-        ::open(temporary.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0600);
+    const auto descriptor = ::open(
+        temporary.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR);
     if (descriptor < 0) {
-        return std::unexpected(identity_error(errc::io, std::strerror(errno), temporary.string()));
+        return std::unexpected(posix_failure("create", errno, temporary));
+    }
+    const auto discard = [&](std::string_view operation, int code) -> result<void> {
+        static_cast<void>(::close(descriptor));
+        static_cast<void>(::unlink(temporary.c_str()));
+        return std::unexpected(posix_failure(operation, code, temporary));
+    };
+    // The umask can only remove bits from 0600; this makes the mode exactly 0600.
+    if (::fchmod(descriptor, S_IRUSR | S_IWUSR) != 0) {
+        return discard("protect", errno);
     }
     auto remaining = value;
     while (!remaining.empty()) {
@@ -430,27 +532,24 @@ auto write_temporary(const std::filesystem::path& temporary, std::span<const std
             continue;
         }
         if (written <= 0) {
-            const auto message = std::string{std::strerror(errno)};
-            static_cast<void>(::close(descriptor));
-            static_cast<void>(::unlink(temporary.c_str()));
-            return std::unexpected(identity_error(errc::io, message, temporary.string()));
+            return discard("write", written < 0 ? errno : EIO);
         }
         remaining = remaining.subspan(static_cast<std::size_t>(written));
     }
     if (::fsync(descriptor) != 0) {
-        const auto message = std::string{std::strerror(errno)};
-        static_cast<void>(::close(descriptor));
-        static_cast<void>(::unlink(temporary.c_str()));
-        return std::unexpected(identity_error(errc::io, message, temporary.string()));
+        return discard("sync", errno);
     }
     if (::close(descriptor) != 0) {
-        const auto message = std::string{std::strerror(errno)};
+        const auto code = errno;
         static_cast<void>(::unlink(temporary.c_str()));
-        return std::unexpected(identity_error(errc::io, message, temporary.string()));
+        return std::unexpected(posix_failure("close", code, temporary));
     }
     return {};
 }
+
 #endif
+
+} // namespace
 
 // Writes `value` to `path`, replacing any earlier file, owner-only. A reader sees the old file or
 // the whole new one, never a prefix.
@@ -464,19 +563,28 @@ auto write_private(const std::filesystem::path& path, std::span<const std::byte>
 #if defined(_WIN32)
     if (!MoveFileExW(
             temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        auto failure = windows_failure("rename", path);
         DeleteFileW(temporary.c_str());
-        return std::unexpected(
-            identity_error(errc::io, "cannot write identity file", path.string()));
+        return std::unexpected(std::move(failure));
     }
 #else
     if (::rename(temporary.c_str(), path.c_str()) != 0) {
-        const auto message = std::string{std::strerror(errno)};
+        const auto code = errno;
         static_cast<void>(::unlink(temporary.c_str()));
-        return std::unexpected(identity_error(errc::io, message, path.string()));
+        return std::unexpected(posix_failure("rename", code, path));
     }
     sync_directory(path.parent_path());
 #endif
     return {};
+}
+
+// The identity directory holds the sealed signing key: owner-only, like the files in it.
+auto protect_identity_directory(const std::filesystem::path& directory) -> void {
+#if !defined(_WIN32)
+    static_cast<void>(::chmod(directory.c_str(), S_IRWXU));
+#else
+    static_cast<void>(directory);
+#endif
 }
 
 enum class exclusive_write { created, exists };
@@ -716,51 +824,447 @@ auto load_stored_documents(const actor& subject) -> result<std::vector<stored_do
     return output;
 }
 
-auto read_wrapping_key(const std::filesystem::path& path) -> result<std::array<std::byte, 32>> {
+// The wrapping key that seals a software identity key (liquid #402). See `identity_custody_options`
+// in the public header for the custodies and how one is chosen.
+namespace {
+
+constexpr std::string_view clear_wrapping_name = ".wrapping.key";
+constexpr std::string_view sealed_wrapping_name = ".wrapping.sealed";
+constexpr std::array<std::byte, 8> sealed_wrapping_magic{std::byte{'L'},
+                                                         std::byte{'Q'},
+                                                         std::byte{'I'},
+                                                         std::byte{'D'},
+                                                         std::byte{'W'},
+                                                         std::byte{'K'},
+                                                         std::byte{1},
+                                                         std::byte{0}};
+
+auto identity_wrap_context() -> wrap_context {
+    return {"liquid-identity-wrapping-key", 1};
+}
+
+struct custody_state {
+    std::mutex mutex;
+    identity_custody_options options;
+};
+
+auto shared_custody() -> custody_state& {
+    static auto state = custody_state{};
+    return state;
+}
+
+auto custody_options() -> identity_custody_options {
+    auto& state = shared_custody();
+    const auto lock = std::scoped_lock{state.mutex};
+    return state.options;
+}
+
+auto custody_scheme(std::string_view custody_uri) -> std::string {
+    return std::string{custody_uri.substr(0, custody_uri.find(':'))};
+}
+
+// The custody a new identity, or a migration without an explicit choice, uses.
+auto selected_custody(std::string requested) -> std::string {
+    if (requested.empty()) {
+        requested = custody_options().custody;
+    }
+    if (requested.empty()) {
+        if (const auto* configured = std::getenv("LIQUID_IDENTITY_KEY_CUSTODY");
+            configured != nullptr && *configured != '\0') {
+            requested = configured;
+        }
+    }
+    if (requested.empty()) {
+#if defined(__APPLE__)
+        requested = "keychain";
+#else
+        requested = "passphrase";
+#endif
+    }
+    if (requested == "passphrase:") {
+        requested = "passphrase";
+    }
+    return requested;
+}
+
+auto read_passphrase_file(const std::filesystem::path& path) -> result<std::string> {
+#if !defined(_WIN32)
+    struct stat status{};
+    if (::stat(path.c_str(), &status) != 0) {
+        return std::unexpected(identity_error(
+            errc::unauthorized, "cannot read identity passphrase file", path.string()));
+    }
+    if ((status.st_mode & (S_IRWXG | S_IRWXO)) != 0) {
+        return std::unexpected(identity_error(errc::unauthorized,
+                                              "identity passphrase file must be owner-only (0600)",
+                                              path.string()));
+    }
+#endif
+    auto bytes = read_bytes(path);
+    if (!bytes) {
+        return std::unexpected(bytes.error());
+    }
+    auto text = std::string{reinterpret_cast<const char*>(bytes->data()), bytes->size()};
+    crypto_wipe(bytes->data(), bytes->size());
+    if (text.ends_with('\n')) {
+        text.pop_back();
+    }
+    if (text.ends_with('\r')) {
+        text.pop_back();
+    }
+    if (text.empty()) {
+        return std::unexpected(identity_error(
+            errc::invalid_argument, "identity passphrase file is empty", path.string()));
+    }
+    return text;
+}
+
+auto identity_passphrase(bool confirm) -> result<std::string> {
+    if (const auto* file = std::getenv("LIQUID_IDENTITY_PASSPHRASE_FILE");
+        file != nullptr && *file != '\0') {
+        return read_passphrase_file(file);
+    }
+    const auto source = custody_options().passphrase;
+    if (!source) {
+        return std::unexpected(identity_error(
+            errc::unauthorized,
+            "the identity key needs a passphrase: set LIQUID_IDENTITY_PASSPHRASE_FILE to an "
+            "owner-only file that holds it, run liquid from a terminal, or choose another custody "
+            "with LIQUID_IDENTITY_KEY_CUSTODY (keychain, a custody URI, or file)",
+            "identity passphrase"));
+    }
+    auto value = source(confirm);
+    if (!value) {
+        return std::unexpected(value.error());
+    }
+    if (value->empty()) {
+        return std::unexpected(identity_error(
+            errc::invalid_argument, "identity passphrase is empty", "identity passphrase"));
+    }
+    return value;
+}
+
+// The custody URI recorded for a sealed wrapping key: "keychain" names this directory's item.
+auto recorded_custody(const std::string& custody_uri, const std::filesystem::path& directory)
+    -> std::string {
+    if (custody_uri == "keychain") {
+        return "keychain:identity:" + std::filesystem::absolute(directory).string();
+    }
+    return custody_uri;
+}
+
+auto custody_provider(std::string custody_uri, bool creating)
+    -> runtime::task<std::shared_ptr<key_provider>> {
+    if (custody_uri == "passphrase") {
+        auto passphrase = identity_passphrase(creating);
+        if (!passphrase) {
+            co_return std::unexpected(passphrase.error());
+        }
+        std::shared_ptr<key_provider> provider =
+            std::make_shared<passphrase_provider>(std::move(*passphrase));
+        co_return provider;
+    }
+    co_return co_await key_provider_from_uri(std::move(custody_uri));
+}
+
+struct sealed_wrapping_key {
+    std::string custody;
+    std::vector<std::byte> wrapped;
+};
+
+auto encode_sealed_wrapping_key(std::string_view custody_uri, std::span<const std::byte> wrapped)
+    -> std::vector<std::byte> {
+    auto output =
+        std::vector<std::byte>{sealed_wrapping_magic.begin(), sealed_wrapping_magic.end()};
+    put_u16(output, static_cast<std::uint16_t>(custody_uri.size()));
+    const auto custody_bytes =
+        std::as_bytes(std::span<const char>{custody_uri.data(), custody_uri.size()});
+    output.insert(output.end(), custody_bytes.begin(), custody_bytes.end());
+    put_u32(output, static_cast<std::uint32_t>(wrapped.size()));
+    output.insert(output.end(), wrapped.begin(), wrapped.end());
+    return output;
+}
+
+auto parse_sealed_wrapping_key(std::span<const std::byte> bytes, const std::filesystem::path& path)
+    -> result<sealed_wrapping_key> {
+    const auto invalid = [&] {
+        return std::unexpected(
+            identity_error(errc::corrupt, "invalid sealed identity wrapping key", path.string()));
+    };
+    constexpr auto header = sealed_wrapping_magic.size();
+    if (bytes.size() < header + 2 ||
+        !std::equal(sealed_wrapping_magic.begin(), sealed_wrapping_magic.end(), bytes.begin())) {
+        return invalid();
+    }
+    const auto custody_size = std::size_t{get_u16(bytes, header)};
+    auto at = header + 2;
+    if (custody_size == 0 || bytes.size() - at < custody_size + 4) {
+        return invalid();
+    }
+    auto output = sealed_wrapping_key{};
+    output.custody = std::string{reinterpret_cast<const char*>(bytes.data() + at), custody_size};
+    at += custody_size;
+    const auto wrapped_size = std::size_t{get_u32(bytes, at)};
+    at += 4;
+    if (wrapped_size == 0 || bytes.size() - at != wrapped_size) {
+        return invalid();
+    }
+    output.wrapped.assign(bytes.begin() + static_cast<std::ptrdiff_t>(at), bytes.end());
+    return output;
+}
+
+auto read_clear_wrapping_key(const std::filesystem::path& path) -> result<key> {
+#if !defined(_WIN32)
+    struct stat status{};
+    if (::lstat(path.c_str(), &status) != 0 || !S_ISREG(status.st_mode) ||
+        (status.st_mode & (S_IRWXG | S_IRWXO)) != 0) {
+        return std::unexpected(identity_error(errc::unauthorized,
+                                              "clear identity wrapping key must be an owner-only "
+                                              "(0600) regular file",
+                                              path.string()));
+    }
+#endif
     auto saved = read_bytes(path);
-    if (!saved || saved->size() != 32) {
+    if (!saved || saved->size() != key{}.size()) {
         if (saved) {
             crypto_wipe(saved->data(), saved->size());
         }
         return std::unexpected(identity_error(
             errc::unauthorized, "invalid local identity key provider", path.string()));
     }
-    auto output = std::array<std::byte, 32>{};
+    auto output = key{};
     std::ranges::copy(*saved, output.begin());
     crypto_wipe(saved->data(), saved->size());
     return output;
 }
 
-// Reads the local wrapping key, creating it if there is none. Creation never replaces a key that is
-// already there: if another writer creates one first, theirs is read and used (liquid#349).
-auto identity_wrapping_key(const std::filesystem::path& directory)
-    -> result<std::array<std::byte, 32>> {
-    const auto path = directory / ".wrapping.key";
-    if (std::filesystem::exists(path)) {
-        return read_wrapping_key(path);
+// A wrapping key in the form it is stored in: sealed under a custody, or in clear for "file".
+struct prepared_wrapping_key {
+    std::filesystem::path path;
+    // The other form, removed once this one is in place.
+    std::filesystem::path other;
+    std::vector<std::byte> bytes;
+    std::string custody;
+
+    prepared_wrapping_key() = default;
+    prepared_wrapping_key(const prepared_wrapping_key&) = delete;
+    prepared_wrapping_key& operator=(const prepared_wrapping_key&) = delete;
+    prepared_wrapping_key(prepared_wrapping_key&&) noexcept = default;
+    prepared_wrapping_key& operator=(prepared_wrapping_key&&) noexcept = default;
+    ~prepared_wrapping_key() {
+        crypto_wipe(bytes.data(), bytes.size());
     }
-    auto output = std::array<std::byte, 32>{};
-    auto random = crypto_detail::random_bytes(output);
+};
+
+// Seals `value` under `custody_uri` (or keeps it in clear for "file"), without writing anything.
+// Asking the custody may suspend.
+auto prepare_wrapping_key(const std::filesystem::path& directory,
+                          std::string custody_uri,
+                          key value) -> runtime::task<prepared_wrapping_key> {
+    auto output = prepared_wrapping_key{};
+    if (custody_uri == "file") {
+        output.path = directory / clear_wrapping_name;
+        output.other = directory / sealed_wrapping_name;
+        output.bytes.assign(value.begin(), value.end());
+        output.custody = std::move(custody_uri);
+        crypto_wipe(value.data(), value.size());
+        co_return output;
+    }
+    const auto recorded = recorded_custody(custody_uri, directory);
+    auto provider = co_await custody_provider(recorded, true);
+    if (!provider) {
+        crypto_wipe(value.data(), value.size());
+        co_return std::unexpected(provider.error());
+    }
+    auto wrapped = co_await (*provider)->wrap(value, identity_wrap_context());
+    crypto_wipe(value.data(), value.size());
+    if (!wrapped) {
+        co_return std::unexpected(wrapped.error());
+    }
+    output.path = directory / sealed_wrapping_name;
+    output.other = directory / clear_wrapping_name;
+    output.bytes = encode_sealed_wrapping_key(recorded, *wrapped);
+    output.custody = recorded;
+    co_return output;
+}
+
+// Removes the other form of a wrapping key once `prepared` is in place, so no clear copy survives
+// beside a sealed key. Its old blocks may remain on the device until they are reused; identity.md
+// says so.
+auto remove_other_wrapping_key(const prepared_wrapping_key& prepared) -> result<void> {
+    std::error_code code;
+    std::filesystem::remove(prepared.other, code);
+    if (code && prepared.other.filename() == clear_wrapping_name) {
+        return std::unexpected(
+            identity_error(errc::io,
+                           "cannot remove the clear identity wrapping key: " + code.message(),
+                           prepared.other.string()));
+    }
+    return {};
+}
+
+// Seals `value` under `custody_uri` (or writes it in clear for "file"), replacing the key's stored
+// form, and returns the custody recorded. The previous form is removed only after the new one is
+// in place.
+auto store_wrapping_key(const std::filesystem::path& directory, std::string custody_uri, key value)
+    -> runtime::task<std::string> {
+    auto prepared = co_await prepare_wrapping_key(directory, std::move(custody_uri), value);
+    crypto_wipe(value.data(), value.size());
+    if (!prepared) {
+        co_return std::unexpected(prepared.error());
+    }
+    auto written = write_private(prepared->path, prepared->bytes);
+    if (!written) {
+        co_return std::unexpected(written.error());
+    }
+    auto removed = remove_other_wrapping_key(*prepared);
+    if (!removed) {
+        co_return std::unexpected(removed.error());
+    }
+    co_return prepared->custody;
+}
+
+} // namespace
+
+// Returns the identity directory's wrapping key. With `create`, a missing key is generated and
+// stored under the selected custody; without it, a missing key is an error. Never called with the
+// identity lock held: the custody may suspend, and the create path takes the lock itself.
+auto load_wrapping_key(std::filesystem::path directory, bool create) -> runtime::task<key> {
+    const auto sealed_path = directory / sealed_wrapping_name;
+    const auto clear_path = directory / clear_wrapping_name;
+    std::error_code code;
+    if (std::filesystem::exists(sealed_path, code)) {
+        auto bytes = read_bytes(sealed_path);
+        if (!bytes) {
+            co_return std::unexpected(bytes.error());
+        }
+        auto sealed = parse_sealed_wrapping_key(*bytes, sealed_path);
+        if (!sealed) {
+            co_return std::unexpected(sealed.error());
+        }
+        auto provider = co_await custody_provider(sealed->custody, false);
+        if (!provider) {
+            co_return std::unexpected(provider.error());
+        }
+        auto opened = co_await (*provider)->unwrap(sealed->wrapped, identity_wrap_context());
+        if (!opened) {
+            co_return std::unexpected(identity_error(errc::unauthorized,
+                                                     "cannot unseal the identity wrapping key (" +
+                                                         custody_scheme(sealed->custody) +
+                                                         " custody): " + opened.error().message,
+                                                     sealed_path.string()));
+        }
+        co_return *opened;
+    }
+    if (std::filesystem::exists(clear_path, code)) {
+        co_return read_clear_wrapping_key(clear_path);
+    }
+    if (!create) {
+        co_return std::unexpected(identity_error(
+            errc::unauthorized, "identity wrapping key is missing", directory.string()));
+    }
+    auto created = key{};
+    auto random = crypto_detail::random_bytes(created);
     if (!random) {
-        return std::unexpected(random.error());
+        co_return std::unexpected(random.error());
     }
-    auto created = create_private(path, output);
-    if (!created) {
-        crypto_wipe(output.data(), output.size());
-        return std::unexpected(created.error());
+    auto prepared = co_await prepare_wrapping_key(directory, selected_custody({}), created);
+    if (!prepared) {
+        crypto_wipe(created.data(), created.size());
+        co_return std::unexpected(prepared.error());
     }
-    if (*created == exclusive_write::exists) {
-        crypto_wipe(output.data(), output.size());
-        return read_wrapping_key(path);
+    // A new key never replaces one another writer stored meanwhile (liquid#349): the check and the
+    // exclusive create run under the identity lock, and the loser discards its key and reads the
+    // winner's.
+    auto lock = identity_lock::acquire(directory);
+    if (!lock) {
+        crypto_wipe(created.data(), created.size());
+        co_return std::unexpected(lock.error());
     }
-    return output;
+    auto outcome = result<exclusive_write>{exclusive_write::exists};
+    if (!std::filesystem::exists(sealed_path, code) && !std::filesystem::exists(clear_path, code)) {
+        outcome = create_private(prepared->path, prepared->bytes);
+    }
+    lock->release();
+    if (!outcome) {
+        crypto_wipe(created.data(), created.size());
+        co_return std::unexpected(outcome.error());
+    }
+    if (*outcome == exclusive_write::exists) {
+        crypto_wipe(created.data(), created.size());
+        co_return co_await load_wrapping_key(std::move(directory), false);
+    }
+    co_return created;
+}
+
+void set_identity_custody_options(identity_custody_options options) {
+    auto& state = shared_custody();
+    const auto lock = std::scoped_lock{state.mutex};
+    state.options = std::move(options);
+}
+
+result<identity_custody_status> local_identity_custody() {
+    const auto directory = liquid_home() / "identity";
+    const auto sealed_path = directory / sealed_wrapping_name;
+    const auto clear_path = directory / clear_wrapping_name;
+    std::error_code code;
+    const auto clear = std::filesystem::exists(clear_path, code);
+    if (std::filesystem::exists(sealed_path, code)) {
+        auto bytes = read_bytes(sealed_path);
+        if (!bytes) {
+            return std::unexpected(bytes.error());
+        }
+        auto sealed = parse_sealed_wrapping_key(*bytes, sealed_path);
+        if (!sealed) {
+            return std::unexpected(sealed.error());
+        }
+        const auto kind = custody_scheme(sealed->custody);
+        return identity_custody_status{.custody = sealed->custody,
+                                       .kind = kind,
+                                       .file_permissions_only = kind == "file",
+                                       .clear_copy_present = clear,
+                                       .path = sealed_path};
+    }
+    if (clear) {
+        return identity_custody_status{.custody = "file",
+                                       .kind = "file",
+                                       .file_permissions_only = true,
+                                       .clear_copy_present = true,
+                                       .path = clear_path};
+    }
+    return identity_custody_status{.custody = "none", .kind = "none", .path = directory};
+}
+
+runtime::task<identity_custody_status> migrate_local_identity_custody(std::string custody_uri) {
+    const auto directory = liquid_home() / "identity";
+    auto current = co_await load_wrapping_key(directory, false);
+    if (!current) {
+        co_return std::unexpected(current.error());
+    }
+    auto stored =
+        co_await store_wrapping_key(directory, selected_custody(std::move(custody_uri)), *current);
+    crypto_wipe(current->data(), current->size());
+    if (!stored) {
+        co_return std::unexpected(stored.error());
+    }
+    co_return local_identity_custody();
 }
 
 struct signer::impl {
+    ~impl() {
+        if (wrapping_key) {
+            crypto_wipe(wrapping_key->data(), wrapping_key->size());
+        }
+    }
     actor identity;
     identity_document document;
     std::string label;
     std::unique_ptr<identity_detail::key_backend> backend;
+    // The software identity's wrapping key once unsealed, and the identity directory it belongs
+    // to, so a rotation in the same process does not ask for the passphrase again. The signer
+    // already holds the signing key itself.
+    std::optional<key> wrapping_key;
+    std::filesystem::path wrapping_directory;
 };
 
 auto actor::identifier() const noexcept -> std::string_view {
@@ -934,7 +1438,12 @@ signer::rotate_to(std::string custody, std::optional<compromise_declaration> com
     }
     auto persisted = (*new_backend)->descriptor();
     if ((*new_backend)->custody() == "software") {
-        auto wrapping_key = identity_wrapping_key(directory);
+        auto wrapping_key = result<key>{};
+        if (impl_->wrapping_key && impl_->wrapping_directory == directory) {
+            wrapping_key = *impl_->wrapping_key;
+        } else {
+            wrapping_key = co_await load_wrapping_key(directory, true);
+        }
         if (!wrapping_key) {
             crypto_wipe(persisted.data(), persisted.size());
             co_return std::unexpected(wrapping_key.error());
@@ -1224,7 +1733,8 @@ auto verify_against_chain(const actor& by,
                           bool require_continuity,
                           std::string_view artifact_type,
                           std::span<const std::byte> canonical_body,
-                          const signature& signed_value) -> result<bool> {
+                          const signature& signed_value,
+                          const signature_timestamp* evidence) -> result<bool> {
     if (documents.empty()) {
         return std::unexpected(unknown_signer(by.taap_id));
     }
@@ -1253,8 +1763,20 @@ auto verify_against_chain(const actor& by,
             const auto* declaration =
                 declares_compromised(documents[successor], candidate.key_fingerprint);
             if (declaration) {
-                if (!valid_timestamp(signed_value.signed_at) ||
-                    signed_value.signed_at >= declaration->declared_at) {
+                // `signed_at` is chosen by the signer, so whoever holds the compromised key can
+                // backdate it (liquid #391). Only third-party time before the declaration counts.
+                if (evidence == nullptr) {
+                    return std::unexpected(
+                        identity_error(errc::unauthorized,
+                                       "signature by a key declared compromised has no trusted "
+                                       "time before the declaration",
+                                       candidate.taap_id));
+                }
+                auto trusted = trusted_signature_time(signed_value, *evidence);
+                if (!trusted) {
+                    return std::unexpected(trusted.error());
+                }
+                if (*trusted >= declaration->declared_at) {
                     return std::unexpected(identity_error(errc::unauthorized,
                                                           "signature was made after key compromise",
                                                           candidate.taap_id));
@@ -1282,7 +1804,8 @@ result<bool> verify(const actor& by,
     for (auto& document : *stored) {
         documents.push_back(std::move(document.document));
     }
-    return verify_against_chain(by, documents, false, artifact_type, canonical_body, signed_value);
+    return verify_against_chain(
+        by, documents, false, artifact_type, canonical_body, signed_value, nullptr);
 }
 
 result<bool> verify(const actor& by,
@@ -1290,7 +1813,80 @@ result<bool> verify(const actor& by,
                     std::string_view artifact_type,
                     std::span<const std::byte> canonical_body,
                     const signature& signed_value) {
-    return verify_against_chain(by, chain, true, artifact_type, canonical_body, signed_value);
+    return verify_against_chain(
+        by, chain, true, artifact_type, canonical_body, signed_value, nullptr);
+}
+
+result<std::string> trusted_signature_time(const signature& signed_value,
+                                           const signature_timestamp& evidence) {
+    if (signed_value.bytes.empty()) {
+        return std::unexpected(identity_error(errc::invalid_argument,
+                                              "an unsigned record has no signature to timestamp"));
+    }
+    if (evidence.rfc3161_token.empty() == evidence.evidence_record.empty()) {
+        return std::unexpected(identity_error(
+            errc::invalid_argument,
+            "signature timestamp needs exactly one RFC 3161 token or evidence record"));
+    }
+    if (evidence.trust.empty()) {
+        return std::unexpected(identity_error(errc::unauthorized,
+                                              "no trusted timestamp authority is configured",
+                                              "signature timestamp"));
+    }
+    auto generated_at = std::chrono::sys_seconds{};
+    if (!evidence.rfc3161_token.empty()) {
+        auto verified = transparency::timestamp_token::verify(
+            evidence.rfc3161_token, signed_value.bytes, evidence.trust);
+        if (!verified) {
+            return std::unexpected(
+                identity_error(errc::unauthorized,
+                               "signature timestamp does not verify: " + verified.error().message,
+                               "signature timestamp"));
+        }
+        generated_at = verified->generated_at;
+    } else {
+        auto verified = transparency::evidence_record::verify(
+            evidence.evidence_record, signed_value.bytes, evidence.trust);
+        if (!verified || verified->archive_timestamps.empty()) {
+            return std::unexpected(
+                identity_error(errc::unauthorized,
+                               "signature evidence record does not verify: " +
+                                   (verified ? std::string{"it has no archive timestamp"}
+                                             : verified.error().message),
+                               "signature timestamp"));
+        }
+        // The initial archive timestamp covers the signature; renewals cover earlier timestamps.
+        generated_at = verified->archive_timestamps.front().timestamp.generated_at;
+    }
+    return std::format("{:%FT%TZ}", generated_at);
+}
+
+result<bool> verify_with_trusted_time(const actor& by,
+                                      std::string_view artifact_type,
+                                      std::span<const std::byte> canonical_body,
+                                      const signature& signed_value,
+                                      const signature_timestamp& evidence) {
+    auto stored = stored_chain(by.taap_id);
+    if (!stored) {
+        return std::unexpected(stored.error());
+    }
+    auto documents = std::vector<identity_document>{};
+    documents.reserve(stored->size());
+    for (auto& document : *stored) {
+        documents.push_back(std::move(document.document));
+    }
+    return verify_against_chain(
+        by, documents, false, artifact_type, canonical_body, signed_value, &evidence);
+}
+
+result<bool> verify_with_trusted_time(const actor& by,
+                                      std::span<const identity_document> chain,
+                                      std::string_view artifact_type,
+                                      std::span<const std::byte> canonical_body,
+                                      const signature& signed_value,
+                                      const signature_timestamp& evidence) {
+    return verify_against_chain(
+        by, chain, true, artifact_type, canonical_body, signed_value, &evidence);
 }
 
 result<bool> verify_key_signature(const actor& key,
@@ -1561,17 +2157,20 @@ result<std::vector<identity_document>> decode_identity_chain(std::span<const std
 
 namespace {
 
-struct local_identity {
+// A local identity as read from its directory, before its private key is opened.
+struct stored_local_identity {
     actor identity;
     identity_document document;
     std::string label;
-    std::unique_ptr<identity_detail::key_backend> backend;
+    std::vector<std::byte> sealed_key;
 };
 
 // Reads the local identity, if one has been created. The `.pub` file is written last when an
-// identity is created, so its presence means every other file is already in place.
-auto load_local_identity(const std::filesystem::path& directory)
-    -> result<std::optional<local_identity>> {
+// identity is created, so its presence means every other file is already in place. Nothing here
+// suspends, so it may run with the identity lock held; opening the key, which may ask a custody
+// for the wrapping key, is done afterwards by `open_local_identity`.
+auto read_local_identity(const std::filesystem::path& directory)
+    -> result<std::optional<stored_local_identity>> {
     auto public_key = std::vector<std::byte>{};
     auto fingerprint = std::string{};
     std::error_code code;
@@ -1586,7 +2185,7 @@ auto load_local_identity(const std::filesystem::path& directory)
         return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
     }
     if (public_key.empty() || fingerprint.empty()) {
-        return std::optional<local_identity>{};
+        return std::optional<stored_local_identity>{};
     }
     auto provisional =
         actor{"taap:1:ed25519:" + fingerprint, "ed25519", fingerprint, public_key, {}, {}};
@@ -1603,7 +2202,7 @@ auto load_local_identity(const std::filesystem::path& directory)
     if (!verified) {
         return std::unexpected(verified.error());
     }
-    auto output = local_identity{};
+    auto output = stored_local_identity{};
     output.identity = stored->back().document.subject;
     output.label = stored->back().document.key_label;
     output.document = stored->back().document;
@@ -1616,59 +2215,100 @@ auto load_local_identity(const std::filesystem::path& directory)
     if (!saved) {
         return std::unexpected(saved.error());
     }
-    if (output.identity.custody.empty() || output.identity.custody == "software") {
-        auto wrapping_key = identity_wrapping_key(directory);
-        if (!wrapping_key) {
-            crypto_wipe(saved->data(), saved->size());
-            return std::unexpected(wrapping_key.error());
+    output.sealed_key = std::move(*saved);
+    return std::optional<stored_local_identity>{std::move(output)};
+}
+
+auto read_local_identity_locked(const std::filesystem::path& directory)
+    -> result<std::optional<stored_local_identity>> {
+    auto lock = identity_lock::acquire(directory);
+    if (!lock) {
+        return std::unexpected(lock.error());
+    }
+    return read_local_identity(directory);
+}
+
+// An opened local identity: everything a signer holds. Only `local_signer`, a friend of `signer`,
+// turns it into one.
+struct local_identity {
+    actor identity;
+    identity_document document;
+    std::string label;
+    std::unique_ptr<identity_detail::key_backend> backend;
+    // The software identity's wrapping key, kept so a rotation in the same process does not ask
+    // the custody again.
+    std::optional<key> wrapping_key;
+
+    local_identity() = default;
+    local_identity(const local_identity&) = delete;
+    local_identity& operator=(const local_identity&) = delete;
+    local_identity(local_identity&& other) noexcept = default;
+    local_identity& operator=(local_identity&&) noexcept = default;
+    ~local_identity() {
+        if (wrapping_key) {
+            crypto_wipe(wrapping_key->data(), wrapping_key->size());
         }
-        auto opened = crypto_detail::open(*wrapping_key, {}, *saved);
+    }
+};
+
+// Opens a stored identity's private key: a software key with the directory's wrapping key, which
+// its custody may have to unseal, or a hardware key through its custody.
+auto open_local_identity(std::filesystem::path directory, stored_local_identity stored)
+    -> runtime::task<local_identity> {
+    auto backend = std::unique_ptr<identity_detail::key_backend>{};
+    auto kept_wrapping_key = std::optional<key>{};
+    if (stored.identity.custody.empty() || stored.identity.custody == "software") {
+        auto wrapping_key = co_await load_wrapping_key(directory, false);
+        if (!wrapping_key) {
+            crypto_wipe(stored.sealed_key.data(), stored.sealed_key.size());
+            co_return std::unexpected(wrapping_key.error());
+        }
+        auto opened = crypto_detail::open(*wrapping_key, {}, stored.sealed_key);
+        kept_wrapping_key = *wrapping_key;
         crypto_wipe(wrapping_key->data(), wrapping_key->size());
-        crypto_wipe(saved->data(), saved->size());
+        crypto_wipe(stored.sealed_key.data(), stored.sealed_key.size());
         if (!opened) {
-            return std::unexpected(
+            crypto_wipe(kept_wrapping_key->data(), kept_wrapping_key->size());
+            co_return std::unexpected(
                 identity_error(errc::unauthorized, "cannot unwrap local identity"));
         }
         auto made = identity_detail::make_software_backend(*opened);
         crypto_wipe(opened->data(), opened->size());
         if (!made) {
-            return std::unexpected(made.error());
+            crypto_wipe(kept_wrapping_key->data(), kept_wrapping_key->size());
+            co_return std::unexpected(made.error());
         }
-        output.backend = std::move(*made);
+        backend = std::move(*made);
     } else {
-        auto made = identity_detail::open_hardware_backend(output.identity.custody, *saved);
-        crypto_wipe(saved->data(), saved->size());
+        auto made =
+            identity_detail::open_hardware_backend(stored.identity.custody, stored.sealed_key);
+        crypto_wipe(stored.sealed_key.data(), stored.sealed_key.size());
         if (!made) {
-            return std::unexpected(made.error());
+            co_return std::unexpected(made.error());
         }
-        output.backend = std::move(*made);
+        backend = std::move(*made);
     }
-    return std::optional<local_identity>{std::move(output)};
-}
-
-auto load_local_identity_locked(const std::filesystem::path& directory)
-    -> result<std::optional<local_identity>> {
-    auto lock = identity_lock::acquire(directory);
-    if (!lock) {
-        return std::unexpected(lock.error());
+    auto output = local_identity{};
+    output.identity = std::move(stored.identity);
+    output.document = std::move(stored.document);
+    output.label = std::move(stored.label);
+    output.backend = std::move(backend);
+    output.wrapping_key = kept_wrapping_key;
+    if (kept_wrapping_key) {
+        crypto_wipe(kept_wrapping_key->data(), kept_wrapping_key->size());
     }
-    return load_local_identity(directory);
+    co_return output;
 }
 
 // Writes a newly made identity into the directory. Called with the identity lock held, after
-// checking that no identity is there. The private key is sealed with the directory's wrapping key
-// (an existing one is reused, never replaced), and the `.pub` file goes last, so a reader that
-// finds it finds a complete identity.
+// checking that no identity is there. The private key is sealed with the directory's wrapping key,
+// and the `.pub` file goes last, so a reader that finds it finds a complete identity.
 auto store_local_identity(const std::filesystem::path& directory,
                           const actor& identity,
+                          const key& wrapping_key,
                           std::span<const std::byte> private_material,
                           std::span<const std::byte> full_document) -> result<void> {
-    auto wrapping_key = identity_wrapping_key(directory);
-    if (!wrapping_key) {
-        return std::unexpected(wrapping_key.error());
-    }
-    auto sealed = crypto_detail::seal(*wrapping_key, {}, private_material);
-    crypto_wipe(wrapping_key->data(), wrapping_key->size());
+    auto sealed = crypto_detail::seal(wrapping_key, {}, private_material);
     if (!sealed) {
         return std::unexpected(sealed.error());
     }
@@ -1698,30 +2338,40 @@ auto store_local_identity(const std::filesystem::path& directory,
 // Opens the local identity, creating it on first use. Concurrent first uses, in threads or in
 // separate processes, all end with the same identity (liquid#349): the identity is read and created
 // under the directory's lock, and a caller that finds one already created uses it and discards the
-// key it made. The new identity's document is signed before the lock is taken, because signing may
-// suspend.
+// key it made. Everything that may suspend (signing the new document, and asking a custody to seal
+// or unseal the wrapping key) is done with the lock released.
 runtime::task<signer> identity_detail::local_signer() {
-    const auto make_signer = [](local_identity value) -> signer {
+    const auto directory = liquid_home() / "identity";
+    const auto make_signer = [&directory](local_identity value) -> signer {
         signer output;
         output.impl_ = std::make_unique<signer::impl>();
         output.impl_->identity = std::move(value.identity);
         output.impl_->document = std::move(value.document);
         output.impl_->label = std::move(value.label);
         output.impl_->backend = std::move(value.backend);
+        output.impl_->wrapping_key = value.wrapping_key;
+        output.impl_->wrapping_directory = directory;
         return output;
     };
-    const auto directory = liquid_home() / "identity";
+    const auto open_existing = [&](stored_local_identity stored) -> runtime::task<signer> {
+        auto opened = co_await open_local_identity(directory, std::move(stored));
+        if (!opened) {
+            co_return std::unexpected(opened.error());
+        }
+        co_return make_signer(std::move(*opened));
+    };
     std::error_code code;
     std::filesystem::create_directories(directory, code);
     if (code) {
         co_return std::unexpected(identity_error(errc::io, code.message(), directory.string()));
     }
-    auto existing = load_local_identity_locked(directory);
+    protect_identity_directory(directory);
+    auto existing = read_local_identity_locked(directory);
     if (!existing) {
         co_return std::unexpected(existing.error());
     }
     if (*existing) {
-        co_return make_signer(std::move(**existing));
+        co_return co_await open_existing(std::move(**existing));
     }
 
     auto label = std::string{"liquid-device"};
@@ -1759,28 +2409,45 @@ runtime::task<signer> identity_detail::local_signer() {
     if (!full_document) {
         co_return std::unexpected(full_document.error());
     }
+    // The wrapping key is read, or created under the selected custody, before the lock is taken:
+    // a custody may suspend. Its creation never replaces a key that is already there.
+    auto wrapping_key = co_await load_wrapping_key(directory, true);
+    if (!wrapping_key) {
+        co_return std::unexpected(wrapping_key.error());
+    }
 
     auto lock = identity_lock::acquire(directory);
     if (!lock) {
+        crypto_wipe(wrapping_key->data(), wrapping_key->size());
         co_return std::unexpected(lock.error());
     }
-    existing = load_local_identity(directory);
+    existing = read_local_identity(directory);
     if (!existing) {
+        crypto_wipe(wrapping_key->data(), wrapping_key->size());
         co_return std::unexpected(existing.error());
     }
     if (*existing) {
         lock->release();
-        co_return make_signer(std::move(**existing));
+        crypto_wipe(wrapping_key->data(), wrapping_key->size());
+        co_return co_await open_existing(std::move(**existing));
     }
     auto private_material = backend->descriptor();
-    auto stored = store_local_identity(directory, identity, private_material, *full_document);
+    auto stored =
+        store_local_identity(directory, identity, *wrapping_key, private_material, *full_document);
     crypto_wipe(private_material.data(), private_material.size());
     lock->release();
     if (!stored) {
+        crypto_wipe(wrapping_key->data(), wrapping_key->size());
         co_return std::unexpected(stored.error());
     }
-    co_return make_signer(
-        {std::move(identity), std::move(document), std::move(label), std::move(backend)});
+    auto created = local_identity{};
+    created.identity = std::move(identity);
+    created.document = std::move(document);
+    created.label = std::move(label);
+    created.backend = std::move(backend);
+    created.wrapping_key = *wrapping_key;
+    crypto_wipe(wrapping_key->data(), wrapping_key->size());
+    co_return make_signer(std::move(created));
 }
 
 struct passphrase_provider::impl {
@@ -2486,6 +3153,8 @@ runtime::task<std::shared_ptr<key_provider>> key_provider_from_uri(std::string c
         provider = custody_detail::make_shamir_provider(std::move(parameters));
     else if (kind == "tpm")
         provider = custody_detail::make_tpm_provider(std::move(parameters));
+    else if (kind == "keychain")
+        provider = custody_detail::make_keychain_provider(std::move(parameters));
     if (!provider)
         co_return std::unexpected(provider.error());
     co_return *provider;
