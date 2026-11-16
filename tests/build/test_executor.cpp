@@ -825,6 +825,9 @@ TEST(Build, rejects_writes_outside_declared_outputs) {
 
 #if defined(__linux__)
 TEST(Build, output_symlink_fails_before_its_host_target_is_read_or_rewritten) {
+    // The action runs in the FUSE sandbox; without /dev/fuse it fails to mount before it can
+    // write the link, which is not the refusal this test checks (liquid#549).
+    LIQUID_TEST_REQUIRE_FUSE();
     action_fixture fixture;
     const auto sentinel = liquid::test::fixture_path("liquid-build-sentinel-" +
                                                      fixture.location.path().filename().string());
