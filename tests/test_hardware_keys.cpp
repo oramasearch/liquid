@@ -90,6 +90,47 @@ auto byte_string(std::span<const std::byte> input) -> cbor::value {
     return cbor::value{cbor::value::bytes{input.begin(), input.end()}};
 }
 
+// SHA-256 computed by OpenSSL, so the vectors below never depend on liquid's own digest code.
+auto openssl_sha256(std::span<const std::byte> input) -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>(32);
+    auto size = 0U;
+    EXPECT_EQ(EVP_Digest(input.data(),
+                         input.size(),
+                         reinterpret_cast<unsigned char*>(output.data()),
+                         &size,
+                         EVP_sha256(),
+                         nullptr),
+              1);
+    EXPECT_EQ(size, 32U);
+    return output;
+}
+
+// WebAuthn Level 2 §6.1 authenticator data for an assertion: rpIdHash (32) || flags (1, UP) ||
+// signCount (4, big-endian). No attested credential data and no extensions.
+auto ctap2_assertion_authenticator_data(std::string_view rp_id,
+                                        std::uint32_t sign_count,
+                                        std::byte flags = std::byte{0x01})
+    -> std::vector<std::byte> {
+    auto output = openssl_sha256(std::as_bytes(std::span{rp_id}));
+    output.push_back(flags);
+    output.push_back(std::byte{static_cast<std::uint8_t>(sign_count >> 24)});
+    output.push_back(std::byte{static_cast<std::uint8_t>(sign_count >> 16)});
+    output.push_back(std::byte{static_cast<std::uint8_t>(sign_count >> 8)});
+    output.push_back(std::byte{static_cast<std::uint8_t>(sign_count)});
+    return output;
+}
+
+// The rpId (CTAP2 getAssertion key 1) the client asked for, as a real authenticator would hash it.
+auto assertion_authenticator_data(const cbor::value& request, std::uint32_t sign_count)
+    -> std::vector<std::byte> {
+    const auto* rp = field(request, 1);
+    const auto* rp_id = rp ? std::get_if<std::string>(&rp->data) : nullptr;
+    if (!rp_id || rp_id->empty()) {
+        return {};
+    }
+    return ctap2_assertion_authenticator_data(*rp_id, sign_count);
+}
+
 class fido_double final : public liquid::identity_detail::fido2_transport {
 public:
     fido_double() {
@@ -153,14 +194,15 @@ public:
             return std::unexpected(liquid::error{
                 liquid::errc::unauthorized, "unknown FIDO2 credential", "FIDO2 double"});
         }
-        auto authenticator_data = std::vector<std::byte>(37, std::byte{0});
-        authenticator_data[32] = std::byte{0x01};
-        auto client_hash = liquid::hash(liquid::algorithm::sha256, *client_bytes);
-        if (!client_hash) {
-            return std::unexpected(client_hash.error());
+        // CTAP 2.2 authenticatorGetAssertion: EdDSA signs authenticatorData || clientDataHash
+        // directly, with the client's 32 bytes exactly as received.
+        auto authenticator_data = assertion_authenticator_data(*decoded, ++sign_count_);
+        if (authenticator_data.empty()) {
+            return std::unexpected(
+                liquid::error{liquid::errc::corrupt, "missing rpId", "FIDO2 double"});
         }
         auto assertion = authenticator_data;
-        assertion.insert(assertion.end(), client_hash->bytes.begin(), client_hash->bytes.end());
+        assertion.insert(assertion.end(), client_bytes->begin(), client_bytes->end());
         auto signature = std::vector<std::byte>(64);
         crypto_ed25519_sign(reinterpret_cast<std::uint8_t*>(signature.data()),
                             secret_.data(),
@@ -180,6 +222,7 @@ private:
     std::array<std::uint8_t, 64> secret_{};
     std::array<std::uint8_t, 32> public_key_{};
     std::vector<std::byte> credential_{std::byte{0x81}, std::byte{0x02}, std::byte{0x03}};
+    std::uint32_t sign_count_{};
 };
 
 class p256_key {
@@ -246,6 +289,30 @@ public:
         return output;
     }
 
+    // ECDSA with SHA-256 over the message, hashed by OpenSSL (RFC 8152 ES256 / FIPS 186-5).
+    auto sign_message(std::span<const std::byte> message) const -> std::vector<std::byte> {
+        auto context = EVP_MD_CTX_new();
+        EXPECT_NE(context, nullptr);
+        EXPECT_GT(EVP_DigestSignInit(context, nullptr, EVP_sha256(), nullptr, key_), 0);
+        auto size = std::size_t{};
+        EXPECT_GT(EVP_DigestSign(context,
+                                 nullptr,
+                                 &size,
+                                 reinterpret_cast<const unsigned char*>(message.data()),
+                                 message.size()),
+                  0);
+        auto output = std::vector<std::byte>(size);
+        EXPECT_GT(EVP_DigestSign(context,
+                                 reinterpret_cast<unsigned char*>(output.data()),
+                                 &size,
+                                 reinterpret_cast<const unsigned char*>(message.data()),
+                                 message.size()),
+                  0);
+        EVP_MD_CTX_free(context);
+        output.resize(size);
+        return output;
+    }
+
 private:
     EVP_PKEY* key_{};
 };
@@ -301,19 +368,16 @@ public:
             return std::unexpected(liquid::error{
                 liquid::errc::unauthorized, "unknown FIDO2 credential", "FIDO2 ES256 double"});
         }
-        auto authenticator_data = std::vector<std::byte>(37, std::byte{0});
-        authenticator_data[32] = std::byte{0x01};
-        auto client_hash = liquid::hash(liquid::algorithm::sha256, *client_bytes);
-        if (!client_hash) {
-            return std::unexpected(client_hash.error());
+        // CTAP 2.2 authenticatorGetAssertion: ES256 is ECDSA P-256 with SHA-256 over
+        // authenticatorData || clientDataHash; OpenSSL does the hashing, not liquid.
+        auto authenticator_data = assertion_authenticator_data(*decoded, ++sign_count_);
+        if (authenticator_data.empty()) {
+            return std::unexpected(
+                liquid::error{liquid::errc::corrupt, "missing rpId", "FIDO2 ES256 double"});
         }
         auto assertion = authenticator_data;
-        assertion.insert(assertion.end(), client_hash->bytes.begin(), client_hash->bytes.end());
-        auto assertion_hash = liquid::hash(liquid::algorithm::sha256, assertion);
-        if (!assertion_hash) {
-            return std::unexpected(assertion_hash.error());
-        }
-        const auto signature = key_.sign_digest(assertion_hash->bytes);
+        assertion.insert(assertion.end(), client_bytes->begin(), client_bytes->end());
+        const auto signature = key_.sign_message(assertion);
         return cbor::encode(cbor::value{cbor::value::map{
             {cbor::value{std::uint64_t{2}}, byte_string(authenticator_data)},
             {cbor::value{std::uint64_t{3}}, byte_string(signature)},
@@ -327,6 +391,7 @@ public:
 private:
     p256_key key_;
     std::vector<std::byte> credential_{std::byte{0x82}, std::byte{0x04}, std::byte{0x08}};
+    std::uint32_t sign_count_{};
 };
 
 auto tlv(std::initializer_list<std::byte> tag, std::span<const std::byte> value)
@@ -876,6 +941,180 @@ TEST(HardwareIdentity, fido2_es256_fallback_signs_drips_and_changes) {
     test_signatures("fido-es256", "fido2");
 }
 
+// Independent vectors: what a real CTAP2 authenticator returns for liquid's getAssertion, built only
+// from the specifications with OpenSSL. TAAP/1 signed bytes are "TAAP/1 " || purpose || 0x00 ||
+// body; liquid sends clientDataHash = SHA-256(signed bytes); the authenticator signs
+// authenticatorData || clientDataHash (WebAuthn Level 2 §6.3.3 step 11, CTAP 2.2 §6.2). EdDSA signs
+// that message directly (RFC 8032); ES256 is ECDSA P-256 with SHA-256 over it (RFC 8152 §8.1).
+class openssl_ed25519_key {
+public:
+    openssl_ed25519_key() {
+        auto seed = std::array<unsigned char, 32>{};
+        for (std::size_t index = 0; index < seed.size(); ++index) {
+            seed[index] = static_cast<unsigned char>(0xa0 + index);
+        }
+        key_ = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, seed.data(), seed.size());
+        EXPECT_NE(key_, nullptr);
+    }
+
+    ~openssl_ed25519_key() {
+        EVP_PKEY_free(key_);
+    }
+
+    auto public_key() const -> std::vector<std::byte> {
+        auto output = std::vector<std::byte>(32);
+        auto size = output.size();
+        EXPECT_GT(EVP_PKEY_get_raw_public_key(
+                      key_, reinterpret_cast<unsigned char*>(output.data()), &size),
+                  0);
+        EXPECT_EQ(size, 32U);
+        return output;
+    }
+
+    auto sign_message(std::span<const std::byte> message) const -> std::vector<std::byte> {
+        auto context = EVP_MD_CTX_new();
+        EXPECT_NE(context, nullptr);
+        EXPECT_GT(EVP_DigestSignInit(context, nullptr, nullptr, nullptr, key_), 0);
+        auto output = std::vector<std::byte>(64);
+        auto size = output.size();
+        EXPECT_GT(EVP_DigestSign(context,
+                                 reinterpret_cast<unsigned char*>(output.data()),
+                                 &size,
+                                 reinterpret_cast<const unsigned char*>(message.data()),
+                                 message.size()),
+                  0);
+        EVP_MD_CTX_free(context);
+        EXPECT_EQ(size, 64U);
+        return output;
+    }
+
+private:
+    EVP_PKEY* key_{};
+};
+
+auto taap_signed_bytes(std::string_view purpose, std::span<const std::byte> body)
+    -> std::vector<std::byte> {
+    auto output = bytes("TAAP/1 " + std::string{purpose});
+    output.push_back(std::byte{0});
+    output.insert(output.end(), body.begin(), body.end());
+    return output;
+}
+
+struct fido2_vector {
+    liquid::actor by;
+    liquid::signature correct;
+    liquid::signature double_hashed;
+    liquid::signature other_relying_party;
+    liquid::signature user_absent;
+};
+
+template <typename Sign>
+auto make_fido2_vector(std::string algorithm,
+                       std::vector<std::byte> public_key,
+                       std::string_view purpose,
+                       std::span<const std::byte> body,
+                       Sign sign) -> fido2_vector {
+    auto by = liquid::actor{};
+    by.algorithm = std::move(algorithm);
+    by.fingerprint = std::string(52, 'V');
+    by.key_fingerprint = std::string(52, 'W');
+    by.taap_id = "taap:1:" + by.fingerprint;
+    by.public_key = std::move(public_key);
+    by.custody = "fido2";
+    const auto client_data_hash = openssl_sha256(taap_signed_bytes(purpose, body));
+    const auto authenticator_data = ctap2_assertion_authenticator_data("liquid", 7);
+
+    auto correct_input = authenticator_data;
+    correct_input.insert(correct_input.end(), client_data_hash.begin(), client_data_hash.end());
+    // The form liquid verified before liquid#81 was fixed: the client hash hashed a second time.
+    const auto rehashed = openssl_sha256(client_data_hash);
+    auto double_hashed_input = authenticator_data;
+    double_hashed_input.insert(double_hashed_input.end(), rehashed.begin(), rehashed.end());
+
+    auto make = [&](std::vector<std::byte> signature_bytes, std::vector<std::byte> data) {
+        return liquid::signature{by.algorithm,
+                                 "taap:1:" + by.algorithm + ":" + by.key_fingerprint,
+                                 "fido2",
+                                 std::string{purpose},
+                                 "2026-10-20T00:00:00Z",
+                                 std::move(signature_bytes),
+                                 std::move(data),
+                                 client_data_hash};
+    };
+    // Correctly signed assertions whose authenticator data fails WebAuthn §7.2 steps 15-16.
+    auto signed_with = [&](std::vector<std::byte> data) {
+        auto input = data;
+        input.insert(input.end(), client_data_hash.begin(), client_data_hash.end());
+        return make(sign(input), std::move(data));
+    };
+    return {by,
+            make(sign(correct_input), authenticator_data),
+            make(sign(double_hashed_input), authenticator_data),
+            signed_with(ctap2_assertion_authenticator_data("example.com", 7)),
+            signed_with(ctap2_assertion_authenticator_data("liquid", 7, std::byte{0x00}))};
+}
+
+auto expect_fido2_vector(const fido2_vector& vector,
+                         std::string_view purpose,
+                         std::span<const std::byte> body) -> void {
+    auto verified = liquid::verify(vector.by, purpose, body, vector.correct);
+    ASSERT_TRUE(verified) << vector.by.algorithm << ": " << verified.error().message;
+    EXPECT_TRUE(*verified);
+
+    auto rehashed = liquid::verify(vector.by, purpose, body, vector.double_hashed);
+    ASSERT_FALSE(rehashed) << vector.by.algorithm << " accepted a double-hashed client hash";
+    EXPECT_EQ(rehashed.error().code, liquid::errc::unauthorized);
+
+    for (const auto* refused : {&vector.other_relying_party, &vector.user_absent}) {
+        auto result = liquid::verify(vector.by, purpose, body, *refused);
+        ASSERT_FALSE(result) << vector.by.algorithm << " accepted invalid authenticator data";
+        EXPECT_EQ(result.error().code, liquid::errc::unauthorized);
+    }
+
+    auto tampered = vector.correct;
+    tampered.authenticator_data[32] = std::byte{0x05};
+    auto tampered_result = liquid::verify(vector.by, purpose, body, tampered);
+    ASSERT_FALSE(tampered_result);
+    EXPECT_EQ(tampered_result.error().code, liquid::errc::unauthorized);
+
+    auto other_body = bytes("another body");
+    auto wrong_body = liquid::verify(vector.by, purpose, other_body, vector.correct);
+    ASSERT_FALSE(wrong_body);
+    EXPECT_EQ(wrong_body.error().code, liquid::errc::unauthorized);
+}
+
+TEST(HardwareIdentity, fido2_assertion_vectors_follow_ctap2_signed_bytes) {
+    identity_home("fido2-vectors");
+    const auto ed25519 = openssl_ed25519_key{};
+    const auto p256 = p256_key{};
+    for (const auto purpose : {std::string{"drip"},
+                               std::string{"change"},
+                               std::string{"identity_document"},
+                               std::string{"attestation"}}) {
+        const auto body = bytes(purpose + " canonical body");
+        expect_fido2_vector(
+            make_fido2_vector("fido2-eddsa",
+                              ed25519.public_key(),
+                              purpose,
+                              body,
+                              [&](std::span<const std::byte> message) {
+                                  return ed25519.sign_message(message);
+                              }),
+            purpose,
+            body);
+        expect_fido2_vector(
+            make_fido2_vector("fido2-es256",
+                              p256.public_key(),
+                              purpose,
+                              body,
+                              [&](std::span<const std::byte> message) {
+                                  return p256.sign_message(message);
+                              }),
+            purpose,
+            body);
+    }
+}
+
 TEST(HardwareIdentity, piv_double_signs_drips_and_changes) {
     liquid::identity_detail::install_piv_transport(std::make_shared<piv_double>());
     test_signatures("piv", "piv:9c");
@@ -1032,6 +1271,40 @@ TEST(ReleaseApproval, self_signed_approvals_naming_listed_signers_do_not_count) 
     ASSERT_TRUE(one) << one.error().message;
     EXPECT_FALSE(one->satisfied);
     EXPECT_EQ(one->distinct_valid_signers, std::vector<std::string>{first.identity().taap_id});
+}
+
+TEST(ReleaseApproval, fido2_eddsa_and_es256_approvals_meet_the_threshold) {
+    auto policy_signer = open_identity("fido2-release-policy");
+    liquid::identity_detail::install_fido2_transport(std::make_shared<fido_double>());
+    auto first = open_identity("fido2-release-eddsa");
+    ASSERT_TRUE(liquid::runtime::block_on(first.rotate_to("fido2")));
+    ASSERT_EQ(first.identity().algorithm, "fido2-eddsa");
+    liquid::identity_detail::install_fido2_transport(std::make_shared<fido_es256_double>());
+    auto second = open_identity("fido2-release-es256");
+    ASSERT_TRUE(liquid::runtime::block_on(second.rotate_to("fido2")));
+    ASSERT_EQ(second.identity().algorithm, "fido2-es256");
+    const auto repository = digest_with(std::byte{0x55});
+    const auto artifact = digest_with(std::byte{0x66});
+    auto policy = liquid::runtime::block_on(
+        liquid::make_release_policy(repository,
+                                    "targets",
+                                    2,
+                                    {first.identity().taap_id, second.identity().taap_id},
+                                    "2099-01-01T00:00:00Z",
+                                    policy_signer));
+    ASSERT_TRUE(policy) << policy.error().message;
+    auto first_approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v3", first));
+    auto second_approval =
+        liquid::runtime::block_on(liquid::approve_release(artifact, *policy, "v3", second));
+    ASSERT_TRUE(first_approval) << first_approval.error().message;
+    ASSERT_TRUE(second_approval) << second_approval.error().message;
+    const auto approvals = std::array{*first_approval, *second_approval};
+    auto result = liquid::verify_release(artifact, *policy, approvals);
+    ASSERT_TRUE(result) << result.error().message;
+    EXPECT_TRUE(result->satisfied);
+    EXPECT_EQ(result->distinct_valid_signers.size(), 2U);
+    liquid::identity_detail::install_fido2_transport({});
 }
 
 TEST(ReleaseApproval, approval_after_declared_compromise_is_rejected) {

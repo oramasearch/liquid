@@ -354,6 +354,10 @@ unverified key. For liquid#508, `test_sync.cpp` checks path history, operation r
 attribution and change attribution from a home without the author's chain, and that the push rate
 limit is keyed on the authenticated pusher; `test_daemon.cpp` carries the flag over the daemon wire;
 and `cli/unverified-author.cmake` checks `log`, `history`, `ops` and `blame` output. On Linux it also drives an installed `swtpm` through the TPM
+including compromise-time refusal and FIDO2 EdDSA/ES256 approvers. The FIDO2 doubles sign
+`authenticatorData || clientDataHash` as CTAP2 defines, and
+`fido2_assertion_vectors_follow_ctap2_signed_bytes` verifies assertions built only with OpenSSL from
+WebAuthn/CTAP2 and TAAP/1, rejecting the double-hashed form liquid#81 removed. On Linux it also drives an installed `swtpm` through the TPM
 command transport.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,

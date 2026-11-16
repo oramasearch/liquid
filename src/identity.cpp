@@ -777,6 +777,30 @@ signer::rotate_to(std::string custody, std::optional<compromise_declaration> com
 
 namespace {
 
+// WebAuthn Level 2 §6.3.3 step 11 and CTAP 2.2 authenticatorGetAssertion: the authenticator signs
+// the concatenation authenticatorData || clientDataHash, where clientDataHash is the 32 bytes the
+// client sent (here SHA-256 of the TAAP signed bytes). The client hash is not hashed again.
+// EdDSA signs this message directly; ES256 is ECDSA P-256 over SHA-256 of it.
+auto fido2_assertion_input(const signature& signed_value) -> std::vector<std::byte> {
+    auto assertion = signed_value.authenticator_data;
+    assertion.insert(assertion.end(),
+                     signed_value.client_data_hash.begin(),
+                     signed_value.client_data_hash.end());
+    return assertion;
+}
+
+// WebAuthn Level 2 §7.2 steps 15-16: authenticatorData starts with SHA-256 of the relying-party
+// identifier ("liquid", the rpId liquid's CTAP2 requests name) and its flags carry user presence.
+auto valid_fido2_authenticator_data(std::span<const std::byte> authenticator_data) -> bool {
+    constexpr auto rp_id = std::string_view{"liquid"};
+    constexpr auto user_present = std::byte{0x01};
+    if (authenticator_data.size() < 37 || (authenticator_data[32] & user_present) != user_present) {
+        return false;
+    }
+    auto rp_id_hash = crypto::digest(crypto::digest_kind::sha256, std::as_bytes(std::span{rp_id}));
+    return rp_id_hash && std::ranges::equal(*rp_id_hash, authenticator_data.first(32));
+}
+
 auto verify_with_key(const actor& by,
                      std::string_view artifact_type,
                      std::span<const std::byte> canonical_body,
@@ -799,19 +823,12 @@ auto verify_with_key(const actor& by,
         if (by.algorithm == "fido2-eddsa") {
             auto client_data = crypto::digest(crypto::digest_kind::sha256, input);
             if (!client_data || signed_value.client_data_hash != *client_data ||
-                signed_value.authenticator_data.empty()) {
+                !valid_fido2_authenticator_data(signed_value.authenticator_data)) {
                 crypto_wipe(input.data(), input.size());
                 return std::unexpected(
                     identity_error(errc::unauthorized, "invalid FIDO2 signature metadata"));
             }
-            auto client_hash =
-                crypto::digest(crypto::digest_kind::sha256, signed_value.client_data_hash);
-            if (!client_hash) {
-                crypto_wipe(input.data(), input.size());
-                return std::unexpected(client_hash.error());
-            }
-            assertion = signed_value.authenticator_data;
-            assertion.insert(assertion.end(), client_hash->begin(), client_hash->end());
+            assertion = fido2_assertion_input(signed_value);
             message = assertion;
         } else if (!signed_value.authenticator_data.empty() ||
                    !signed_value.client_data_hash.empty()) {
@@ -834,19 +851,12 @@ auto verify_with_key(const actor& by,
         if (by.algorithm == "fido2-es256") {
             auto client_data = crypto::digest(crypto::digest_kind::sha256, input);
             if (!client_data || signed_value.client_data_hash != *client_data ||
-                signed_value.authenticator_data.empty()) {
+                !valid_fido2_authenticator_data(signed_value.authenticator_data)) {
                 crypto_wipe(input.data(), input.size());
                 return std::unexpected(
                     identity_error(errc::unauthorized, "invalid FIDO2 signature metadata"));
             }
-            auto client_hash =
-                crypto::digest(crypto::digest_kind::sha256, signed_value.client_data_hash);
-            if (!client_hash) {
-                crypto_wipe(input.data(), input.size());
-                return std::unexpected(client_hash.error());
-            }
-            assertion = signed_value.authenticator_data;
-            assertion.insert(assertion.end(), client_hash->begin(), client_hash->end());
+            assertion = fido2_assertion_input(signed_value);
             message = assertion;
         } else if (!signed_value.authenticator_data.empty() ||
                    !signed_value.client_data_hash.empty()) {
