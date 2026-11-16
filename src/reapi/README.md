@@ -21,7 +21,9 @@ The scheduler client uploads its prepared native graph directly instead of issui
 FindMissingBlobs request; content addressing keeps repeated writes idempotent.
 The server reads each request stream through a bounded gRPC message reader (liquid#451): a unary
 request is one message of at most 5 MiB, a ByteStream Write is applied one message at a time, and a
-stream answered before it ended closes the connection. The client sends a large Write as 1 MiB
+stream answered before it ended closes the connection. Every connection closes with FIN, then reads
+and discards what the peer still sends until it closes (at most 2 s and 16 MiB), so the answer is
+not lost to a TCP reset (liquid#548). The client sends a large Write as 1 MiB
 messages on one stream (`grpc_client::call_messages`).
 `uploads.cpp` accounts for retained ByteStream payload capacity across connections, limits upload
 size, count and resource-name length, and expires idle partial writes. A Write owns its upload
