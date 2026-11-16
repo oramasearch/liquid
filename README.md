@@ -259,6 +259,7 @@ record, with the limits of each area, is the
   notebooks, wheels, JARs and linked binaries, with bounded Mach-O symbol inspection.
   notebooks, wheels, JARs and linked binaries, with bounded ELF, Mach-O and PE name inspection.
   [Formats](docs/library/formats.md)
+  notebooks, wheels, JARs and safetensors with bounded tensor copies. [Formats](docs/library/formats.md)
 - **Search** by ranking, substring or regular expression, with a planner that reports what it
   chose and why. [Search](docs/library/search.md)
 

@@ -15,6 +15,12 @@ the `liquid` binary implement, by phase, with the known limits, is
 [`docs/library/status.md`](docs/library/status.md). A change to what liquid does updates that page
 in the same commit. This file records the repository's rules and decisions, and the root
 `README.md` is the build and first-result path. Do not add per-feature status here. The
+in the same commit. Safetensors' bounded tensor-copy behavior is documented in
+[`docs/library/formats.md`](docs/library/formats.md#jupyter-and-model-files). This file records the
+repository's rules and decisions, and the root `README.md` is the build and first-result path.
+Until 2026-10-12 this section also carried about
+260 lines of per-issue status. The features it described are in `status.md`, and the issue each
+came from is cited on its topic page under `docs/library/`; do not add status back here. The
 [reconciliation record](docs/library/readme-history.md) explains the earlier duplicate inventories.
 Scanner work bounds and their regression coverage are documented in
 [`docs/library/secret-scanning.md`](docs/library/secret-scanning.md).

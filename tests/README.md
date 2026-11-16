@@ -161,6 +161,9 @@ truncation directly. `liquid-elf-tests` checks every ELF name source, repeated a
 offsets, exact length limits, and shared inspection budgets across ELF classes and byte orders.
 The registry cases check ELF caller budgets and truncation propagation into ABI comparisons.
 The strict JSON and `.env` codecs
+boundaries, nesting limits, and a dynamically loaded C11 module. Safetensors tests cover its
+cumulative copy budget through the codec and registry, exact-fit and oversized tensors, and entry
+limits for empty tensors (liquid #476). The strict JSON and `.env` codecs
 used by
 structured configuration encryption remain covered there; `encryption/`
 covers leaf envelopes, repository enforcement, explicit decryption, mixed-version rotation reads,
