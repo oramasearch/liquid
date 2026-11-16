@@ -271,6 +271,9 @@ named configuration errors, and current root digests on every platform. In the
 privileged Linux environment they also prove a second identical execution launches no process,
 an undeclared read invalidates with both digests, unread input changes still hit, collected outputs
 cannot be served, read-only publication is refused, and producer signatures verify.
+Tests that mount FUSE call `LIQUID_TEST_REQUIRE_FUSE()` from `fuse_probe.hpp`: the build-time
+`LIQUID_BUILD_HAS_FUSE` flag is not enough, so a host where `/dev/fuse` cannot be opened skips them
+with the reason ([#362](https://github.com/oramasearch/liquid/issues/362)).
 Portable query-graph tests cover early cutoff, durability-filtered walks, cooperative cancellation,
 interrupted-process recovery, fingerprint-only restart validation, recorded input retrieval,
 one-in-twenty clean sampling, stale-value detection, durable audit records, and eviction before

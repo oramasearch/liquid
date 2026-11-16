@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string_view>
 
+#include "../fuse_probe.hpp"
 #include "conformance_backend.hpp"
 
 int main(int argc, char** argv) {
@@ -37,6 +38,14 @@ int main(int argc, char** argv) {
         }
         std::cerr << '\n';
         return 2;
+    }
+    if (selected_backend->name == "libfuse") {
+        if (const auto reason = liquid::test::fuse_unavailable_reason()) {
+            // A required backend that cannot mount on this host is skipped, not failed: the
+            // conformance baseline is not established here, and the reason says why (#362).
+            std::cout << "VFS conformance backend=libfuse skipped: " << *reason << '\n';
+            return 77;
+        }
     }
     argc = remaining;
     argv[argc] = nullptr;

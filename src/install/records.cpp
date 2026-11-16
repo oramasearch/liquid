@@ -31,8 +31,11 @@ auto valid_name(std::string_view value) -> bool {
 
 auto valid_path(const std::filesystem::path& value) -> bool {
     const auto text = value.generic_string();
+    // libstdc++'s generic format and path comparison both collapse repeated separators, so
+    // "/usr//bin" passes those checks on Linux; the path as written must be checked (#348).
+    const auto written = value.string();
     if (text.empty() || text.front() != '/' || text == "/" ||
-        text.find("//") != std::string::npos || value.lexically_normal() != value) {
+        written.find("//") != std::string::npos || value.lexically_normal() != value) {
         return false;
     }
     return std::ranges::all_of(text, [](const char item) {
