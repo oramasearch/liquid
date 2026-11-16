@@ -358,7 +358,11 @@ Feedback to the protocol owner:
   revocation evidence, renewing archive timestamps before the old protection weakens, and
   rehashing all prior evidence before the hash algorithm breaks. RFC 4998 Evidence Record
   Syntax is the relevant standard. This matters because liquid's history is meant to
-  outlive the keys that signed it.
+  outlive the keys that signed it. `evidence_record::verify` holds each renewal to that rule
+  (L-37, liquid#390). Archive timestamp *n*+1 must be issued no earlier than timestamp *n*, and
+  no later than the end of *n*'s signing certificate. No timestamp may lie more than five minutes in
+  the future. So a token backdated with an expired or compromised TSA key cannot be laundered by
+  an honest renewal.
 - **TAAP's own maturity.** It is a draft with unresolved questions, and liquid would be
   its first significant implementation. That is an opportunity and a risk, and the risk
   is that the protocol changes under liquid.
