@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -50,6 +51,63 @@ auto file_entry(std::string path, std::vector<std::byte> bytes) -> liquid::forma
             .size = bytes.size(),
             .content = content.value_or(liquid::digest{}),
             .bytes = std::move(bytes)};
+}
+
+// A one-row, uncompressed INT32 column with a dictionary and a caller-controlled data page.
+auto parquet_page_fixture(std::span<const std::byte> payload,
+                          std::uint8_t encoding,
+                          std::uint8_t repetition = 0) -> std::vector<std::byte> {
+    auto bytes = std::vector<std::byte>{};
+    const auto append = [&](std::initializer_list<std::uint8_t> values) {
+        for (const auto value : values) {
+            bytes.push_back(static_cast<std::byte>(value));
+        }
+    };
+    const auto varint = [&](std::uint64_t value) {
+        while (value >= 128) {
+            append({static_cast<std::uint8_t>((value & 0x7fU) | 0x80U)});
+            value >>= 7U;
+        }
+        append({static_cast<std::uint8_t>(value)});
+    };
+    append({'P', 'A', 'R', '1'});
+    // Dictionary page: one PLAIN integer, value zero.
+    append({0x15, 4, 0x15, 8, 0x15, 8, 0x4c, 0x15, 2, 0x15, 0, 0, 0, 0, 0, 0, 0});
+    const auto data_offset = bytes.size();
+    append({0x15, 0, 0x15});
+    varint(payload.size() * 2);
+    append({0x15});
+    varint(payload.size() * 2);
+    append({0x2c, 0x15, 2, 0x15, static_cast<std::uint8_t>(encoding * 2), 0x15, 6, 0x15, 6, 0, 0});
+    bytes.insert(bytes.end(), payload.begin(), payload.end());
+    const auto footer_offset = bytes.size();
+    // FileMetaData: version, schema (root + leaf), row count and one row group.
+    append({0x15, 2,    0x19, 0x2c, 0x48, 1,    'r',
+            0x15, 2,    0,    0x15, 2,    0x25, static_cast<std::uint8_t>(repetition * 2),
+            0x18, 1,    'x',  0,    0x16, 2,    0x19,
+            0x1c, 0x19, 0x1c, 0x3c, 0x15, 2,    0x29,
+            0x18, 1,    'x',  0x15, 0,    0x26});
+    varint((payload.size() + 4) * 2);
+    append({0x36});
+    varint(data_offset * 2);
+    append({0x26, 8, 0, 0, 0x26, 2, 0, 0});
+    const auto footer_size = bytes.size() - footer_offset;
+    for (auto index = 0U; index < 4; ++index) {
+        append({static_cast<std::uint8_t>((footer_size >> (index * 8U)) & 0xffU)});
+    }
+    append({'P', 'A', 'R', '1'});
+    return bytes;
+}
+
+auto parquet_run(std::uint64_t header, std::size_t payload_bytes = 0) -> std::vector<std::byte> {
+    auto bytes = std::vector<std::byte>{};
+    while (header >= 128) {
+        bytes.push_back(static_cast<std::byte>((header & 0x7fU) | 0x80U));
+        header >>= 7U;
+    }
+    bytes.push_back(static_cast<std::byte>(header));
+    bytes.resize(bytes.size() + payload_bytes);
+    return bytes;
 }
 
 TEST(FormatRegistry, PublishesBuiltInCodecs) {
@@ -277,6 +335,82 @@ TEST(FormatRegistry, UnpacksParquetRowGroupsAndDictionaryValues) {
                                        dictionary->bytes.size()};
     EXPECT_NE(text.find("alpha"), std::string_view::npos);
     EXPECT_NE(text.find("beta"), std::string_view::npos);
+}
+
+TEST(FormatRegistry, RejectsParquetOversizedRunsOnEveryHybridPath) {
+    for (const auto header : {(std::uint64_t{1} << 61U) + 1U,
+                              (std::uint64_t{1} << 62U) + 3U,
+                              std::numeric_limits<std::uint64_t>::max()}) {
+        for (const auto encoding : {2U, 8U, 3U}) {
+            for (const auto repetition : {0U, 1U, 2U}) {
+                for (const auto trailing : {std::size_t{0}, std::size_t{2}}) {
+                    SCOPED_TRACE(::testing::Message() << header << "/" << encoding << "/"
+                                                      << repetition << "/" << trailing);
+                    auto payload = parquet_run(header, trailing);
+                    if (repetition != 0) {
+                        // The malformed run is the first level stream (definition or repetition).
+                        const auto size = payload.size();
+                        payload.insert(payload.begin(), 4, std::byte{});
+                        for (auto index = 0U; index < 4; ++index) {
+                            payload[index] = static_cast<std::byte>((size >> (index * 8U)) & 0xffU);
+                        }
+                    } else if (encoding != 3) {
+                        payload.insert(payload.begin(), std::byte{2});
+                    }
+                    auto tree = liquid::format_registry::global().unpack(
+                        parquet_page_fixture(payload, encoding, repetition), "oversized.parquet");
+                    ASSERT_FALSE(tree);
+                    EXPECT_EQ(tree.error().code, liquid::errc::corrupt);
+                }
+            }
+        }
+    }
+}
+
+TEST(FormatRegistry, RejectsParquetInvalidWidthsAndVarints) {
+    for (auto width = 65U; width <= 255U; ++width) {
+        for (const auto header : {2U, 3U}) {
+            auto payload = parquet_run(header, 256);
+            payload.insert(payload.begin(), static_cast<std::byte>(width));
+            auto tree = liquid::format_registry::global().unpack(parquet_page_fixture(payload, 8),
+                                                                 "width.parquet");
+            ASSERT_FALSE(tree) << width << "/" << header;
+            EXPECT_EQ(tree.error().code, liquid::errc::corrupt);
+        }
+    }
+    // The tenth varint byte has only one available bit; this used to alias header 3.
+    auto payload = std::vector<std::byte>(10, std::byte{0x80});
+    payload.front() = std::byte{0x83};
+    payload.back() = std::byte{2};
+    payload.insert(payload.begin(), std::byte{1});
+    payload.push_back(std::byte{});
+    auto tree = liquid::format_registry::global().unpack(parquet_page_fixture(payload, 8),
+                                                         "varint.parquet");
+    ASSERT_FALSE(tree);
+    EXPECT_EQ(tree.error().code, liquid::errc::corrupt);
+}
+
+TEST(FormatRegistry, AcceptsParquetBoundedRunsAndRejectsTruncatedPayloads) {
+    for (const auto width : {0U, 1U, 2U, 8U, 32U, 64U}) {
+        for (const auto header : {2U, 3U}) {
+            const auto size = header == 2 ? (width + 7U) / 8U : width;
+            auto payload = parquet_run(header, size);
+            payload.insert(payload.begin(), static_cast<std::byte>(width));
+            auto tree = liquid::format_registry::global().unpack(parquet_page_fixture(payload, 8),
+                                                                 "valid.parquet");
+            ASSERT_TRUE(tree) << width << "/" << header << ": " << tree.error().message;
+            ASSERT_NE(entry(*tree, "row-group=0/x"), nullptr);
+            EXPECT_EQ(entry(*tree, "row-group=0/x")->bytes,
+                      (std::vector<std::byte>{std::byte{'0'}, std::byte{'\n'}}));
+            if (size != 0) {
+                payload.pop_back();
+                auto truncated = liquid::format_registry::global().unpack(
+                    parquet_page_fixture(payload, 8), "truncated.parquet");
+                ASSERT_FALSE(truncated) << width << "/" << header;
+                EXPECT_EQ(truncated.error().code, liquid::errc::corrupt);
+            }
+        }
+    }
 }
 
 TEST(FormatRegistry, UnpacksSqliteSchemaAndRows) {

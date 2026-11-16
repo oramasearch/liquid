@@ -392,6 +392,10 @@ auto varint(std::span<const std::byte> input, std::size_t& offset) -> result<std
             return std::unexpected(failure("truncated RLE varint"));
         }
         const auto value = std::to_integer<std::uint8_t>(input[offset++]);
+        // The tenth byte carries only bit 63; anything above it would be silently dropped.
+        if (shift == 63U && (value & 0x7eU) != 0) {
+            return std::unexpected(failure("RLE varint overflows"));
+        }
         output |= static_cast<std::uint64_t>(value & 0x7fU) << shift;
         if ((value & 0x80U) == 0) {
             return output;
@@ -400,8 +404,13 @@ auto varint(std::span<const std::byte> input, std::size_t& offset) -> result<std
     return std::unexpected(failure("RLE varint overflows"));
 }
 
+// Decodes `wanted` values from a Parquet RLE/bit-packed hybrid stream. Every run is checked
+// against the bytes that remain before it is read, and each read goes through that run's span.
 auto hybrid(std::span<const std::byte> input, std::uint8_t width, std::size_t wanted)
     -> result<std::vector<std::uint64_t>> {
+    if (width > 64U) {
+        return std::unexpected(failure("invalid RLE bit width"));
+    }
     auto output = std::vector<std::uint64_t>{};
     auto offset = std::size_t{};
     while (output.size() < wanted && offset < input.size()) {
@@ -412,41 +421,41 @@ auto hybrid(std::span<const std::byte> input, std::uint8_t width, std::size_t wa
         if ((*header & 1U) == 0) {
             const auto count = *header >> 1U;
             const auto byte_count = (width + 7U) / 8U;
-            if (offset + byte_count > input.size()) {
+            if (byte_count > input.size() - offset) {
                 return std::unexpected(failure("truncated RLE value"));
             }
+            const auto run = input.subspan(offset, byte_count);
             auto value = std::uint64_t{};
-            for (auto index = std::uint8_t{}; index < byte_count; ++index) {
-                value |=
-                    static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(input[offset + index]))
-                    << (index * 8U);
+            for (auto index = std::size_t{}; index < run.size(); ++index) {
+                value |= static_cast<std::uint64_t>(std::to_integer<std::uint8_t>(run[index]))
+                         << (index * 8U);
             }
-            offset += byte_count;
+            offset += run.size();
             for (auto index = std::uint64_t{}; index < count && output.size() < wanted; ++index) {
                 output.push_back(value);
             }
             continue;
         }
-        const auto count = (*header >> 1U) * 8U;
-        const auto bits = count * width;
-        const auto bytes_needed = (bits + 7U) / 8U;
-        if (offset + bytes_needed > input.size()) {
+        // Each group of eight values fills exactly `width` bytes, so the run length is bounded
+        // by division before it is multiplied.
+        const auto groups = *header >> 1U;
+        if (width != 0 && groups > (input.size() - offset) / width) {
             return std::unexpected(failure("truncated bit-packed run"));
         }
-        auto bit = std::uint64_t{};
-        for (auto index = std::uint64_t{}; index < count && output.size() < wanted; ++index) {
+        const auto run = input.subspan(offset, static_cast<std::size_t>(groups * width));
+        auto bit = std::size_t{};
+        for (auto index = std::uint64_t{}; index / 8U < groups && output.size() < wanted; ++index) {
             auto value = std::uint64_t{};
             for (auto value_bit = std::uint8_t{}; value_bit < width; ++value_bit) {
                 const auto source_bit = bit + value_bit;
-                const auto source = std::to_integer<std::uint8_t>(
-                    input[offset + static_cast<std::size_t>(source_bit / 8U)]);
+                const auto source = std::to_integer<std::uint8_t>(run[source_bit / 8U]);
                 value |= static_cast<std::uint64_t>((source >> (source_bit % 8U)) & 1U)
                          << value_bit;
             }
             output.push_back(value);
             bit += width;
         }
-        offset += static_cast<std::size_t>(bytes_needed);
+        offset += run.size();
     }
     if (output.size() != wanted) {
         return std::unexpected(failure("RLE stream ended early"));
