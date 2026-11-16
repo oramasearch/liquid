@@ -760,8 +760,10 @@ TEST(Identity, ConcurrentFirstUsesInProcessesCreateOneReadableIdentity) {
             if (child == 0) {
                 const auto descriptor =
                     ::open(output.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600);
-                if (descriptor < 0 || ::dup2(descriptor, STDOUT_FILENO) < 0 ||
-                    ::dup2(descriptor, STDERR_FILENO) < 0) {
+                // Standard error goes elsewhere: the command may warn about the key's custody.
+                const auto errors = ::open("/dev/null", O_WRONLY | O_CLOEXEC);
+                if (descriptor < 0 || errors < 0 || ::dup2(descriptor, STDOUT_FILENO) < 0 ||
+                    ::dup2(errors, STDERR_FILENO) < 0) {
                     std::_Exit(126);
                 }
                 ::execl(LIQUID_CLI, LIQUID_CLI, "identity", "show", static_cast<char*>(nullptr));
