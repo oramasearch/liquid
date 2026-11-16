@@ -159,6 +159,7 @@ specifies it.
 | [13](13-deployment-runtime.md) | Deployment runtime | The minimal Kubernetes distribution and the Railway-style developer experience. |
 | [14](14-hot-update.md) | Hot update | Updating a running system from an incremental build, with honest limits and [bounded demo socket paths](../build/socket-fixtures.md). |
 | [15](15-consumer-sync-and-web.md) | Consumer sync and web | The drive client skips filesystem symlinks and protects source reads on macOS/Linux; concurrent offline history and Linux desktop state, hydration, offline, and badge integration are implemented; native Windows/macOS and web surfaces follow. |
+| [15](15-consumer-sync-and-web.md) | Consumer sync and web | The drive client, concurrent offline history, and Linux desktop state, hydration, offline, and badge integration are implemented; [sync uploads reject requests outside the offered root closure](../library/sync.md); native Windows/macOS and web surfaces follow. |
 | [16](16-universality.md) | Universality | Every language, platform and operating system, declared through the generated support matrix. |
 | [17](17-implementation.md) | Implementation | C++26, the component inventory, and the build order. |
 | [18](18-lake-service.md) | **lake.live** | The hosted service: GitHub + Google Drive + Railway over one store. |

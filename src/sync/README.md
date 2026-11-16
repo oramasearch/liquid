@@ -10,7 +10,9 @@ the repository without entering the drip journal.
 
 `session.cpp` walks references from caller-provided roots. Send enumerates blob payload identities
 without reading them, asks the peer for its missing set, and loads only payloads that need upload;
-receive range-reads absent objects, verifies each full digest, stores it, and then continues through
+it rejects the complete response before any upload if any algorithm-tagged digest was not offered
+in the current root closure, including when the roots are empty (liquid #446).
+Receive range-reads absent objects, verifies each full digest, stores it, and then continues through
 its references while preserving each transmitted digest algorithm.
 `receive_metadata` follows only tree and blob records, registers each blob's whole-content digest
 against the session's source and instance, and counts bytes whose chunks remain remote without

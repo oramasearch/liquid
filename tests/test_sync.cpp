@@ -30,6 +30,7 @@
 #include <optional>
 
 #include <mutex>
+
 #include <random>
 #include <span>
 #include <stdexcept>
@@ -37,6 +38,8 @@
 #include <string_view>
 #include <thread>
 #include <variant>
+
+#include <utility>
 #include <vector>
 
 #include "build/repository_access.hpp"
@@ -197,6 +200,30 @@ public:
 private:
     liquid::store* source_{};
     std::vector<liquid::digest> requests_;
+};
+
+class requesting_sync_destination final : public liquid::remote_blob_source {
+public:
+    std::optional<std::vector<liquid::digest>> requested;
+    std::vector<liquid::digest> offered;
+    std::vector<std::pair<liquid::digest, std::vector<std::byte>>> uploads;
+
+    liquid::runtime::task<std::vector<liquid::digest>>
+    find_missing(std::string, std::vector<liquid::digest> objects) override {
+        offered = std::move(objects);
+        co_return requested.value_or(offered);
+    }
+
+    liquid::runtime::task<std::uint64_t>
+    read_range(std::string, liquid::digest, std::uint64_t, std::span<std::byte>) override {
+        co_return std::unexpected(liquid::error{liquid::errc::unsupported, "destination only"});
+    }
+
+    liquid::runtime::task<void>
+    write(std::string, liquid::digest id, std::vector<std::byte> contents) override {
+        uploads.emplace_back(id, std::move(contents));
+        co_return liquid::result<void>{};
+    }
 };
 
 template <class T>
@@ -570,6 +597,87 @@ auto export_all(liquid::repository& repository) -> liquid::result<std::vector<li
             return output;
         }
     }
+}
+
+TEST(Sync, SendRejectsUnofferedObjectsBeforeAnyUpload) {
+    temporary_directory path;
+    auto source = liquid::runtime::block_on(liquid::store::open(path.path()));
+    ASSERT_TRUE(source);
+    auto root = liquid::runtime::block_on(source->put(bytes("selected repository")));
+    auto unrelated = liquid::runtime::block_on(source->put(bytes("unrelated private object")));
+    ASSERT_TRUE(root);
+    ASSERT_TRUE(unrelated);
+    auto peer = requesting_sync_destination{};
+    auto session = liquid::sync_session{*source, peer, "repository"};
+    for (const auto& roots : {std::vector<liquid::digest>{*root}, std::vector<liquid::digest>{}}) {
+        for (const auto& response : {std::vector<liquid::digest>{*unrelated},
+                                     std::vector<liquid::digest>{*root, *unrelated},
+                                     std::vector<liquid::digest>{*unrelated, *root}}) {
+            peer.requested = response;
+            peer.uploads.clear();
+            auto sent = liquid::runtime::block_on(session.send(roots));
+            ASSERT_FALSE(sent);
+            EXPECT_EQ(sent.error().code, liquid::errc::corrupt);
+            EXPECT_TRUE(peer.uploads.empty());
+        }
+    }
+    // A later negotiation is restricted to its own roots, even on the same session.
+    peer.requested = std::vector<liquid::digest>{*root};
+    auto sent = liquid::runtime::block_on(session.send(std::array{*unrelated}));
+    ASSERT_FALSE(sent);
+    EXPECT_EQ(sent.error().code, liquid::errc::corrupt);
+    EXPECT_TRUE(peer.uploads.empty());
+}
+
+TEST(Sync, SendChecksTheRequestedDigestAlgorithm) {
+    temporary_directory path;
+    auto source = liquid::runtime::block_on(liquid::store::open(path.path()));
+    ASSERT_TRUE(source);
+    auto root = liquid::runtime::block_on(source->put(bytes("selected repository")));
+    ASSERT_TRUE(root);
+    auto wrong_algorithm = *root;
+    wrong_algorithm.alg = liquid::algorithm::sha256;
+    auto peer = requesting_sync_destination{};
+    peer.requested = std::vector<liquid::digest>{wrong_algorithm};
+    auto session = liquid::sync_session{*source, peer, "repository"};
+    auto sent = liquid::runtime::block_on(session.send(std::array{*root}));
+    ASSERT_FALSE(sent);
+    EXPECT_EQ(sent.error().code, liquid::errc::corrupt);
+    EXPECT_TRUE(peer.uploads.empty());
+}
+
+TEST(Sync, SendAcceptsOfferedMetadataAndPayloadChunks) {
+    temporary_directory path;
+    auto source = liquid::runtime::block_on(liquid::store::open(path.path()));
+    ASSERT_TRUE(source);
+    auto content = liquid::runtime::block_on(source->put(bytes("selected payload")));
+    ASSERT_TRUE(content);
+    auto blob = liquid::repository_detail::store_access::blob_for(*source, *content);
+    ASSERT_TRUE(blob);
+    auto record = liquid::objects::encode(*blob);
+    ASSERT_TRUE(record);
+    auto root_id = liquid::hash(liquid::algorithm::sha256, *record);
+    ASSERT_TRUE(root_id);
+    auto root = liquid::runtime::block_on(
+        liquid::repository_detail::store_access::put_verified(*source, *root_id, *record));
+    ASSERT_TRUE(root);
+    auto peer = requesting_sync_destination{};
+    auto session = liquid::sync_session{*source, peer, "repository"};
+    auto sent = liquid::runtime::block_on(session.send(std::array{*root}));
+    ASSERT_TRUE(sent) << sent.error().message;
+    EXPECT_EQ(sent->objects, 1U + blob->chunks.size());
+    EXPECT_EQ(peer.uploads.size(), peer.offered.size());
+    for (const auto& [id, uploaded] : peer.uploads) {
+        auto expected = liquid::runtime::block_on(source->get(id));
+        ASSERT_TRUE(expected);
+        EXPECT_EQ(uploaded, *expected);
+    }
+    peer.uploads.clear();
+    peer.requested = std::vector<liquid::digest>{};
+    sent = liquid::runtime::block_on(session.send(std::array{*root}));
+    ASSERT_TRUE(sent);
+    EXPECT_EQ(sent->objects, 0U);
+    EXPECT_TRUE(peer.uploads.empty());
 }
 
 TEST(Sync, ReceiveMetadataRegistersBlobsWithoutFetchingChunks) {

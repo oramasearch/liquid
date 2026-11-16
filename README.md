@@ -244,7 +244,8 @@ record, with the limits of each area, is the
   and **private sessions** in which an agent can work speculatively.
   [Multiplayer](docs/library/multiplayer.md), [locks](docs/library/locks.md)
 - **Push, pull, clone and a sync server**, and a **drive** that keeps a folder in sync for
-  people who do not think in changes. [Sync](docs/library/sync.md), [drive](docs/library/drive.md)
+  people who do not think in changes. Uploads stay within the offered object graph.
+  [Sync](docs/library/sync.md), [drive](docs/library/drive.md)
 - **Git import and export.** [Git interop](docs/library/git-interop.md)
 
 **One store for everything**

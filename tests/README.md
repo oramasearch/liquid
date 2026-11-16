@@ -241,6 +241,10 @@ unchanged. Its CLI case starts the real `serve sync --allow-ref main`
 process, checks ordinary and atomic per-ref output, and invokes the real push and pull commands. The
 private wire codec stays in libliquid. Header compilation keeps the public sync API covered on every
 platform.
+Its sender tests use a hostile `remote_blob_source` to request an unrelated local object alone,
+before or after a valid identity, with empty roots, and after a previous offer on the same session.
+Every such response is refused before any upload; algorithm-tag mismatches are also refused.
+Valid metadata and payload requests and an empty missing subset still succeed (liquid #446).
 The clone cases pull through an HTTP sync endpoint, force full hydration of a file above the
 ordinary drive threshold, confirm the persisted remote and stable JSON, and configure and build a
 small CMake project inside the checkout. A second clone resolves that checkout as a configured
