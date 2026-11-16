@@ -406,7 +406,9 @@ and `cli/unverified-author.cmake` checks `log`, `history`, `ops` and `blame` out
 including compromise-time refusal and FIDO2 EdDSA/ES256 approvers. The FIDO2 doubles sign
 `authenticatorData || clientDataHash` as CTAP2 defines, and
 `fido2_assertion_vectors_follow_ctap2_signed_bytes` verifies assertions built only with OpenSSL from
-WebAuthn/CTAP2 and TAAP/1, rejecting the double-hashed form liquid#81 removed. On Linux it also drives an installed `swtpm` through the TPM
+WebAuthn/CTAP2 and TAAP/1, rejecting the double-hashed form liquid#81 removed. Its key has no
+identity chain, so it checks the vectors with `verify_key_signature`; the FIDO2 release-approval
+test trusts every signer's whole chain in a separate verifier home (liquid#544). On Linux it also drives an installed `swtpm` through the TPM
 command transport.
 
 `test_identity_custody.cpp` covers how the local identity's signing key is held at rest
