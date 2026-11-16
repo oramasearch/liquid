@@ -545,6 +545,123 @@ TEST(FormatRegistry, ComparesHdf5FloatingPointValuesWithTolerances) {
     EXPECT_TRUE(tolerant->entries.empty());
 }
 
+// One chunk of four bytes, with identity shuffle filters so every unmasked filter is decoded.
+// Both pipeline encodings share the 32-bit per-chunk filter mask (liquid #486).
+TEST(FormatRegistry, BoundsHdf5FilterPipelinesToTheChunkMask) {
+    const auto file =
+        [](std::uint8_t version, std::uint8_t count, bool chunked, std::uint32_t mask) {
+            auto output = std::vector<std::byte>(4204);
+            auto position = std::size_t{};
+            const auto put = [&](std::uint64_t value, std::size_t width) {
+                for (auto index = std::size_t{}; index < width; ++index) {
+                    output.at(position++) = static_cast<std::byte>((value >> (index * 8U)) & 0xffU);
+                }
+            };
+            const auto put_bytes = [&](std::initializer_list<int> values) {
+                for (const auto value : values) {
+                    put(static_cast<std::uint64_t>(value), 1);
+                }
+            };
+            const auto message = [&](std::uint8_t type, std::size_t size) {
+                put(type, 1);
+                put(size, 2);
+                put(0, 1);
+            };
+            put_bytes({0x89, 'H', 'D', 'F', '\r', '\n', 0x1a, '\n', 2, 8, 8, 0});
+            put(0, 8);
+            put(~std::uint64_t{}, 8);
+            put(output.size(), 8);
+            put(48, 8);
+            put(0, 4);
+            put_bytes({'O', 'H', 'D', 'R', 2, 0, 16});
+            message(6, 12);
+            put_bytes({1, 0, 1, 'd'});
+            put(128, 8);
+
+            position = 128;
+            put_bytes({'O', 'H', 'D', 'R', 2, 1});
+            const auto chunk_size_position = position;
+            put(0, 2);
+            const auto messages_start = position;
+            message(1, 12);
+            put_bytes({2, 1, 0, 1});
+            put(1, 8);
+            message(3, 12);
+            put_bytes({0x10, 0, 0, 0, 4, 0, 0, 0, 0, 0, 32, 0});
+            message(8, chunked ? 19 : 8);
+            if (chunked) {
+                put_bytes({3, 2, 2});
+                put(4096, 8);
+                put(1, 4);
+                put(4, 4);
+            } else {
+                put_bytes({3, 0, 4, 0});
+                put(0x12345678, 4);
+            }
+            message(11, (version == 1 ? 8 : 2) + count * (version == 1 ? 8 : 6));
+            put(version, 1);
+            put(count, 1);
+            if (version == 1) {
+                put(0, 6);
+            }
+            for (auto index = std::size_t{}; index < count; ++index) {
+                put(2, 2);
+                if (version == 1) {
+                    put(0, 2);
+                }
+                put(0, 4);
+            }
+            const auto chunk_size = position - messages_start;
+            position = chunk_size_position;
+            put(chunk_size, 2);
+
+            position = 4096;
+            put_bytes({'T', 'R', 'E', 'E', 1, 0, 1, 0});
+            put(~std::uint64_t{}, 8);
+            put(~std::uint64_t{}, 8);
+            put(4, 4);
+            put(mask, 4);
+            put(0, 8);
+            put(0, 8);
+            put(4200, 8);
+            position = 4200;
+            put(0x12345678, 4);
+            return output;
+        };
+
+    for (const auto version : {1, 2}) {
+        for (const auto chunked : {true, false}) {
+            for (const auto count : {0, 1, 31, 32, 33, 64, 255}) {
+                for (const auto mask :
+                     {std::uint32_t{}, std::uint32_t{1} << 31, ~std::uint32_t{}}) {
+                    SCOPED_TRACE(::testing::Message()
+                                 << "version=" << version << " count=" << count
+                                 << " chunked=" << chunked << " mask=" << mask);
+                    auto tree = liquid::format_registry::global().unpack(
+                        file(version, count, chunked, mask), "filters.h5");
+                    if (count > 32) {
+                        ASSERT_FALSE(tree);
+                        EXPECT_EQ(tree.error().code, liquid::errc::corrupt);
+                        EXPECT_TRUE(tree.error().message.starts_with(
+                            "HDF5 filter pipeline exceeds 32 filters"))
+                            << tree.error().message;
+                    } else {
+                        ASSERT_TRUE(tree) << tree.error().message;
+                        const auto* decoded = entry(*tree, "d");
+                        ASSERT_NE(decoded, nullptr);
+                        EXPECT_TRUE(decoded->opaque_reason.empty()) << decoded->opaque_reason;
+                        EXPECT_EQ(decoded->bytes,
+                                  (std::vector<std::byte>{std::byte{0x78},
+                                                          std::byte{0x56},
+                                                          std::byte{0x34},
+                                                          std::byte{0x12}}));
+                    }
+                }
+            }
+        }
+    }
+}
+
 // A root group whose one link message has an 8-byte name length (flags 0x03), so a length near
 // 2^64 would wrap a position-plus-length bound check (liquid #477).
 TEST(FormatRegistry, RefusesAnHdf5LinkNameLengthThatWrapsPastTheMessage) {
