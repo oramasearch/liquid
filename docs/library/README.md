@@ -54,3 +54,5 @@ bytes already written, as Zetta's object storage requires (liquid #332).
 
 [Format codecs](formats.md#hdf5) reject HDF5 pipelines longer than the 32-bit chunk mask
 before decoding datasets (liquid #486).
+[Secret scanning](secret-scanning.md) documents the linear JWT walk and long-input regression
+coverage (liquid #440).

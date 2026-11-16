@@ -364,3 +364,6 @@ including equality of Debian bytes from a change and its root tree, without a mo
 `test_log_url.cpp` covers HTTP log URL factory errors and all six legacy source operations.
 `cli-log-url` repeats these API tests and every malformed URL through the three log verbs
 with networking denied on macOS and Linux. See [the contract](../docs/library/transparency.md#http-url-validation-289).
+
+`scan/` also checks linear JWT scanning on repeated invalid candidate prefixes, overlapping
+component candidates, and detection at the end of large lines (liquid #440).

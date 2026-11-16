@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -103,6 +104,63 @@ TEST(DetectorConfiguration, changed_ranges_preserve_full_line_numbers) {
     const auto found = scanner.scan("config.txt", content, {}, std::span{second_line});
     ASSERT_FALSE(found.blocked.empty());
     EXPECT_EQ(found.blocked.front().line, 2U);
+}
+
+TEST(DetectorJwt, long_invalid_components_have_bounded_work) {
+    const auto scanner = liquid::scan_detail::detector_set{};
+    auto run = std::string{};
+    for (auto index = 0; index < 32768; ++index) {
+        run += "eyJ";
+    }
+    // Exercise failures in every component, including candidate starts inside later runs.
+    const auto lines =
+        std::array{run, run + ".short.abcdefgh", "eyJaaaaa." + run + ".short", "eyJ.short." + run};
+    const auto started = std::chrono::steady_clock::now();
+    for (const auto& line : lines) {
+        EXPECT_FALSE(contains(scanner.scan("config.txt", bytes(line), {}), "jwt"));
+    }
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds{2});
+}
+
+TEST(DetectorJwt, preserves_candidates_in_later_components_and_after_delimiters) {
+    const auto scanner = liquid::scan_detail::detector_set{};
+    const auto token = std::string{"eyJaaaaa.abcdefgh.ijklmnop"};
+    for (const auto& prefix : {"",
+                               "eyJ.",
+                               "eyJ.short.",
+                               "eyJaaaaa..",
+                               "eyJaaaaa.abcdefgh..",
+                               "eyJaaaaa.abcdefgh.short ",
+                               "eyJshort ",
+                               "aaaaa"}) {
+        EXPECT_TRUE(contains(scanner.scan("config.txt", bytes(prefix + token), {}), "jwt"));
+    }
+    for (const auto line : {"eyJaaaa.abcdefgh.ijklmnop",
+                            "eyJaaaaa.abcdefg.ijklmnop",
+                            "eyJaaaaa.abcdefgh.ijklmno",
+                            "eyJaaaaa..abcdefgh.ijklmnop",
+                            "eyJaaaaa.abcdefgh..ijklmnop"}) {
+        EXPECT_FALSE(contains(scanner.scan("config.txt", bytes(line), {}), "jwt"));
+    }
+}
+
+TEST(DetectorJwt, scans_large_lines_without_truncating_other_detectors_or_jwts) {
+    const auto scanner = liquid::scan_detail::detector_set{};
+    auto line = std::string(2 * 1024 * 1024, 'a');
+    line += " eyJaaaaa.abcdefgh.ijklmnop -----BEGIN OPENSSH PRIVATE KEY-----";
+    const auto report = scanner.scan("config.txt", bytes(line), {});
+    EXPECT_TRUE(contains(report, "jwt"));
+    EXPECT_TRUE(contains(report, "private-key"));
+}
+
+TEST(DetectorJwt, preserves_large_valid_components) {
+    const auto scanner = liquid::scan_detail::detector_set{};
+    const auto run = std::string(128 * 1024, 'a');
+    for (const auto& line : {"eyJ" + run + ".abcdefgh.ijklmnop",
+                             "eyJaaaaa." + run + ".ijklmnop",
+                             "eyJaaaaa.abcdefgh." + run}) {
+        EXPECT_TRUE(contains(scanner.scan("config.txt", bytes(line), {}), "jwt"));
+    }
 }
 
 } // namespace

@@ -164,30 +164,32 @@ auto private_key(std::string_view line) -> bool {
 }
 
 auto jwt(std::string_view line) -> bool {
-    auto start = line.find("eyJ");
-    while (start != std::string_view::npos) {
-        auto end = start;
-        auto valid = true;
-        for (auto part = 0; part != 3; ++part) {
-            const auto part_start = end;
-            while (end < line.size() && is_base64url(line[end])) {
-                ++end;
-            }
-            if (end - part_start < 8) {
-                valid = false;
-            }
-            if (part != 2) {
-                if (end >= line.size() || line[end] != '.') {
-                    valid = false;
-                    break;
-                }
-                ++end;
-            }
+    auto at = std::size_t{};
+    auto header_pending = false;
+    auto signature_pending = false;
+    while (at < line.size()) {
+        const auto start = at;
+        while (at < line.size() && is_base64url(line[at])) {
+            ++at;
         }
-        if (valid) {
+        const auto component = line.substr(start, at - start);
+        if (signature_pending && component.size() >= 8) {
             return true;
         }
-        start = line.find("eyJ", start + 1);
+        // Consume each run once. Every candidate in a run shares its following components;
+        // the earliest eyJ leaves the longest possible header suffix.
+        signature_pending = header_pending && component.size() >= 8;
+        const auto prefix = component.find("eyJ");
+        header_pending = component.size() >= 8 && prefix != std::string_view::npos &&
+                         prefix <= component.size() - 8;
+        if (at == line.size()) {
+            break;
+        }
+        if (line[at] != '.') {
+            header_pending = false;
+            signature_pending = false;
+        }
+        ++at;
     }
     return false;
 }

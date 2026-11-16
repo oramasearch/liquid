@@ -126,7 +126,8 @@ snapshots to daemon targets without advancing their drip cursors ([`locks.md`](l
 **Capture, scanning, and attestations.** Capture subscriptions, default-blocking secret scanning,
 the TAAP attestation profile registry with `scan_result/1`, `reproducibility/1`, structured
 `slsa_provenance/1`, signed `sbom/1`, signed `delta/1`, `image_provenance/1`, `release_policy/1`,
-and `release_approval/1`, and repository redaction are implemented
+and `release_approval/1`, and repository redaction are implemented. JWT detection uses linear work
+and constant auxiliary storage even with repeated invalid prefixes (liquid #440)
 ([`capture.md`](capture.md), [`secret-scanning.md`](secret-scanning.md),
 [`attestations.md`](attestations.md), [`release-approval.md`](release-approval.md)).
 
