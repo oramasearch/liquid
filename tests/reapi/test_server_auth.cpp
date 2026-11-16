@@ -5,6 +5,7 @@
 #if defined(LIQUID_CLI) && !defined(LIQUID_SHARED_TEST_BUILD)
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -92,6 +93,25 @@ public:
 private:
     pid_t pid_{-1};
 };
+
+// Writes this machine's identity document, as `liquid identity show --document` prints it, to
+// `path`: the scheduler trusts only the workers whose documents it is given (liquid#416).
+auto write_identity_document(const std::filesystem::path& path) -> bool {
+    const auto child = ::fork();
+    if (child == 0) {
+        const auto descriptor =
+            ::open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0600);
+        if (descriptor < 0 || ::dup2(descriptor, STDOUT_FILENO) < 0) {
+            std::_Exit(126);
+        }
+        ::execl(
+            LIQUID_CLI, LIQUID_CLI, "identity", "show", "--document", static_cast<char*>(nullptr));
+        std::_Exit(127);
+    }
+    auto status = 0;
+    return child > 0 && ::waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+           WEXITSTATUS(status) == 0;
+}
 
 auto client(const std::string& endpoint, std::map<std::string, std::string> headers)
     -> liquid::reapi::grpc_client {
@@ -210,8 +230,12 @@ TEST(ReapiServerAuthentication, SchedulerRequiresTheBearerTokenOnEveryRpc) {
     ASSERT_NE(port, 0);
     ASSERT_NE(control_port, 0);
     const auto endpoint = "127.0.0.1:" + std::to_string(port);
+    const auto worker_document = root / "worker.document";
+    ASSERT_TRUE(write_identity_document(worker_document));
     auto server = reapi_server_process{root,
                                        {"scheduler",
+                                        "--trust-worker",
+                                        worker_document.string(),
                                         "--listen",
                                         endpoint,
                                         "--control-listen",

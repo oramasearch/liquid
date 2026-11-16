@@ -72,13 +72,17 @@ auto source_range(std::uint64_t start, std::uint64_t end) -> liquid::frontend_so
 }
 
 // Signs `value` with this machine's identity, which becomes its issuer.
-auto sign_delegation(liquid::attestation value) -> liquid::result<liquid::attestation> {
+// Signs `value` as this machine's identity. `checked` false signs a body the encoder would refuse,
+// to forge one the verifier must refuse.
+auto sign_delegation(liquid::attestation value, bool checked = true)
+    -> liquid::result<liquid::attestation> {
     auto signer = liquid::runtime::block_on(liquid::identity_detail::local_signer());
     if (!signer) {
         return std::unexpected(signer.error());
     }
     value.issuer = signer->identity();
-    auto body = liquid::objects::encode_attestation_body(value);
+    auto body = checked ? liquid::objects::encode_attestation_body(value)
+                        : liquid::objects::encode_attestation_body_unchecked(value);
     if (!body) {
         return std::unexpected(body.error());
     }
@@ -549,15 +553,15 @@ TEST(Collaboration, published_and_discarded_sessions_stay_gone_after_a_crash) {
     const auto agent = current_actor();
     auto authority = delegation(*shared, agent, {"src/**"});
     ASSERT_TRUE(authority) << authority.error().message;
-    auto published_fork =
-        liquid::runtime::block_on(shared->fork_session({.actor = agent, .delegation = *authority}));
+    auto published_fork = liquid::runtime::block_on(
+        shared->fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
     ASSERT_TRUE(published_fork) << published_fork.error().message;
     auto published_session = std::move(*published_fork);
     const auto published_id = published_session.id();
     ASSERT_TRUE(liquid::runtime::block_on(
         published_session.write("src/value.cpp", bytes("int value = 2;\n"))));
-    auto discarded_fork =
-        liquid::runtime::block_on(shared->fork_session({.actor = agent, .delegation = *authority}));
+    auto discarded_fork = liquid::runtime::block_on(
+        shared->fork_session({.actor = agent, .delegation = *authority, .status = not_revoked()}));
     ASSERT_TRUE(discarded_fork) << discarded_fork.error().message;
     auto discarded_session = std::move(*discarded_fork);
     const auto discarded_id = discarded_session.id();
@@ -590,7 +594,8 @@ TEST(Collaboration, published_and_discarded_sessions_stay_gone_after_a_crash) {
     ASSERT_TRUE(landed) << landed.error().message;
     EXPECT_EQ(text(*landed), "int value = 2;\n");
     for (const auto& id : {published_id, discarded_id}) {
-        auto resurrected = liquid::runtime::block_on(reopened->open_session(id));
+        auto resurrected =
+            liquid::runtime::block_on(reopened->open_session(id, {.status = not_revoked()}));
         if (resurrected) {
             ADD_FAILURE() << "session " << liquid::to_string(id)
                           << " came back after its state was removed";
@@ -687,8 +692,8 @@ auto run_session_crash(const std::filesystem::path& root,
         if (!authority) {
             return "delegation failed: " + authority.error().message;
         }
-        auto forked = liquid::runtime::block_on(
-            shared->fork_session({.actor = agent, .delegation = *authority}));
+        auto forked = liquid::runtime::block_on(shared->fork_session(
+            {.actor = agent, .delegation = *authority, .status = not_revoked()}));
         if (!forked) {
             return "fork failed: " + forked.error().message;
         }
@@ -734,7 +739,8 @@ auto run_session_crash(const std::filesystem::path& root,
         !(ending == session_ending::publish && text(*value) == "int value = 2;\n")) {
         return where + ": the file holds neither the fork point's value nor the session's";
     }
-    auto back = liquid::runtime::block_on(reopened->open_session(forked_id));
+    auto back =
+        liquid::runtime::block_on(reopened->open_session(forked_id, {.status = not_revoked()}));
     if (back) {
         auto discarded = liquid::runtime::block_on(back->discard());
         if (!discarded) {
@@ -1152,8 +1158,8 @@ TEST(Collaboration, fork_session_refuses_expired_future_and_unbounded_delegation
     auto undated = *authority;
     std::erase_if(undated.attributes,
                   [](const auto& attribute) { return attribute.name == "not_after"; });
-    auto undated_signed = sign_delegation(std::move(undated));
-    ASSERT_TRUE(undated_signed);
+    auto undated_signed = sign_delegation(std::move(undated), false);
+    ASSERT_TRUE(undated_signed) << undated_signed.error().message;
     auto undated_fork = fork(*undated_signed);
     ASSERT_FALSE(undated_fork);
     EXPECT_EQ(undated_fork.error().code, liquid::errc::invalid_argument);
