@@ -5,18 +5,18 @@
 ## Synopsis
 
 ```text
-liquid daemon [--shutdown] | daemon --serve <checkout> [service options]
+liquid daemon [start | stop | --shutdown] | daemon --serve <checkout> [service options]
 ```
 
 ## Description
 
-Start, stop, or run the per-checkout process that owns capture and graph work.
+Start, stop, or run the per-checkout process that owns capture and graph work. `daemon` and `daemon start` start it when it is not running and print its status; `daemon stop` and `daemon --shutdown` stop it, and say `no daemon is running` when there is none.
 
 ## Options
 
 | Flag | Argument | Description | Default |
 |---|---|---|---|
-| `--shutdown` | — | Stop the checkout daemon. | false |
+| `--shutdown` | — | Stop the checkout daemon; the same as `daemon stop`. | false |
 | `--serve` | `<checkout>` | Run the internal daemon service for a checkout. | none |
 | `--idle-ms` | `<count>` | Exit the service after this idle interval. | configured value |
 | `--memory` | `<bytes>` | Set the resident graph-value byte ceiling. | configured value |
@@ -30,7 +30,8 @@ available on macOS and Linux
 ## Examples
 
 ```sh
-liquid daemon --shutdown
+liquid daemon start
+liquid daemon stop
 ```
 
 ## Exit status

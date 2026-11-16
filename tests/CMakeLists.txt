@@ -436,6 +436,11 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_CLI_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-scenario
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/scenario.cmake)
+  add_test(NAME cli-cut-daemon
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_CLI_ROOT=${CMAKE_CURRENT_BINARY_DIR}/cli-cut-daemon
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/cut-daemon.cmake)
   add_test(NAME cli-split
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
@@ -685,6 +690,7 @@ if(LIQUID_BUILD_CLI)
     PASS_REGULAR_EXPRESSION "\"verdict\":\"compatible_additions\"[^\n]*\"liquid_abi_added\"")
   set(LIQUID_CLI_TESTS
     cli-scenario
+    cli-cut-daemon
     cli-help-docs
     cli-reference-docs
     cli-verify-log-guide
