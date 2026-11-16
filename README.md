@@ -22,8 +22,8 @@ liquid project oci "$change" ...   # ship what you built, with signed provenance
 **Status:** the current release is **v0.2.0** (2026-10-17). Its
 [release notes](docs/releases/v0.2.0.md) say what changed since the first release, `v0.1.0`, whose
 [notes](docs/releases/v0.1.0.md) list everything liquid implements. liquid is a C++26 library,
-**libliquid**, and a `liquid` command-line binary, on macOS and Linux. The repository is
-private and no licence has been chosen yet.
+**libliquid**, and a `liquid` command-line binary, on macOS and Linux, released under the MIT
+licence.
 
 ## Contents
 
@@ -150,7 +150,8 @@ is a reason, and typing the Git name tells you what to use: `liquid commit` answ
 
 ## Build it and get a first result
 
-Use a recursive checkout with access to the private submodules. Install Clang 17 or newer
+Use a recursive checkout (`git clone --recursive`); `modules/oramacore-cpp` is not needed to
+build liquid. Install Clang 17 or newer
 (Homebrew LLVM on macOS), CMake 3.28 or newer, Ninja, OpenSSL and zlib. Linux also needs
 libfuse3. Configuration downloads pinned source dependencies. The details are in
 [local prerequisites](docs/build/local.md#prerequisites).
@@ -429,11 +430,7 @@ When liquid gains or loses a capability, update the
 
 ## Licence
 
-liquid is released under the MIT licence ([LICENSE](LICENSE)).
-Third-party notices are in [NOTICE](NOTICE).
-
-## License
-
-MIT, see [LICENSE](LICENSE). Third-party components and their licenses are in
-[THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES). Contributions are welcome under the
-[Contributor License Agreement](CLA.md); see [CONTRIBUTING.md](CONTRIBUTING.md).
+liquid is released under the MIT licence ([LICENSE](LICENSE)). Third-party components and their
+licences are in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES), with notices in [NOTICE](NOTICE).
+Contributions are welcome under the [Contributor License Agreement](CLA.md); see
+[CONTRIBUTING.md](CONTRIBUTING.md).
