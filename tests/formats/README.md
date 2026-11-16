@@ -8,3 +8,10 @@ messages with 0, 1, 31, 32, 33, 64 and 255 filters, in compact and chunked datas
 preserve the decoded bytes with zero, high-bit and all-bit masks; counts above 32 must return
 `errc::corrupt` before chunk decoding. Run with UBSan on `src/formats/hdf5/hdf5.cpp` to check the
 mask shifts (liquid #486).
+`test_registry.cpp` checks built-in codecs, malformed boundaries, nesting limits, and the byte
+budget. RPM cases use small raw-block zstd fixtures to check truncated cpio names, file bytes,
+and alignment padding, including trailer acceptance, alongside valid aligned members (liquid
+#439). `test_json.cpp` and `test_dotenv.cpp` cover structured configuration codecs.
+
+Build `liquid-format-tests` and run it through CTest with `--timeout 600`. The fixture inventory
+is in [`../fixtures/formats/README.md`](../fixtures/formats/README.md).

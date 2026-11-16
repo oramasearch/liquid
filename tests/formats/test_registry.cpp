@@ -1102,9 +1102,10 @@ struct rpm_string_entry {
 };
 
 // A minimal RPM: an empty signature header, a main header whose string entries point into `store`,
-// and a zstd payload of one raw block holding only the cpio trailer.
-auto rpm_package(std::span<const rpm_string_entry> entries, std::span<const std::byte> store)
-    -> std::vector<std::byte> {
+// and a zstd payload of one raw block (at most 255 bytes), defaulting to the cpio trailer.
+auto rpm_package(std::span<const rpm_string_entry> entries,
+                 std::span<const std::byte> store,
+                 std::span<const std::byte> payload = {}) -> std::vector<std::byte> {
     auto output = std::vector<std::byte>(96);
     output[0] = std::byte{0xed};
     output[1] = std::byte{0xab};
@@ -1133,14 +1134,19 @@ auto rpm_package(std::span<const rpm_string_entry> entries, std::span<const std:
     }
     append_text(trailer, "TRAILER!!!");
     trailer.resize(124);
-    for (const auto value : {0x28U, 0xb5U, 0x2fU, 0xfdU, 0x20U, 124U}) {
+    if (payload.empty()) {
+        payload = trailer;
+    }
+    EXPECT_LE(payload.size(), 255);
+    for (const auto value : {0x28U, 0xb5U, 0x2fU, 0xfdU, 0x20U}) {
         output.push_back(static_cast<std::byte>(value));
     }
-    const auto block = 1U | (124U << 3U);
+    output.push_back(static_cast<std::byte>(payload.size()));
+    const auto block = 1U | (static_cast<std::uint32_t>(payload.size()) << 3U);
     for (auto shift : {0U, 8U, 16U}) {
         output.push_back(static_cast<std::byte>((block >> shift) & 0xffU));
     }
-    output.insert(output.end(), trailer.begin(), trailer.end());
+    output.insert(output.end(), payload.begin(), payload.end());
     return output;
 }
 
@@ -1196,6 +1202,124 @@ TEST(FormatRegistry, ChargesRpmHeaderStringCopiesToTheByteBudget) {
         ignored.push_back({tag, 0});
     }
     EXPECT_TRUE(rpm->unpack(rpm_package(ignored, distinct_store), limits));
+}
+
+// A newc header and its NUL-terminated name, deliberately without padding or file bytes.
+auto cpio_member(std::string_view name, std::uint32_t size) -> std::vector<std::byte> {
+    auto output = std::vector<std::byte>{};
+    append_text(output, "070701");
+    auto fields = std::array<std::uint32_t, 13>{};
+    fields[1] = 0100644;
+    fields[6] = size;
+    fields[11] = static_cast<std::uint32_t>(name.size() + 1);
+    constexpr auto hex = std::string_view{"0123456789abcdef"};
+    for (const auto value : fields) {
+        for (auto digit = 8U; digit > 0; --digit) {
+            output.push_back(static_cast<std::byte>(hex[(value >> ((digit - 1) * 4U)) & 15U]));
+        }
+    }
+    append_text(output, name);
+    output.push_back(std::byte{});
+    return output;
+}
+
+TEST(FormatRegistry, RejectsRpmTruncatedSignaturePadding) {
+    const auto* rpm = codec("rpm");
+    ASSERT_NE(rpm, nullptr);
+    for (auto size = 1U; size < 8; ++size) {
+        for (auto available = 0U; available < 8 - size; ++available) {
+            SCOPED_TRACE("size=" + std::to_string(size) + " padding=" + std::to_string(available));
+            auto blob = rpm_package({}, {});
+            blob[111] = static_cast<std::byte>(size);
+            blob.resize(112 + size + available);
+            const auto refused = rpm->unpack(blob);
+            ASSERT_FALSE(refused);
+            EXPECT_EQ(refused.error().code, liquid::errc::corrupt);
+            EXPECT_EQ(refused.error().message, "truncated rpm signature padding (rpm)");
+        }
+    }
+}
+
+TEST(FormatRegistry, RejectsRpmCpioTruncatedNamePadding) {
+    const auto* rpm = codec("rpm");
+    ASSERT_NE(rpm, nullptr);
+    for (const auto name : {"TRAILER!!!", "", "xx", "xxx", "xxxx"}) {
+        for (const auto size : {0U, 1U, 0xffffffffU}) {
+            const auto member = cpio_member(name, size);
+            const auto padding = (4 - member.size() % 4) % 4;
+            for (auto available = std::size_t{}; available < padding; ++available) {
+                SCOPED_TRACE(std::string{name} + " size=" + std::to_string(size) +
+                             " padding=" + std::to_string(available));
+                auto payload = member;
+                payload.resize(payload.size() + available);
+                const auto refused = rpm->unpack(rpm_package({}, {}, payload));
+                ASSERT_FALSE(refused);
+                EXPECT_EQ(refused.error().code, liquid::errc::corrupt);
+                EXPECT_EQ(refused.error().message, "truncated cpio name padding (rpm)");
+            }
+        }
+    }
+}
+
+TEST(FormatRegistry, RejectsRpmCpioTruncatedFilePadding) {
+    const auto* rpm = codec("rpm");
+    ASSERT_NE(rpm, nullptr);
+    for (const auto name : {"x", "TRAILER!!!"}) {
+        for (const auto size : {1U, 2U, 3U}) {
+            auto member = cpio_member(name, size);
+            member.resize(member.size() + (4 - member.size() % 4) % 4);
+            member.resize(member.size() + size, std::byte{'x'});
+            const auto padding = (4 - member.size() % 4) % 4;
+            for (auto available = std::size_t{}; available < padding; ++available) {
+                SCOPED_TRACE(std::string{name} + " size=" + std::to_string(size) +
+                             " padding=" + std::to_string(available));
+                auto payload = member;
+                payload.resize(payload.size() + available);
+                const auto refused = rpm->unpack(rpm_package({}, {}, payload));
+                ASSERT_FALSE(refused);
+                EXPECT_EQ(refused.error().code, liquid::errc::corrupt);
+                EXPECT_EQ(refused.error().message, "truncated cpio file padding (rpm)");
+            }
+        }
+    }
+}
+
+TEST(FormatRegistry, RejectsRpmCpioTruncatedFileBytes) {
+    const auto* rpm = codec("rpm");
+    ASSERT_NE(rpm, nullptr);
+    for (const auto size : {1U, 2U, 3U, 4U, 0xffffffffU}) {
+        for (auto available = 0U; available < std::min(size, 4U); ++available) {
+            SCOPED_TRACE("size=" + std::to_string(size) + " bytes=" + std::to_string(available));
+            auto payload = cpio_member("x", size);
+            payload.resize(payload.size() + available);
+            const auto refused = rpm->unpack(rpm_package({}, {}, payload));
+            ASSERT_FALSE(refused);
+            EXPECT_EQ(refused.error().code, liquid::errc::corrupt);
+            EXPECT_EQ(refused.error().message, "truncated cpio file (rpm)");
+        }
+    }
+}
+
+TEST(FormatRegistry, ReadsRpmCpioAlignedMembersAndTrailer) {
+    const auto* rpm = codec("rpm");
+    ASSERT_NE(rpm, nullptr);
+    for (const auto name : {"x", "xx", "xxx", "xxxx"}) {
+        for (const auto size : {0U, 1U, 2U, 3U, 4U}) {
+            SCOPED_TRACE(std::string{name} + " size=" + std::to_string(size));
+            auto payload = cpio_member(name, size);
+            payload.resize(payload.size() + (4 - payload.size() % 4) % 4);
+            payload.resize(payload.size() + size, std::byte{'x'});
+            payload.resize(payload.size() + (4 - payload.size() % 4) % 4);
+            auto trailer = cpio_member("TRAILER!!!", 0);
+            payload.insert(payload.end(), trailer.begin(), trailer.end());
+            payload.resize(payload.size() + (4 - payload.size() % 4) % 4);
+            const auto tree = rpm->unpack(rpm_package({}, {}, payload));
+            ASSERT_TRUE(tree) << tree.error().message;
+            const auto path = std::string{"data/"} + name;
+            ASSERT_NE(entry(*tree, path), nullptr);
+            EXPECT_EQ(entry_text(*tree, path), std::string(size, 'x'));
+        }
+    }
 }
 
 } // namespace
