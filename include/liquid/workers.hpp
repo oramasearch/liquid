@@ -12,6 +12,7 @@
 #include "liquid/build.hpp"
 #include "liquid/export.hpp"
 #include "liquid/identity.hpp"
+#include "liquid/listener.hpp"
 #include "liquid/reapi.hpp"
 #include "liquid/remote.hpp"
 #include "liquid/runtime.hpp"
@@ -29,6 +30,10 @@ struct LIQUID_EXPORT scheduler_options {
     // start. The scheduler signs every lease with its own identity, the one in LIQUID_HOME.
     std::vector<identity_document> trusted_workers;
     reapi_upload_limits uploads;
+    // TLS and client authentication for `listen`, with the rules of `serve_reapi` (liquid#520): a
+    // non-loopback address is refused unless this has TLS and a bearer token or a client
+    // certificate authority, and a configured bearer token is required on every RPC.
+    listener_security security;
 };
 
 struct LIQUID_EXPORT worker_options {

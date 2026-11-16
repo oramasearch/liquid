@@ -8,6 +8,7 @@
 #include "liquid/listener.hpp"
 #include "liquid/reapi.hpp"
 #include "liquid/runtime.hpp"
+#include "liquid/workers.hpp"
 #include "temporary_directory.hpp"
 
 namespace {
@@ -176,4 +177,28 @@ TEST(ListenerSecurity, ReapiServerRefusesAPlaintextNonLoopbackListener) {
     served = liquid::runtime::block_on(liquid::serve_reapi(options));
     ASSERT_FALSE(served);
     EXPECT_EQ(served.error().code, liquid::errc::invalid_argument);
+}
+
+// liquid#520: the scheduler serves the same REAPI services and refuses the same listeners, before
+// its control server or store is opened.
+TEST(ListenerSecurity, SchedulerRefusesAPlaintextNonLoopbackListener) {
+    auto options = liquid::scheduler_options{.store_directory = "unused-store",
+                                             .listen = "0.0.0.0:50051",
+                                             .control_listen = "127.0.0.1:0"};
+    auto served = liquid::runtime::block_on(liquid::serve_scheduler(options));
+    ASSERT_FALSE(served);
+    EXPECT_EQ(served.error().code, liquid::errc::invalid_argument);
+
+    options.listen = "[::]:50051";
+    options.security.bearer_token = token;
+    served = liquid::runtime::block_on(liquid::serve_scheduler(options));
+    ASSERT_FALSE(served);
+    EXPECT_EQ(served.error().code, liquid::errc::invalid_argument);
+
+    options.listen = "10.0.0.1:50051";
+    options.security = with_tls();
+    served = liquid::runtime::block_on(liquid::serve_scheduler(options));
+    ASSERT_FALSE(served);
+    EXPECT_EQ(served.error().code, liquid::errc::invalid_argument);
+    EXPECT_FALSE(std::filesystem::exists("unused-store"));
 }

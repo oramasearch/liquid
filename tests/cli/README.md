@@ -28,6 +28,11 @@ threshold the log cannot meet, rejects missing, tampered, and unavailable proofs
 omitting `--log` retains local-only verification (liquid #389).
 The target compiles the private attestation encoder and its canonical CBOR dependency directly so
 the same fixture works with hidden symbols in shared-library builds.
+`session.cmake` issues a delegation with `session_fixture.cpp` and checks that
+`liquid session start <delegation> --as <agent>` refuses a missing `--as` and any agent other than
+the delegation's subject, then that the agent's published line is attributed to it with
+`agent=true` (liquid #515). Like `verify_log.cpp`, the fixture compiles the private attestation
+encoder directly.
 `verify-log-guide.cmake` reads the transparency guide's all-actions invocation and requires the
 built command to accept it past argument parsing.
 
@@ -58,10 +63,10 @@ that `current` exposes the first tree again.
 same document twice to pin idempotence.
 `locks.cmake` lowers a repository lock rule during initialization, then acquires with an explicit
 reason and releases through the checkout daemon.
-`serve-listen.cmake` requires `serve reapi` and `serve sync` to refuse, before anything binds, a
+`serve-listen.cmake` requires `serve reapi`, `serve sync` and `scheduler` to refuse, before anything binds, a
 plaintext listener on a non-loopback IPv4 or IPv6 address, a token without TLS, TLS without
 authentication, and a group-readable token file; it also refuses a REAPI certificate without its key
-and a zero sync upload quota (liquid#415, liquid#403).
+and a zero sync upload quota (liquid#415, liquid#403, liquid#520).
 The help/documentation comparison also pins the `scheduler` and `worker` command names.
 The scenario also pins `remote_bytes` in the status JSON contract.
 `conflict.cmake` creates a CRDT-suspicious conflict through a public-API fixture, verifies the

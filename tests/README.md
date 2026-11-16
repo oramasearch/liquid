@@ -230,7 +230,15 @@ actors and multi-round sync.
 transient presence, epoch resynchronization, and line attribution across human and agent changes
 and a path move. Its delegation cases prove the holding must-nevers of
 `docs/security/delegation-threat-model.md`: altered, unsigned, empty and foreign delegations are
-refused, sessions without a capability cannot publish or lease, leases and moves stay inside the
+refused, a missing, unanswered, revoked or stale status and an expired, future-dated or unbounded
+delegation are refused at fork and stop a running session's lease and publish (liquid #514), a
+delegation is refused for another agent, a dispatcher that is not its issuer and another
+repository, and the agent it names is the one history records (liquid #515), a chain is refused when a link
+broadens, does not reduce depth, is not linked or is revoked, or has no principal root, and a valid
+chain's publish names its last agent (liquid #517), a reopened session is refused when its stored
+delegation was widened, unsigned, replaced or issued by another principal, when it has no status or
+is revoked, and a revocation after reopening stops its publish (liquid #516),
+sessions without a capability cannot publish or lease, leases and moves stay inside the
 scopes, finished sessions cannot be reused, and one session cannot release another's lease. `test_daemon.cpp` checks that the same attribution crosses the local wire, while
 `test_plugin_abi.c` is a real C plugin descriptor whose presence, lease, and attribution callbacks
 are driven by `test_plugin_abi.cpp`. `attribution_measure.cpp` records the 10,000-line query cost.
@@ -352,10 +360,12 @@ The privileged Linux build suite also proves eligible actions reject and name a 
 unknown-field retention, hash selection, and liquid record conversion. The codec stays private to
 libliquid, so this target compiles its private sources directly for static and shared builds.
 `reapi/test_server_auth.cpp` runs the real `serve reapi` with a bearer token and proves that
-unauthenticated or wrongly authenticated writes and reads are refused and store nothing (#415).
+unauthenticated or wrongly authenticated writes and reads are refused and store nothing (#415), and
+does the same for the real `scheduler` (#520).
 `test_listener.cpp` covers the shared listener rules: loopback detection, the refusal of a
 non-loopback listener without TLS and authentication, token strength, owner-only token files,
-constant-time bearer comparison, and `serve_reapi` refusing a plaintext public address.
+constant-time bearer comparison, and `serve_reapi` and `serve_scheduler` refusing a plaintext
+public address (#520).
 `cli/serve-listen.cmake` (`cli-serve-listen`) requires the built CLI to refuse those listeners
 before binding.
 

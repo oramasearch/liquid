@@ -123,12 +123,15 @@ An ActionCache entry is written only after the scheduler accepts the completion.
 ```sh
 liquid scheduler --listen 0.0.0.0:50051 \
   --trust-worker /etc/liquid/workers \
+  --tls-cert /etc/liquid/scheduler.pem --tls-key /etc/liquid/scheduler-key.pem \
+  --token-file /etc/liquid/scheduler.token \
   --control-listen 0.0.0.0:8080 \
   --store /var/lib/liquid-scheduler \
   --instance builds
 
 liquid worker --scheduler scheduler.example:50051 \
   --trust-scheduler /etc/liquid/scheduler \
+  --scheduler-ca /etc/liquid/ca.pem --token-file /etc/liquid/scheduler.token \
   --control-listen 0.0.0.0:8081 \
   --root /var/lib/liquid-worker \
   --instance builds \
@@ -143,8 +146,18 @@ accepts `LIQUID_SCHEDULER`, `LIQUID_TRUSTED_SCHEDULER`, `LIQUID_CONTROL_LISTEN`,
 `LIQUID_INSTANCE`, `LIQUID_WORKER_ROOT`, `LIQUID_WORKER_SIZE_CLASS`, and `LIQUID_WORKER_POLL_MS`.
 Both use `LIQUID_HOME` for their own identity. Flags override environment values;
 `--trust-worker` adds to `LIQUID_TRUSTED_WORKERS`. Both
-commands use only the local filesystem and the named network endpoints; credentials and TLS use
-the existing `remote_config` fields.
+commands use only the local filesystem and the named network endpoints.
+
+The scheduler's REAPI listener follows the rules of `liquid serve reapi` (liquid #520, from
+#415): it binds `127.0.0.1:50051` by default, and `serve_scheduler` refuses any other address unless
+`scheduler_options::security` (`--tls-cert`, `--tls-key`, and `--token-file` or `--client-ca`) gives
+it TLS and client authentication. A configured token is required on every RPC, the lease queue
+included, and is read from an owner-only file, never argv or the environment. A worker connects to
+a secured scheduler with `--scheduler-tls` (system roots) or `--scheduler-ca`, `--client-cert` and
+`--client-key` for mutual TLS, and `--token-file`, which set the `remote_config` `tls` and
+`authorization` header. The two layers are complementary: the listener decides who may connect at
+all, and the pinned identities above still sign every lease and result on the protocol, so a peer
+that holds the token but not a trusted identity can neither take a lease nor report a result.
 
 `remote_config::backend` selects `reapi` or `liquid_scheduler`. `--remote` retains the stock REAPI
 path. `--scheduler` selects the liquid path and persists that choice with the repository's remote

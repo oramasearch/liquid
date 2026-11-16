@@ -663,7 +663,8 @@ public:
     [[nodiscard]] runtime::task<undo_report> undo_session(session_id session,
                                                           undo_options options = {});
     [[nodiscard]] runtime::task<session> fork_session(session_options options);
-    [[nodiscard]] runtime::task<session> open_session(session_id id);
+    [[nodiscard]] runtime::task<session> open_session(session_id id,
+                                                      session_open_options options = {});
     [[nodiscard]] runtime::task<void> lock(std::string path,
                                            std::string reason = "exclusive checkout");
     [[nodiscard]] runtime::task<void> unlock(std::string path);

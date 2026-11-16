@@ -684,6 +684,24 @@ if(LIQUID_BUILD_CLI)
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
       -DLIQUID_UNVERIFIED_ROOT=${CMAKE_CURRENT_BINARY_DIR}/unverified-author-cli
       -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/unverified-author.cmake)
+  # Compiles the private attestation encoder directly, as liquid-verify-log-cli does, so the
+  # fixture links against hidden symbols in shared-library builds.
+  add_executable(liquid-session-cli-fixture
+    cli/session_fixture.cpp
+    ${PROJECT_SOURCE_DIR}/src/encoding/cbor.cpp
+    ${PROJECT_SOURCE_DIR}/src/objects/records.cpp)
+  target_include_directories(liquid-session-cli-fixture PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/modules/automerge-cpp/upstream/json/include
+    ${monocypher_source_SOURCE_DIR}/src
+    ${monocypher_source_SOURCE_DIR}/src/optional)
+  target_link_libraries(liquid-session-cli-fixture PRIVATE liquid::liquid liquid_monocypher)
+  add_test(NAME cli-session
+    COMMAND ${CMAKE_COMMAND}
+      -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>
+      -DLIQUID_SESSION_FIXTURE=$<TARGET_FILE:liquid-session-cli-fixture>
+      -DLIQUID_SESSION_ROOT=${CMAKE_CURRENT_BINARY_DIR}/session-cli
+      -P ${CMAKE_CURRENT_SOURCE_DIR}/cli/session.cmake)
   add_test(NAME cli-secret
     COMMAND ${CMAKE_COMMAND}
       -DLIQUID_CLI=$<TARGET_FILE:liquid-cli>

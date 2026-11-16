@@ -44,6 +44,13 @@ whole-repository copy or verify between two open shared stores (liquid #328).
 values.
 `session.hpp` defines private speculative repository replicas, scoped delegation, semantic lease
 claims, exclusive checkout rules and records, transient presence, and epoch compaction reports.
+`session_options::status` and `session_open_options::status` carry the required
+`delegation_status_resolver` (`attestation.hpp`), asked at fork and before every lease and publish
+(liquid #514); `attestation.hpp` also defines `check_delegation_window`,
+`local_delegation_status`, and `delegation_subject`, the subject that binds a delegation to its
+agent (liquid #515). `session_options::chain` carries the delegations above a session's own, root
+first, each validated against the one before it (liquid #517). `repository::open_session(id,
+options)` verifies the stored authority again as at fork (liquid #516).
 `repository.hpp` exposes lock acquisition, holder-only release, configuration, enumeration, and
 the optional connected authorization callback. `daemon.hpp` exposes lock requests and complete
 lock-set delivery to local targets.
@@ -56,7 +63,8 @@ and complete target-byte verification gate used by registry and drive clients.
 `listener.hpp` defines `listener_security`, the TLS, mutual-TLS and bearer-token configuration of
 the REAPI and sync listeners, and the checks they share: only a loopback listener may run without
 TLS and client authentication, tokens come from owner-only files, and bearer comparison is
-constant-time. `reapi.hpp` carries it in `reapi_serve_options::security`; the `liquid serve sync`
+constant-time. `reapi.hpp` carries it in `reapi_serve_options::security`, and `workers.hpp` in
+`scheduler_options::security` with the same rules (liquid #520); the `liquid serve sync`
 adapter applies the same rules. `sync_server_options` bounds the upload quarantine with
 `upload_quota_bytes` and `upload_ttl` and places it under `staging_directory`.
 

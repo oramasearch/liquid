@@ -367,7 +367,7 @@ and refuses a message over 5 MiB with `RESOURCE_EXHAUSTED` (#451). Both REAPI li
 retained ByteStream uploads by size, total allocated capacity, count and idle expiry and active
 Write deadlines; failed Writes release their buffers (liquid #444). It binds loopback by default
 and refuses any other address unless it has TLS and a bearer token or a client CA; a configured
-token is required, compared in constant time, on every RPC (#415). Liquid's
+token is required, compared in constant time, on every RPC (#415). `liquid scheduler` applies the same listener rules (#520). Liquid's
 action-digest scheduler and TAAP-signed worker fleet are implemented, including one bounded requeue
 after worker loss, size-class placement from #18's recorded decision, REAPI Execution and
 ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces
@@ -644,16 +644,16 @@ Git objects and protobuf. Their first runs found five defects, fixed in the same
   identity until `LIQUID_IDENTITY_KEY_CUSTODY` is set (#402); `file` is the explicit opt-in for
   file-permission-only protection. Linux has no Secret Service custody (no D-Bus client), and the
   macOS Keychain custody has no automated test.
-- Delegated sessions do not check revocation or expiry (#514), do not bind a delegation to its
-  agent, dispatcher or repository (#515), trust stored session authority on reopen (#516), and
-  accept sub-delegations that broaden scopes (#517); see
+- Delegated sessions answer revocation only from the caller's resolver; the CLI's is the local
+  list `$LIQUID_HOME/trust/delegation-revocations`, until Lake serves delegation status. An
+  intermediate link of a delegation chain verifies only when its issuer's identity chain is in this
+  machine's identity store. See
   [`../security/delegation-threat-model.md`](../security/delegation-threat-model.md).
 - `liquid push` and `liquid pull` cannot present a TLS client certificate, so they reach a
   `serve sync --client-ca` listener only through another client; `--token-file` works with them.
   Sync flow budgets are per author, so replaying an author's genuinely signed records still spends
   that author's budget (#403).
-- `liquid scheduler` serves the REAPI listener without the #415 TLS and token options. A REAPI
-  client CA file must hold a single certificate: the vendored Corosio TLS context loads only the
+- A REAPI client CA file must hold a single certificate: the vendored Corosio TLS context loads only the
   first certificate of a CA file.
 - The executable-aware delta algorithm id is reserved and unused.
 - The data-branch reflink fast path requires local cluster control metadata.

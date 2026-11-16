@@ -144,7 +144,7 @@ docker run -d --name "$scheduler" --network host \
   -v "$runtime/trust:/etc/liquid:ro" \
   -v "$runtime/scheduler:/var/lib/liquid-scheduler" \
   "$scheduler_image" \
-  --listen 0.0.0.0:50051 \
+  --listen 127.0.0.1:50051 \
   --trust-worker /etc/liquid/workers \
   --control-listen 0.0.0.0:8080 \
   --store /var/lib/liquid-scheduler \

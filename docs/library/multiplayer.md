@@ -94,16 +94,26 @@ These local measurements are context rather than a cross-host benchmark.
 Delegated sessions are their own trust boundary. The threat model in
 [`../security/delegation-threat-model.md`](../security/delegation-threat-model.md) (liquid #418)
 lists every must-never for delegation acceptance, session authority, and session join and leave,
-where each is enforced, and the test that proves it. What holds: only a complete `delegation/1`
-signed by this repository's own principal starts a session, and publish and lease are refused
-outside the delegation's scopes and capabilities, at both ends of a move. What does not hold yet:
-revocation and expiry are not checked
-([#514](https://github.com/oramasearch/liquid/issues/514)), a delegation is not bound to the agent,
-dispatcher or repository using it ([#515](https://github.com/oramasearch/liquid/issues/515)),
-`open_session` trusts stored session authority without verifying it again
-([#516](https://github.com/oramasearch/liquid/issues/516)), and sub-delegation containment
-over-approximates scopes and does not link the chain
-([#517](https://github.com/oramasearch/liquid/issues/517)).
+where each is enforced, and the test that proves it. Every must-never holds:
+
+- Only a complete `delegation/1` signed by this repository's own principal starts a session, and
+  publish and lease are refused outside the delegation's scopes and capabilities, at both ends of a
+  move.
+- A delegation has a bounded validity window (`not_after`, at most 30 days), and its revocation
+  status is asked through the caller's `delegation_status_resolver` when the session is forked and
+  before every lease and publish, so a revoked or expired delegation neither starts nor continues a
+  session ([#514](https://github.com/oramasearch/liquid/issues/514)). The CLI uses this machine's
+  revocation list, `$LIQUID_HOME/trust/delegation-revocations`.
+- A delegation is bound to the agent it names, its dispatcher must be its issuer, and it names the
+  one repository it may be used in, so `drip.by` and `liquid blame` name the delegated agent
+  ([#515](https://github.com/oramasearch/liquid/issues/515)). `liquid session start <delegation>
+  --as <agent>` starts a session as that agent.
+- `open_session` verifies stored session authority again exactly as `fork_session` does, with a
+  required `session_open_options::status`, and refuses a stored delegation that differs from the
+  one the session was forked with ([#516](https://github.com/oramasearch/liquid/issues/516)).
+- Sub-delegation containment is conservative, and every link of a chain
+  (`session_options::chain`) is linked, validated and verified when a session acts
+  ([#517](https://github.com/oramasearch/liquid/issues/517)).
 
 ## How to verify
 

@@ -17,6 +17,7 @@
 #include "cli/reapi_options.hpp"
 #include "liquid/error.hpp"
 #include "liquid/identity.hpp"
+#include "liquid/listener.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/workers.hpp"
 
@@ -151,6 +152,17 @@ auto identity_documents(const std::filesystem::path& path)
     return output;
 }
 
+// The host of a `host:port` listen address: `[v6]:port`, `v4:port`, or the whole value, read the
+// way `serve reapi` reads it.
+auto listen_host(std::string_view listen) -> std::string_view {
+    if (listen.starts_with('[')) {
+        const auto close = listen.find(']');
+        return close == std::string_view::npos ? listen : listen.substr(0, close + 1);
+    }
+    const auto colon = listen.rfind(':');
+    return colon == std::string_view::npos ? listen : listen.substr(0, colon);
+}
+
 auto run_service(liquid::runtime::task<void> service) -> liquid::result<void> {
     auto mutex = std::mutex{};
     auto condition = std::condition_variable{};
@@ -218,14 +230,35 @@ auto scheduler(int argc, char** argv) -> int {
             options.lease_duration = *value;
         } else if (argument == "--trust-worker" && ++index < argc) {
             trusted_workers.emplace_back(argv[index]);
+        } else if (argument == "--tls-cert" && ++index < argc) {
+            options.security.tls_certificate = std::filesystem::path{argv[index]};
+        } else if (argument == "--tls-key" && ++index < argc) {
+            options.security.tls_key = std::filesystem::path{argv[index]};
+        } else if (argument == "--client-ca" && ++index < argc) {
+            options.security.client_certificate_authority = std::filesystem::path{argv[index]};
+        } else if (argument == "--token-file" && ++index < argc) {
+            // The token is read from an owner-only file, never from argv or the environment.
+            auto token = liquid::read_token_file(std::filesystem::path{argv[index]});
+            if (!token) {
+                return fail(token.error());
+            }
+            options.security.bearer_token = std::move(*token);
         } else {
             return usage("scheduler --listen <address> --trust-worker <path> "
                          "[--control-listen <address>] [--store <path>] [--instance <name>] "
-                         "[--lease-ms <count>]");
+                         "[--lease-ms <count>] [--tls-cert <path> --tls-key <path>] "
+                         "[--token-file <path>] [--client-ca <path>]");
         }
     }
     if (options.listen.empty()) {
         return usage("scheduler --listen requires an address");
+    }
+    // Refused before anything starts; `serve_scheduler` checks the parsed address again
+    // (liquid#520).
+    const auto secured = liquid::validate_listener_security(
+        liquid::is_loopback_address(listen_host(options.listen)), options.security);
+    if (!secured) {
+        return fail(secured.error());
     }
     if (trusted_workers.empty()) {
         return usage("scheduler --trust-worker requires at least one worker identity document");
@@ -293,9 +326,29 @@ auto worker(int argc, char** argv) -> int {
             options.poll_interval = *parsed;
         } else if (argument == "--trust-scheduler" && ++index < argc) {
             trusted_scheduler = argv[index];
+        } else if (argument == "--scheduler-tls") {
+            options.scheduler.tls.enabled = true;
+        } else if (argument == "--scheduler-ca" && ++index < argc) {
+            options.scheduler.tls.enabled = true;
+            options.scheduler.tls.certificate_authority = std::filesystem::path{argv[index]};
+        } else if (argument == "--client-cert" && ++index < argc) {
+            options.scheduler.tls.enabled = true;
+            options.scheduler.tls.client_certificate = std::filesystem::path{argv[index]};
+        } else if (argument == "--client-key" && ++index < argc) {
+            options.scheduler.tls.enabled = true;
+            options.scheduler.tls.client_key = std::filesystem::path{argv[index]};
+        } else if (argument == "--token-file" && ++index < argc) {
+            // A secured scheduler requires this token on every RPC (liquid#520).
+            auto token = liquid::read_token_file(std::filesystem::path{argv[index]});
+            if (!token) {
+                return fail(token.error());
+            }
+            options.scheduler.headers.insert_or_assign("authorization", "Bearer " + *token);
         } else {
             return usage("worker --scheduler <address> --trust-scheduler <path> [--root <path>] "
-                         "[--size-class <tiny|short|medium|long>] [--poll-ms <count>]");
+                         "[--size-class <tiny|short|medium|long>] [--poll-ms <count>] "
+                         "[--scheduler-tls] [--scheduler-ca <path>] [--client-cert <path> "
+                         "--client-key <path>] [--token-file <path>]");
         }
     }
     if (options.scheduler.endpoint.empty()) {
