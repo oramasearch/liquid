@@ -63,6 +63,7 @@ add_executable(liquid-tests
   sim/write_once_backend.cpp
   store/test_owner.cpp
   store/test_writers.cpp
+  store/test_repository_leases.cpp
   store/test_transfer.cpp
   test_tiers.cpp
   test_temporary_directory.cpp

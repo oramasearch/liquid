@@ -93,7 +93,10 @@ writes nothing, and an index whose manifest names a missing run is rebuilt from 
 recorded in `recoveries.log`, which `liquid status` prints (liquid #526,
 [`store.md`](store.md#several-writers-without-an-owner)). Repository documents are still replaced
 whole by each process, so two processes saving one repository at once can drop each other's drips
-from the published document. A shared-store repository's own state
+from the published document. A repository handle's own leases name their holder process, are
+released when the handle ends, and are collected by the next open when their process has ended,
+so a checkout keeps only its live handles' leases; `liquid status` prints the count (liquid #527,
+[`gc.md`](gc.md)). A shared-store repository's own state
 (`LIQUID_REPO`, `LIQUID_JOURNAL`, session state, and replication cursors) is backend keys under
 `repositories/<id-hash>/`, so a backend with no local root holds the whole repository; create is
 exclusive through `store_backend::put_if_absent` (liquid #326,

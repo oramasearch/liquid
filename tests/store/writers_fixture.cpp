@@ -9,6 +9,9 @@
 //       Object bytes are owner_fixture_bytes(seed, index).
 //   liquid-store-writers-fixture collect <root> <stop-file>
 //       Opens the store, runs a full collection and closes it, until <stop-file> exists.
+//   liquid-store-writers-fixture killed <checkout>
+//       Opens the repository at <checkout>, writes one file, prints its pid and kills itself with
+//       SIGKILL, leaving the leases a crashed handle leaves (liquid #527).
 //   liquid-store-writers-fixture repository <checkout> <ack> <stop-file>
 //       A library client: opens the repository at <checkout>, writes library/<n>.txt, appends
 //       "<n> <digest>" to <ack> and closes it, until <stop-file> exists.
@@ -27,6 +30,7 @@
 #include <thread>
 #include <vector>
 
+#include <csignal>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -221,6 +225,27 @@ int write_repository(int argc, char** argv) {
     return 0;
 }
 
+int killed(int argc, char** argv) {
+    if (argc != 3) {
+        std::fputs("usage: killed <checkout>\n", stderr);
+        return 2;
+    }
+    auto opened = liquid::runtime::block_on(liquid::repository::open(argv[2]));
+    if (!opened)
+        return failed("open", opened.error());
+    const auto text = std::string{"written before the crash\n"};
+    auto written = liquid::runtime::block_on(opened->write(
+        "crashed.txt",
+        std::vector<std::byte>(reinterpret_cast<const std::byte*>(text.data()),
+                               reinterpret_cast<const std::byte*>(text.data()) + text.size())));
+    if (!written)
+        return failed("write", written.error());
+    std::printf("%ld\n", static_cast<long>(::getpid()));
+    std::fflush(stdout);
+    ::kill(::getpid(), SIGKILL);
+    return 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -231,6 +256,9 @@ int main(int argc, char** argv) {
         return collect(argc, argv);
     if (mode == "repository")
         return write_repository(argc, argv);
-    std::fputs("usage: liquid-store-writers-fixture <store|collect|repository> ...\n", stderr);
+    if (mode == "killed")
+        return killed(argc, argv);
+    std::fputs("usage: liquid-store-writers-fixture <store|collect|repository|killed> ...\n",
+               stderr);
     return 2;
 }

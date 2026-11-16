@@ -55,6 +55,7 @@
 #include "repository/transfer.hpp"
 #include "search/repository_access.hpp"
 #include "store/backend.hpp"
+#include "store/holder.hpp"
 #include "store/leases.hpp"
 #include "store/pack.hpp"
 #include "store/references.hpp"
@@ -4670,6 +4671,21 @@ struct repository::impl {
           hash_algorithm(algorithm_value), session(session_value), signing_key(std::move(key)),
           keys(std::move(encryption_keys)),
           flow_limits(flow_detail::shared_controller(root_path.generic_string(), current.flow)) {}
+    // A handle's leases protect what it is using; when the handle ends they are released, so a
+    // checkout opened and closed a thousand times does not keep a thousand sets (liquid #527).
+    ~impl() {
+        const auto release = [](std::optional<retained_lease>& retained) {
+            if (retained)
+                repository_detail::store_access::release_now(retained->value);
+        };
+        release(working_tree_lease);
+        release(checkpoint_lease);
+        release(cache_root_lease);
+        for (auto& [ignored, retained] : directory_leases)
+            repository_detail::store_access::release_now(retained.value);
+    }
+    impl(const impl&) = delete;
+    impl& operator=(const impl&) = delete;
     auto lease_owner(std::string_view kind) const -> std::string {
         constexpr auto digits = std::string_view{"0123456789abcdef"};
         auto output = std::string{"repository:"};
@@ -4682,6 +4698,51 @@ struct repository::impl {
         output.push_back('\n');
         output.append(kind);
         return output;
+    }
+    // The owner of a lease this handle holds for itself: its kind and this process as holder, so
+    // a later open can tell a lease whose process ended (liquid #527).
+    auto held_owner(std::string_view kind) const -> std::string {
+        return lease_owner(kind) + "\n" + store_detail::process_holder();
+    }
+    // Releases this repository's leases whose holder process has ended on this host. They are what
+    // a killed or crashed handle left; the published state is leased again by the open that calls
+    // this, which has already checkpointed.
+    runtime::task<std::uint64_t> collect_ended_holders() {
+        auto store_root = repository_detail::store_access::root_path(objects);
+        if (!store_root) {
+            co_return std::unexpected(store_root.error());
+        }
+        auto store_configuration = repository_detail::store_access::configuration(objects);
+        if (!store_configuration) {
+            co_return std::unexpected(store_configuration.error());
+        }
+        const auto backend = store_configuration->backend;
+        if (!backend) {
+            co_return std::unexpected(failure(
+                errc::not_configured, "store backend is unavailable", store_root->string()));
+        }
+        auto existing = co_await store_detail::load_leases(backend, *store_root / "leases");
+        if (!existing) {
+            co_return std::unexpected(existing.error());
+        }
+        const auto scope = lease_owner("");
+        auto collected = std::uint64_t{};
+        for (const auto& record : *existing) {
+            if (!record.owner.starts_with(scope) ||
+                store_detail::lease_holder_state(record.owner) !=
+                    store_detail::holder_state::dead) {
+                continue;
+            }
+            auto state = std::make_shared<store_detail::lease_state>();
+            state->backend = backend;
+            state->record = record;
+            auto released = co_await store_detail::release_lease(std::move(state));
+            if (!released) {
+                co_return std::unexpected(released.error());
+            }
+            ++collected;
+        }
+        co_return collected;
     }
     runtime::task<void> restore_paged_tree(working_entry& destination, std::string path = {}) {
         auto bytes = co_await objects.get(destination.object);
@@ -4960,7 +5021,7 @@ struct repository::impl {
             co_return co_await retained->value.renew(lease_ttl);
         }
         auto replacement = co_await repository_detail::store_access::lease_root(
-            objects, id, lease_ttl, lease_owner("checkpoint"));
+            objects, id, lease_ttl, held_owner("checkpoint"));
         if (!replacement) {
             co_return std::unexpected(replacement.error());
         }
@@ -5033,7 +5094,7 @@ struct repository::impl {
             co_return co_await existing->second.value.renew(lease_ttl);
         }
         auto replacement = co_await repository_detail::store_access::lease_root(
-            objects, id, lease_ttl, lease_owner("directory"));
+            objects, id, lease_ttl, held_owner("directory"));
         if (!replacement) {
             co_return std::unexpected(replacement.error());
         }
@@ -6496,7 +6557,31 @@ runtime::task<repository> repository::open(std::filesystem::path path, repositor
     auto checkpointed = co_await output.impl_->checkpoint();
     if (!checkpointed)
         co_return std::unexpected(checkpointed.error());
+    // After the checkpoint, which leased the published state for this handle, so the leases of
+    // ended handles are no longer what retains it (liquid #527).
+    auto collected = co_await output.impl_->collect_ended_holders();
+    if (!collected)
+        co_return std::unexpected(collected.error());
     co_return output;
+}
+
+runtime::task<std::uint64_t> repository::lease_count() {
+    if (!impl_)
+        co_return std::unexpected(failure(errc::invalid_argument, "repository is empty"));
+    auto store_root = repository_detail::store_access::root_path(impl_->objects);
+    if (!store_root)
+        co_return std::unexpected(store_root.error());
+    auto store_configuration = repository_detail::store_access::configuration(impl_->objects);
+    if (!store_configuration)
+        co_return std::unexpected(store_configuration.error());
+    if (!store_configuration->backend)
+        co_return std::unexpected(
+            failure(errc::not_configured, "store backend is unavailable", store_root->string()));
+    auto existing =
+        co_await store_detail::load_leases(store_configuration->backend, *store_root / "leases");
+    if (!existing)
+        co_return std::unexpected(existing.error());
+    co_return static_cast<std::uint64_t>(existing->size());
 }
 
 std::optional<remote_config> repository::remote_configuration() const {

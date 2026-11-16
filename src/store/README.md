@@ -97,6 +97,11 @@ process published. The disk backend counts its own mutations (`backend_mutations
 changed nothing leaves the generation alone. `store.cpp` retries a read that missed once after a
 reload. See `docs/library/store.md#several-writers-without-an-owner`.
 
+`holder.cpp` names this process as a lease holder (`holder <host> <pid> <start>`) and tells
+whether a holder named in a lease owner is alive, dead or on another host (liquid #527).
+`leases.cpp`'s `release_lease_now` releases a lease from a destructor: a disk lease's file is
+removed at once, another backend's release is started on the runtime.
+
 `owner.cpp` holds the injected owner of liquid #327: `owner_grant` (a fence and a shared lost
 flag), `make_disk_store_owner` (the flock above as a `store_owner` with fence zero),
 `owned_store_backend` (the wrapper around a backend's fenced view that refuses mutations, and reads
