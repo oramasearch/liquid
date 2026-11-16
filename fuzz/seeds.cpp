@@ -658,10 +658,9 @@ void format_seeds(corpus& output, const fs::path& source, const fs::path& execut
     output.add("model",
                "notebook",
                selected(0,
-                        to_bytes(R"({"cells":[{"cell_type":"code","execution_count":1,)"
-                                 R"("metadata":{},"outputs":[],"source":["print(1)"]
-}],)"
-                                 R"("metadata":{},"nbformat":4,"nbformat_minor":5})")));
+                        to_bytes(R"json({"cells":[{"cell_type":"code","execution_count":1,)json"
+                                 R"json("metadata":{},"outputs":[],"source":["print(1)"]}],)json"
+                                 R"json("metadata":{},"nbformat":4,"nbformat_minor":5})json")));
 const auto header = to_bytes(R"({"weight":{"dtype":"F32","shape":[2],"data_offsets":[0,8]}})");
 auto safetensors = bytes{};
 put_le(safetensors, header.size(), 8);
@@ -819,12 +818,15 @@ void workers_seeds(corpus& output) {
     output.add("workers", "lease", workers::encode(lease), 2);
     output.add("workers",
                "heartbeat",
-               workers::encode(workers::heartbeat_request{"operations/1", "worker-1", 7}),
+               workers::encode(workers::heartbeat_request{
+                   .operation = "operations/1", .worker = "worker-1", .token = "7"}),
                3);
     output.add("workers",
                "complete",
-               workers::encode(workers::complete_request{
-                   "operations/1", "worker-1", 7, to_bytes("result"), {}}),
+               workers::encode(workers::complete_request{.operation = "operations/1",
+                                                         .worker = "worker-1",
+                                                         .token = "7",
+                                                         .result = to_bytes("result")}),
                4);
     output.add("workers",
                "acknowledgement",
