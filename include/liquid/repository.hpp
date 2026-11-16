@@ -324,6 +324,9 @@ struct LIQUID_EXPORT path_history_entry {
     std::chrono::sys_seconds at;
     std::string message;
     bool deleted{};
+    // Set from the change: true only when an identity chain binds `by` to the change's signature.
+    // Otherwise show `unverified_signer_label`, never `by` (liquid#508).
+    bool identity_verified{};
 };
 
 struct LIQUID_EXPORT record_cursor {
@@ -409,6 +412,10 @@ struct LIQUID_EXPORT operation_record {
     std::chrono::sys_seconds at;
     session_id session;
     std::map<std::string, std::string> metadata;
+    // True when the local identity recorded the operation, or when a drip that records it checks
+    // against its author's identity chain. Otherwise show `unverified_signer_label`, never `by`
+    // (liquid#508).
+    bool identity_verified{};
 };
 
 enum class conflict_resolution_kind : std::uint8_t {

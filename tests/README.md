@@ -338,7 +338,10 @@ model two machines in one process switch `LIQUID_HOME` between identities and mo
 liquid#429 have their own tests: a forged drip or change author on import (`test_sync.cpp`) and
 self-signed release approvals naming listed signers (`test_hardware_keys.cpp`);
 `test_identity.cpp` and `test_sync.cpp` also cover reporting a chainless signature as signed by an
-unverified key. On Linux it also drives an installed `swtpm` through the TPM
+unverified key. For liquid#508, `test_sync.cpp` checks path history, operation records, line
+attribution and change attribution from a home without the author's chain, and that the push rate
+limit is keyed on the authenticated pusher; `test_daemon.cpp` carries the flag over the daemon wire;
+and `cli/unverified-author.cmake` checks `log`, `history`, `ops` and `blame` output. On Linux it also drives an installed `swtpm` through the TPM
 command transport.
 
 Symbol tests verify compiler-labelled definition/reference records, cross-file identifier matching,

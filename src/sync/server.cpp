@@ -350,6 +350,15 @@ sync_server::sync_server(sync_server&&) noexcept = default;
 sync_server& sync_server::operator=(sync_server&&) noexcept = default;
 
 runtime::task<std::vector<std::byte>> sync_server::handle_push(std::span<const std::byte> request) {
+    if (!impl_) {
+        co_return std::unexpected(
+            server_error(errc::invalid_argument, "sync server repository and store do not match"));
+    }
+    co_return co_await handle_push(request, std::string{impl_->options.pusher});
+}
+
+runtime::task<std::vector<std::byte>> sync_server::handle_push(std::span<const std::byte> request,
+                                                               std::string pusher) {
     if (!impl_ || !impl_->subject || !impl_->objects || !impl_->matching_store) {
         co_return std::unexpected(
             server_error(errc::invalid_argument, "sync server repository and store do not match"));
@@ -362,16 +371,16 @@ runtime::task<std::vector<std::byte>> sync_server::handle_push(std::span<const s
         co_return std::unexpected(
             server_error(errc::invalid_argument, "push request contains reference outcomes"));
     }
+    // Every item is charged to the authenticated pusher, never to the author a record claims: that
+    // name is not verified until import (liquid#508).
+    const auto actor = pusher.empty() ? std::string{unauthenticated_pusher} : std::move(pusher);
     for (const auto& item : incoming->items) {
-        if (item.author.taap_id.empty()) {
-            continue;
-        }
         auto document = item.directory;
         if (std::ranges::all_of(document, [](std::byte value) { return value == std::byte{}; })) {
             document = item.repository;
         }
-        auto admitted = impl_->flow_limits->admit(
-            item.author.taap_id, flow_detail::node_key(document), item.body.size());
+        auto admitted =
+            impl_->flow_limits->admit(actor, flow_detail::node_key(document), item.body.size());
         if (!admitted) {
             co_return std::unexpected(admitted.error());
         }

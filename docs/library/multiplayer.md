@@ -22,6 +22,7 @@ libliquid, across the local daemon wire, and through `liquid blame`.
 | `session` | The 16-byte session that wrote the line. |
 | `change` | The change that introduced the current line contents. |
 | `agent` | `true` when the operation was published under scoped delegation. |
+| `identity_verified` | `true` only when an identity chain verifies `by`: from the operation that wrote the line, or from the change when no operation is recorded. Otherwise show `unverified_signer_label`, never `by` ([identity](identity.md#every-decision-that-trusts-an-identity-requires-a-verified-chain), liquid#508). |
 
 `repository::attribution(path, change)` returns these records in line order. The path is resolved
 in the requested historical tree. Attribution then follows that file's stable `node_id` through
@@ -43,7 +44,8 @@ diff cannot produce UTF-8 line hunks. An empty file returns an empty vector.
 `daemon::attribution(path, change)` carries the same records over the checkout daemon's
 length-prefixed canonical-CBOR request protocol. The version-1 request names `attribution`, `path`,
 and `change`; the success value contains a `lines` array with all public record fields. Malformed
-or incomplete responses are refused before any result reaches the caller.
+or incomplete responses are refused before any result reaches the caller. A line without
+`identity_verified` (an older daemon) decodes as unverified.
 
 `liquid blame <path>` resolves the current head, starts or attaches to the checkout daemon, and
 prints one line as:
@@ -53,7 +55,10 @@ prints one line as:
 ```
 
 `--json` emits one versioned object with `v`, `path`, `change`, and a `lines` array. Each line has
-`line`, `change`, `session`, `actor`, `agent`, and `text`. This is the stable editor-facing form.
+`line`, `change`, `session`, `actor`, `identity_verified`, `agent`, and `text`. This is the stable
+editor-facing form. An author no identity chain verifies is printed as `actor=signed by an
+unverified key` (JSON `"actor":"signed by an unverified key","identity_verified":false`), never
+as the `taap_id` the record claims (liquid#508).
 
 ## Plugin delivery
 

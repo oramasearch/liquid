@@ -49,6 +49,10 @@ It lists history through that rename, restores the imported version as a new dri
 restoration without changing an earlier change.
 `blame.cmake` creates a two-line repository and verifies both the versioned JSON attribution object
 and the line-oriented text form through the daemon-backed command.
+`unverified-author.cmake` writes a repository under one `LIQUID_HOME` and reads it under another
+that holds no chain for its author (liquid#508). `log`, `history`, `ops` and `blame`, in text and
+JSON, must show that author as `signed by an unverified key` with `"identity_verified":false`; in
+the author's own home `ops --json` reports `true`.
 It also parses `search --explain` as JSON and pins the scan choice, literal classification,
 freshness input, and three-alternative shape for the small imported working set.
 

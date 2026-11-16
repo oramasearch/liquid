@@ -155,6 +155,9 @@ struct LIQUID_EXPORT change_attribution {
     digest drip;
     actor by;
     std::chrono::sys_seconds at{};
+    // True only when an identity chain binds `by` to the drip's signature. Otherwise show
+    // `unverified_signer_label`, never `by` (liquid#508).
+    bool identity_verified{};
 };
 
 enum class policy_scope : std::uint8_t { paths, toolchain, all_inputs };

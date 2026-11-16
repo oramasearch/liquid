@@ -174,6 +174,27 @@ or a bad signature, is still an error.
 `change::identity_verified` this way, and `liquid log` (with or without `--drips`, text and JSON)
 shows an unverified author as `signed by an unverified key`, never as the name the record claims.
 
+Every other record that names an author carries the same flag (liquid#508), set from the change or
+drip it came from:
+
+| Record | Set from | Shown by |
+|---|---|---|
+| `path_history_entry::identity_verified` | the change (`repository::history`) | `liquid history <path>` |
+| `operation_record::identity_verified` | see below (`repository::operations`) | `liquid ops`, `liquid log --ops` |
+| `line_attribution::identity_verified` | the operation that wrote the line, or the change when no operation is recorded (`repository::attribution`, also over the daemon) | `liquid blame` |
+| `change_attribution::identity_verified` | the drip that records the write | `liquid why`, `liquid wrap` |
+
+An operation record carries no signature of its own. It is verified when the **local identity**
+recorded it: this machine holds the key that signs the journal's drips. An operation attributed to
+**anyone else** is verified only when a drip that records it (same author, operation and time) is
+signed by that author's key and the signature checks against an identity chain. A repository opened
+from a home that holds no chain for its author therefore shows that author's operations, lines and
+writes as unverified.
+
+Every CLI command prints an author through one helper, `shown_signer` in `src/cli/signer.hpp`,
+which returns the `taap_id` only when `identity_verified` is set and `unverified_signer_label`
+otherwise. JSON output also carries `"identity_verified": true|false` beside the author.
+
 **History signed before liquid#448** by an identity whose chain was never kept (for example by an
 earlier lake pod's per-pod identity) is shown as signed by an unverified key and cannot satisfy any
 policy. It is not migrated: Steve decided on 2026-10-23 that repository data so far is test data
@@ -245,7 +266,10 @@ cover the rules above; `Sync.drip_signed_by_one_key_naming_another_identity_is_r
 `Sync.change_signed_by_one_key_naming_another_identity_is_refused` covers a forged change author on
 import, `Sync.history_without_its_authors_chain_is_listed_as_unverified` covers the listing, and
 `ReleaseApproval.self_signed_approvals_naming_listed_signers_do_not_count` covers the release
-threshold.
+threshold. For liquid#508, `Sync.attribution_surfaces_report_an_author_no_chain_verifies_as_unverified`
+covers path history, operation records, line attribution and change attribution;
+`Daemon.attribution_query_crosses_the_wire` covers the daemon wire; and the `cli-unverified-author`
+CLI test covers `log`, `history`, `ops` and `blame` output, text and JSON.
 
 ## CRDT commit metadata
 

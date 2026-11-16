@@ -35,6 +35,7 @@
 #include <variant>
 #include <vector>
 
+#include "build/repository_access.hpp"
 #include "encoding/cbor.hpp"
 #include "liquid/attestation.hpp"
 #include "liquid/drive.hpp"
@@ -46,6 +47,7 @@
 #include "objects/records.hpp"
 #include "repository/store_access.hpp"
 #include "temporary_directory.hpp"
+#include "vfs/repository_access.hpp"
 
 namespace {
 
@@ -1270,6 +1272,121 @@ TEST(Sync, history_without_its_authors_chain_is_listed_as_unverified) {
     ASSERT_TRUE(changes) << changes.error().message;
     ASSERT_FALSE(changes->empty());
     EXPECT_TRUE(std::ranges::none_of(*changes, &liquid::change::identity_verified));
+}
+
+// liquid#508: `blame`, `history`, `ops`, `why` and `wrap` print an author from path history,
+// operation records, line attribution and change attribution. Opened from a home that holds no
+// chain for the author, every one of them names someone no chain verified, exactly as a forged
+// author would, and must be reported as unverified. In the author's own home they are verified.
+TEST(Sync, attribution_surfaces_report_an_author_no_chain_verifies_as_unverified) {
+    const auto restore = scoped_liquid_home{};
+    temporary_directory author_home;
+    temporary_directory reader_home;
+    temporary_directory repository_path;
+
+    const auto check = [](liquid::repository& opened, bool expected) {
+        auto head = liquid::runtime::block_on(opened.head());
+        ASSERT_TRUE(head) << head.error().message;
+
+        auto history = liquid::runtime::block_on(opened.history("one.txt"));
+        ASSERT_TRUE(history) << history.error().message;
+        ASSERT_FALSE(history->empty());
+        for (const auto& entry : *history) {
+            EXPECT_EQ(entry.identity_verified, expected) << entry.path;
+        }
+
+        auto operations = liquid::runtime::block_on(opened.operations());
+        ASSERT_TRUE(operations) << operations.error().message;
+        ASSERT_FALSE(operations->empty());
+        for (const auto& operation : *operations) {
+            EXPECT_EQ(operation.identity_verified, expected) << operation.kind;
+        }
+
+        auto lines = liquid::runtime::block_on(opened.attribution("one.txt", *head));
+        ASSERT_TRUE(lines) << lines.error().message;
+        ASSERT_FALSE(lines->empty());
+        for (const auto& line : *lines) {
+            EXPECT_EQ(line.identity_verified, expected) << line.line;
+        }
+
+        auto entry = liquid::runtime::block_on(
+            liquid::repository_detail::vfs_access::entry(opened, "one.txt"));
+        ASSERT_TRUE(entry) << entry.error().message;
+        auto changed = liquid::runtime::block_on(
+            liquid::repository_detail::build_access::path_change(opened, "one.txt", entry->object));
+        ASSERT_TRUE(changed) << changed.error().message;
+        ASSERT_TRUE(*changed);
+        EXPECT_EQ((*changed)->identity_verified, expected);
+    };
+
+    scoped_liquid_home::select(author_home.path());
+    {
+        auto written =
+            liquid::runtime::block_on(liquid::repository::create(repository_path.path()));
+        ASSERT_TRUE(written) << written.error().message;
+        ASSERT_TRUE(liquid::runtime::block_on(written->write("one.txt", bytes("one\ntwo\n"))));
+        ASSERT_TRUE(liquid::runtime::block_on(written->cut("first")));
+        check(*written, true);
+    }
+
+    scoped_liquid_home::select(reader_home.path());
+    auto opened = liquid::runtime::block_on(liquid::repository::open(repository_path.path()));
+    ASSERT_TRUE(opened) << opened.error().message;
+    check(*opened, false);
+}
+
+// liquid#508: the push rate limit is charged to the identity that authenticated the push, never to
+// the author the pushed records claim. A pusher cannot spend, or borrow, another person's budget
+// by naming them.
+TEST(Sync, push_rate_limit_is_keyed_on_the_authenticated_pusher) {
+    temporary_directory source_path;
+    temporary_directory limited_path;
+    temporary_directory allowed_path;
+    const auto author = open_local_signer().identity();
+    const auto pusher = std::string{"taap:authenticated-pusher"};
+    auto source = liquid::runtime::block_on(liquid::repository::create(source_path.path()));
+    ASSERT_TRUE(source) << source.error().message;
+    ASSERT_TRUE(liquid::runtime::block_on(source->write("one.txt", bytes("one"))));
+    ASSERT_TRUE(liquid::runtime::block_on(source->cut("first")));
+
+    // The claimed author has a large budget and the pusher a budget of one: the push is refused
+    // on the actor bucket, because it is charged to the pusher.
+    auto limited_options = liquid::repository_options{};
+    limited_options.flow.per_actor = {.rate_per_s = 1, .burst = 1};
+    limited_options.flow.actor_overrides[author.taap_id] = {.rate_per_s = 100'000,
+                                                            .burst = 100'000};
+    auto limited =
+        liquid::runtime::block_on(liquid::repository::create(limited_path.path(), limited_options));
+    ASSERT_TRUE(limited) << limited.error().message;
+    {
+        auto server = liquid::sync_server{*limited, {.pusher = pusher}};
+        sync_http_server http{server};
+        auto endpoint = liquid::sync_endpoint{http.url()};
+        auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+        ASSERT_TRUE(pushed) << (pushed ? "" : pushed.error().message);
+        EXPECT_GT(pushed->retry_after_ms, 0U);
+        EXPECT_EQ(pushed->exhausted_scope, "actor");
+        EXPECT_FALSE(liquid::runtime::block_on(limited->head()));
+    }
+
+    // The reverse: the claimed author's budget is one and the pusher's is large. The push is
+    // admitted, because the author's bucket is never charged.
+    auto allowed_options = liquid::repository_options{};
+    allowed_options.flow.per_actor = {.rate_per_s = 1, .burst = 1};
+    allowed_options.flow.actor_overrides[pusher] = {.rate_per_s = 100'000, .burst = 100'000};
+    auto allowed =
+        liquid::runtime::block_on(liquid::repository::create(allowed_path.path(), allowed_options));
+    ASSERT_TRUE(allowed) << allowed.error().message;
+    {
+        auto server = liquid::sync_server{*allowed, {.pusher = pusher}};
+        sync_http_server http{server};
+        auto endpoint = liquid::sync_endpoint{http.url()};
+        auto pushed = liquid::runtime::block_on(endpoint.push(*source));
+        ASSERT_TRUE(pushed) << (pushed ? "" : pushed.error().message);
+        EXPECT_EQ(pushed->retry_after_ms, 0U);
+        EXPECT_TRUE(pushed->exhausted_scope.empty());
+        EXPECT_TRUE(liquid::runtime::block_on(allowed->head()));
+    }
 }
 
 // The honest case: two people on two machines. The sender's chain travels ahead of its drips and

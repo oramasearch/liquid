@@ -184,7 +184,14 @@ action execution. The command refuses a result that fails the relocation publica
 `status`, `log`, `log --ops`, `refs`, `ops`, `identity show`, `gc`, `replay`, `why`, and `cache
 stats` accept `--json`. `log --ops --json` includes each signed drip's caller-stated base, cursor,
 and re-validation result. `ops --json` includes the stable operation-kind vocabulary and the
-32-digit session ID. `undo` prints one `applied <op-id>` line per inverse it appended and one
+32-digit session ID.
+
+Every command that prints an author (`log`, `log --ops`, `ops`, `history`, `blame`, `why` and
+`wrap`) prints it only when an identity chain verified it. Otherwise it prints `signed by an
+unverified key`, never the `taap_id` the record claims, and JSON output carries
+`"identity_verified": true|false` beside the author (`actor`, `author` or `by`). An operation is
+verified when the local identity recorded it, or when a drip recording it checks against its
+author's chain (liquid#429, liquid#508; [identity](../library/identity.md#every-decision-that-trusts-an-identity-requires-a-verified-chain)). `undo` prints one `applied <op-id>` line per inverse it appended and one
 `skipped <op-id> <path> <reason>` line when newer state prevented a path from changing. A session
 may be narrowed by repeating `--path` or `--drip`; those selectors require `--session` and cannot
 be combined with a positional operation ID.
@@ -336,7 +343,8 @@ network request. HTTP authentication and repository lookup errors retain the lib
 remove clone-created target state and preserve an existing empty target directory.
 `blame` resolves the current head and asks the checkout daemon for the public attribution query.
 Its line-oriented form prints one-based line, change, session, actor, agent marker, and text.
-`--json` emits a version-1 object with `path`, `change`, and the same values under `lines`; strings
+`--json` emits a version-1 object with `path`, `change`, and the same values plus
+`identity_verified` under `lines`; strings
 use JSON escaping and empty files produce an empty array. The command refuses directories, missing
 paths, and non-UTF-8 content. See [`../library/multiplayer.md`](../library/multiplayer.md).
 `drive sync` prints the remote, local, and base tree digests, interrupted state, bounded-walk
