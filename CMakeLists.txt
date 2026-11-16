@@ -546,6 +546,7 @@ add_library(libliquid
   src/capture/cursor.cpp
   src/capture/reconcile.cpp
   src/cms.cpp
+  src/credential.cpp
   src/configuration/language.cpp
   src/configuration/generator.cpp
   src/configuration/parser.cpp

@@ -527,4 +527,37 @@ TEST(AttestationRegistry, refuses_an_issuer_whose_identity_chain_is_unavailable)
     }
 }
 
+// liquid#512, liquid#545: `attest show` checks the issuer through the public
+// `check_attestation_signature`. With the issuer's chain the identity is verified; without it the
+// signature is still reported valid, by an unverified key.
+TEST(AttestationRegistry, signature_check_reports_an_unchained_issuer_as_an_unverified_key) {
+    const auto* previous = std::getenv("LIQUID_HOME");
+    const auto restore = previous ? std::optional<std::string>{previous} : std::nullopt;
+    const auto issuer_home = select_home("check-issuer");
+    const auto signed_value = sign(example("authorship/1"));
+    auto chained = liquid::check_attestation_signature(signed_value);
+    ASSERT_TRUE(chained) << chained.error().message;
+    EXPECT_TRUE(chained->signature_valid);
+    EXPECT_TRUE(chained->identity_verified);
+
+    const auto verifier_home = select_home("check-verifier");
+    auto unchained = liquid::check_attestation_signature(signed_value);
+    ASSERT_TRUE(unchained) << unchained.error().message;
+    EXPECT_TRUE(unchained->signature_valid);
+    EXPECT_FALSE(unchained->identity_verified);
+
+    auto tampered = signed_value;
+    tampered.at += std::chrono::seconds{1};
+    auto refused = liquid::check_attestation_signature(tampered);
+    EXPECT_FALSE(refused && refused->signature_valid);
+    std::error_code code;
+    std::filesystem::remove_all(issuer_home, code);
+    std::filesystem::remove_all(verifier_home, code);
+    if (restore) {
+        setenv("LIQUID_HOME", restore->c_str(), 1);
+    } else {
+        unsetenv("LIQUID_HOME");
+    }
+}
+
 } // namespace

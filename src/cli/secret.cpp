@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
 #include <algorithm>
-#include "credential_token.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -22,6 +21,7 @@
 #include <sys/stat.h>
 #endif
 
+#include "liquid/credential.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/secret.hpp"
 
@@ -304,7 +304,7 @@ auto public_key_command(int argc, char** argv) -> int {
         return usage("secret public-key --lake <url> [--json]");
     }
     auto bearer = std::string{};
-    if (const auto token = liquid::token_detail::lake_token(); !token.empty()) {
+    if (const auto token = liquid::lake_token(); !token.empty()) {
         bearer = token;
     }
     auto fetched = liquid::runtime::block_on(
@@ -393,7 +393,7 @@ auto seal_command(int argc, char** argv) -> int {
     auto recipient = liquid::sealing_public_key{};
     if (!options->lake.empty()) {
         auto bearer = std::string{};
-        if (const auto token = liquid::token_detail::lake_token(); !token.empty()) {
+        if (const auto token = liquid::lake_token(); !token.empty()) {
             bearer = token;
         }
         auto fetched = liquid::runtime::block_on(

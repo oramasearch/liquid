@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
 #include <cstdlib>
-#include "credential_token.hpp"
 #include <filesystem>
 #include <format>
 #include <print>
@@ -9,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "liquid/credential.hpp"
 #include "liquid/drive.hpp"
 #include "liquid/error.hpp"
 #include "liquid/runtime.hpp"
@@ -193,7 +193,7 @@ auto clone(int argc, char** argv) -> int {
     }
 
     auto options = liquid::drive_options{};
-    if (const auto token = liquid::token_detail::lake_token(); !token.empty()) {
+    if (const auto token = liquid::lake_token(); !token.empty()) {
         options.bearer_token = token;
     }
     auto client =

@@ -31,6 +31,9 @@ used by drive clients to import metadata before an on-demand read.
 pending-upload status, and the pin, unpin, configuration, and status operations.
 `vfs.hpp` accepts an optional bearer token so a drive mount can hydrate through its persisted
 remote endpoint.
+`credential.hpp` exposes the process's Lake bearer (`lake_token`, read once from an owner-only
+`LIQUID_TOKEN_FILE` or `LIQUID_TOKEN`) and `scrub_environment_token` for long-lived processes, so
+the command line reads it through the public API.
 `store.hpp` exposes runtime remote-source registration, hydration and remote-access observation,
 live local-byte accounting for long-running node stores, plus collection repack selection and its
 delta-rebase count.

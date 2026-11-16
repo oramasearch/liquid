@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
 #include <algorithm>
-#include "credential_token.hpp"
 #include <cctype>
 #include <charconv>
 #include <cstddef>
@@ -32,6 +31,7 @@
 #include <boost/http.hpp>
 #include <boost/json.hpp>
 
+#include "liquid/credential.hpp"
 #include "liquid/error.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/transparency.hpp"
@@ -471,7 +471,7 @@ auto load_material(std::string_view log_url) -> liquid::result<timestamp_materia
         return std::unexpected(url.error());
     }
     auto token = std::string{};
-    if (const auto configured = liquid::token_detail::lake_token(); !configured.empty()) {
+    if (const auto configured = liquid::lake_token(); !configured.empty()) {
         token = configured;
     }
     auto checkpoint = get_capability(*url, "transparency_checkpoint", "", token);

@@ -9,6 +9,7 @@
 #include "liquid/build.hpp"
 #include "liquid/cms.hpp"
 #include "liquid/configuration.hpp"
+#include "liquid/credential.hpp"
 #include "liquid/daemon.hpp"
 #include "liquid/data.hpp"
 #include "liquid/delta.hpp"

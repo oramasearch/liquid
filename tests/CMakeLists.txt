@@ -1049,6 +1049,7 @@ add_executable(liquid-header-tests
   headers/attestation.cpp
   headers/build.cpp
   headers/configuration.cpp
+  headers/credential.cpp
   headers/daemon.cpp
   headers/drip.cpp
   headers/edit.cpp

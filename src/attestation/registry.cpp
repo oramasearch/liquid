@@ -488,6 +488,18 @@ verify_attestation(const attestation& value, const attestation_verification_opti
     return attestation_verification{true, {}};
 }
 
+result<signature_check> check_attestation_signature(const attestation& value) {
+    auto signed_value = identity_detail::parse_signature(value.signature);
+    if (!signed_value) {
+        return std::unexpected{signed_value.error()};
+    }
+    auto body = objects::encode_attestation_body_unchecked(value);
+    if (!body) {
+        return std::unexpected{body.error()};
+    }
+    return check_signature(value.issuer, "attestation", *body, *signed_value);
+}
+
 result<attestation> decode_attestation(std::span<const std::byte> bytes) {
     return objects::decode_attestation(bytes);
 }
