@@ -239,7 +239,8 @@ Allowed refs in a non-atomic push still apply. `--atomic` makes one refusal refu
 completed push exits with status 1 if any ref was refused and 0 when all were applied. Both commands
 use `LIQUID_TOKEN` as an optional bearer credential and never print it. `LIQUID_TOKEN_FILE` names a
 file holding it instead, which is used only when its owner alone may read it (no group or other
-bits), and is preferred: a variable is readable in `/proc/<pid>/environ` by the same user and
+bits; liquid says so on stderr and sends no token otherwise; on Windows the file's ACL governs and
+the bits are not checked), and is preferred: a variable is readable in `/proc/<pid>/environ` by the same user and
 inherited by every child. The daemon, which lives long, wipes `LIQUID_TOKEN` from its environment
 and its copy of the environment block once read, so the processes it starts never carry it
 (L-30, liquid#410). A URL must use HTTP or HTTPS
