@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <format>
@@ -1578,12 +1579,46 @@ runtime::task<void> serve_connection(server_state& state, boost::capy::any_strea
     }
 }
 
+// How long, and how many bytes, a closing connection reads and discards from its peer.
+constexpr auto linger_timeout = std::chrono::seconds{2};
+constexpr auto linger_bytes = std::size_t{16} * 1024 * 1024;
+
+runtime::task<void> discard_until_peer_closes(boost::corosio::tcp_socket& socket) {
+    auto buffer = std::array<std::byte, 16 * 1024>{};
+    for (auto discarded = std::size_t{}; discarded < linger_bytes;) {
+        const auto [read_error, count] =
+            co_await socket.read_some(boost::capy::mutable_buffer(buffer.data(), buffer.size()));
+        if (read_error || count == 0) {
+            break;
+        }
+        discarded += count;
+    }
+    co_return result<void>{};
+}
+
+// Ends a connection without resetting it (liquid#548). Closing a TCP socket that still holds
+// received bytes it has not read makes the kernel send a reset, and a reset discards whatever the
+// peer has not read yet. A request answered before its body arrived (refused from its prefix, or
+// unauthenticated) leaves that body on the way, so on Linux its answer and GOAWAY were lost and
+// the client saw no response. The server ends its side with FIN, then reads and discards what
+// still arrives until the peer closes, within `linger_timeout` and `linger_bytes`.
+runtime::task<void> close_gracefully(boost::corosio::tcp_socket& socket) {
+    socket.shutdown(boost::corosio::tcp_socket::shutdown_send);
+    auto [deadline_error, outcome] = co_await runtime::timeout(
+        runtime::as_io(discard_until_peer_closes(socket)), linger_timeout);
+    static_cast<void>(deadline_error);
+    static_cast<void>(outcome);
+    co_return result<void>{};
+}
+
 runtime::task<void> session(std::shared_ptr<server_state> state,
                             std::shared_ptr<boost::corosio::tcp_socket> socket,
                             std::shared_ptr<boost::corosio::tls_context> tls) {
     if (!tls) {
         auto stream = boost::capy::any_stream{socket.get()};
-        co_return co_await serve_connection(*state, stream);
+        auto served = co_await serve_connection(*state, stream);
+        static_cast<void>(co_await close_gracefully(*socket));
+        co_return served;
     }
 #if defined(BOOST_COROSIO_HAS_OPENSSL)
     auto secure = boost::corosio::openssl_stream{socket.get(), *tls};
@@ -1597,7 +1632,9 @@ runtime::task<void> session(std::shared_ptr<server_state> state,
         co_return std::unexpected(negotiated.error());
     }
     auto stream = boost::capy::any_stream{&secure};
-    co_return co_await serve_connection(*state, stream);
+    auto served = co_await serve_connection(*state, stream);
+    static_cast<void>(co_await close_gracefully(*socket));
+    co_return served;
 #else
     co_return std::unexpected(
         server_error(errc::unsupported, "TLS support is unavailable in this build", "REAPI"));
