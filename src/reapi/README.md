@@ -10,6 +10,9 @@ conversion uses standard fields plus platform properties for native input, toolc
 digests. Result conversion fills standard output and execution fields, creates version-4 native
 results, and carries the canonical native record in typed auxiliary metadata so Liquid peers retain
 ABI references and other fields REAPI does not model.
+`action_cache.cpp` names ActionCache entries: it accepts an action digest only as lowercase
+hexadecimal of the request algorithm's length, and reads and writes entries inside the cache
+directory without following symbolic links, replacing an entry by rename (liquid #428).
 Scheduler mode enables Execution and Operations on the same server, dispatches the private worker
 protocol, and writes an ActionCache entry only after a signed completion is accepted.
 Server-side action execution uses the same fixed `SOURCE_DATE_EPOCH` and `ZERO_AR_DATE` environment

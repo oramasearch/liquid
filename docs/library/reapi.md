@@ -60,7 +60,18 @@ liquid serve reapi --listen 127.0.0.1:50051 --instance builds
 Capabilities, CAS `FindMissingBlobs`, batch reads and updates, `GetTree`, ByteStream reads,
 client-streaming and resumable writes, and ActionCache reads and updates. CAS objects use standard
 SHA-256 digest and size validation. ActionCache records live beside the repository store under
-`.liquid-store/reapi-action-cache`. The cache-only server intentionally does not offer Execution;
+`.liquid-store/reapi-action-cache`, one file per action digest, named by its hash.
+
+An action digest names a file only after it is checked (liquid #428, LSR-034 of the Lake
+pre-launch security review): its hash must be exactly the lowercase hexadecimal encoding of a
+digest of the request's `digest_function` (64 characters for SHA-256 and BLAKE3; the default is
+SHA-256) and its size non-negative. Anything else, such as `../../file`, an absolute path, upper
+case, or the wrong length, is refused with gRPC `INVALID_ARGUMENT` before the filesystem is
+touched, by `GetActionResult`, `UpdateActionResult`, and the scheduler's `Execute`/`Submit`. Entries
+are opened directly inside the cache directory with no symbolic link followed, at the directory
+or at the entry, and an update writes a new file and renames it over the entry, so a link planted
+under an entry's name is replaced and its target never opened. `src/reapi/action_cache.cpp`
+implements both rules. The cache-only server intentionally does not offer Execution;
 `liquid scheduler` reuses it with Execution and Operations enabled, as documented in
 [`workers.md`](workers.md).
 

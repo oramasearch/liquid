@@ -39,6 +39,7 @@ add_executable(liquid-tests
   reapi/test_wire.cpp
   reapi/test_messages.cpp
   reapi/test_conversion.cpp
+  reapi/test_action_cache.cpp
   config/test_configuration.cpp
   import/test_spack.cpp
   resolve/test_resolution.cpp
@@ -46,6 +47,7 @@ add_executable(liquid-tests
   ${PROJECT_SOURCE_DIR}/src/protobuf/wire.cpp
   ${PROJECT_SOURCE_DIR}/src/reapi/messages.cpp
   ${PROJECT_SOURCE_DIR}/src/reapi/conversion.cpp
+  ${PROJECT_SOURCE_DIR}/src/reapi/action_cache.cpp
   ${PROJECT_SOURCE_DIR}/src/workers/protocol.cpp
   ${PROJECT_SOURCE_DIR}/src/workers/scheduler.cpp
   ${PROJECT_SOURCE_DIR}/src/identity/taap.cpp
