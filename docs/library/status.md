@@ -143,7 +143,8 @@ historical diff. Whole-file encryption remains the fallback
 negotiation, the public sync server with change and graph-derived per-reference authorization,
 mixed and atomic push outcomes, and the shared HTTP/1.1 client, `serve sync` adapter, and lake
 forge review client with its polling event stream and installable double are implemented
-([`sync.md`](sync.md), [`forge-client.md`](forge-client.md)).
+([`sync.md`](sync.md), [`forge-client.md`](forge-client.md)). HTTPS verifies against
+`SSL_CERT_FILE` or OpenSSL's default trust store, on macOS too (liquid #368).
 
 **Drive.** Issue #195 adds the persisted three-tree drive client, named concurrent conflict values,
 interrupted-transfer resume, per-reference refusal reporting, stable-node path history and restore,

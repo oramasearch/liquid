@@ -6,14 +6,20 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
+
+#include <openssl/pem.h>
+#include <openssl/x509.h>
 
 #include "liquid/forge.hpp"
 #include "liquid/repository.hpp"
@@ -190,6 +196,112 @@ TEST(Forge, verifies_the_committed_certificate_over_tls) {
     }
     ASSERT_TRUE(reviews) << reviews.error().message << " (" << reviews.error().context << ')';
     EXPECT_TRUE(reviews->empty());
+}
+// liquid#368: https from macOS failed with "unspecified system_category error". Corosio
+// never applied set_default_verify_paths(), loaded only the first certificate of a CA
+// bundle, and reported OpenSSL failures as errno values. These go through the same
+// http1 client every https request uses, sync included.
+class scoped_environment final {
+public:
+    explicit scoped_environment(
+        std::vector<std::pair<std::string, std::optional<std::string>>> values) {
+        for (auto& [name, value] : values) {
+            const auto* previous = std::getenv(name.c_str());
+            saved_.emplace_back(name,
+                                previous == nullptr ? std::optional<std::string>{}
+                                                    : std::optional<std::string>{previous});
+            assign(name, value);
+        }
+    }
+    scoped_environment(const scoped_environment&) = delete;
+    auto operator=(const scoped_environment&) -> scoped_environment& = delete;
+    ~scoped_environment() {
+        for (const auto& [name, value] : saved_) {
+            assign(name, value);
+        }
+    }
+
+private:
+    static void assign(const std::string& name, const std::optional<std::string>& value) {
+        if (value) {
+            static_cast<void>(setenv(name.c_str(), value->c_str(), 1));
+        } else {
+            static_cast<void>(unsetenv(name.c_str()));
+        }
+    }
+
+    std::vector<std::pair<std::string, std::optional<std::string>>> saved_;
+};
+
+auto read_text(const std::filesystem::path& path) -> std::string {
+    auto input = std::ifstream{path, std::ios::binary};
+    return {std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+}
+
+auto list_reviews_over_tls() -> liquid::result<std::vector<liquid::forge_review>> {
+    auto server = liquid::test::forge_double{
+        "tls-token", "127.0.0.1:0", LIQUID_TLS_CERTIFICATE, LIQUID_TLS_PRIVATE_KEY};
+    auto client = liquid::forge_client{server.url(), {.bearer_token = "tls-token"}};
+    return liquid::runtime::block_on(client.list_reviews());
+}
+
+TEST(Forge, verifies_through_the_default_trust_store) {
+    // Without SSL_CERT_FILE the client asks for OpenSSL's default store, which honours
+    // SSL_CERT_DIR: a hashed directory holding the test certificate.
+    const auto directory = liquid::test::fixture_path("forge-default-trust");
+    auto ignored = std::error_code{};
+    std::filesystem::remove_all(directory, ignored);
+    std::filesystem::create_directories(directory);
+    auto* file = std::fopen(LIQUID_TLS_CERTIFICATE, "rb");
+    ASSERT_NE(file, nullptr);
+    auto* certificate = PEM_read_X509(file, nullptr, nullptr, nullptr);
+    std::fclose(file);
+    ASSERT_NE(certificate, nullptr);
+    auto name = std::array<char, 16>{};
+    std::snprintf(name.data(), name.size(), "%08lx.0", X509_subject_name_hash(certificate));
+    X509_free(certificate);
+    std::filesystem::copy_file(LIQUID_TLS_CERTIFICATE, directory / name.data());
+
+    auto reviews = [&] {
+        auto environment = scoped_environment{
+            {{"SSL_CERT_FILE", std::nullopt}, {"SSL_CERT_DIR", directory.string()}}};
+        return list_reviews_over_tls();
+    }();
+    std::filesystem::remove_all(directory, ignored);
+    ASSERT_TRUE(reviews) << reviews.error().message << " (" << reviews.error().context << ')';
+    EXPECT_TRUE(reviews->empty());
+}
+
+TEST(Forge, verifies_against_a_certificate_bundle) {
+    // A system bundle (/etc/ssl/cert.pem) holds many roots; the one that signs the server
+    // is rarely the first.
+    const auto bundle = liquid::test::fixture_path("forge-bundle.pem");
+    {
+        auto output = std::ofstream{bundle, std::ios::binary};
+        output << read_text(LIQUID_TLS_OTHER_CERTIFICATE) << read_text(LIQUID_TLS_CERTIFICATE);
+    }
+    auto reviews = [&] {
+        auto environment = scoped_environment{{{"SSL_CERT_FILE", bundle.string()}}};
+        return list_reviews_over_tls();
+    }();
+    auto ignored = std::error_code{};
+    std::filesystem::remove(bundle, ignored);
+    ASSERT_TRUE(reviews) << reviews.error().message << " (" << reviews.error().context << ')';
+    EXPECT_TRUE(reviews->empty());
+}
+
+TEST(Forge, says_why_certificate_verification_failed) {
+    auto reviews = [&] {
+        auto environment =
+            scoped_environment{{{"SSL_CERT_FILE", std::string{LIQUID_TLS_OTHER_CERTIFICATE}}}};
+        return list_reviews_over_tls();
+    }();
+    ASSERT_FALSE(reviews);
+    EXPECT_EQ(reviews.error().code, liquid::errc::unavailable);
+    EXPECT_NE(reviews.error().message.find("certificate verify failed"), std::string::npos)
+        << reviews.error().message;
+    EXPECT_EQ(reviews.error().message.find("unspecified"), std::string::npos)
+        << reviews.error().message;
 }
 #endif
 
