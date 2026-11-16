@@ -37,6 +37,20 @@ if(NOT raw_seal_leak EQUAL -1)
   message(FATAL_ERROR "raw secret seal wrote the value to stderr")
 endif()
 
+# L-12 (liquid#394): a value on the command line is refused, so it never sits in ps or shell history.
+execute_process(
+  COMMAND "${LIQUID_CLI}" secret seal
+    --public-key "${public_key}"
+    --kid lake-key-2026-09
+    --cluster lake-prod
+    --value "${secret_value}"
+  RESULT_VARIABLE argv_seal_result
+  OUTPUT_VARIABLE argv_seal_output
+  ERROR_VARIABLE argv_seal_error)
+if(argv_seal_result EQUAL 0)
+  message(FATAL_ERROR "secret seal accepted --value on the command line")
+endif()
+
 execute_process(
   COMMAND "${LIQUID_CLI}" secret unseal
     --private-key-file "${private_key}"

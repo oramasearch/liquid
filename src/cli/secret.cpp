@@ -330,7 +330,6 @@ struct seal_options {
     std::string cluster;
     std::optional<std::string> namespace_;
     std::optional<std::string> name;
-    std::optional<std::string> value;
     std::optional<std::filesystem::path> value_file;
     std::optional<std::filesystem::path> output;
 };
@@ -338,7 +337,7 @@ struct seal_options {
 auto seal_usage() -> int {
     return usage("secret seal (--lake <url> | --public-key <hex> --kid <id>) --cluster <name> "
                  "[--namespace <ns>] [--name <name>] "
-                 "[--value <text> | --value-file <path>] [--out <file>]");
+                 "[--value-file <path>] [--out <file>]  (the value from the file, else stdin)");
 }
 
 auto parse_seal_options(int argc, char** argv) -> liquid::result<seal_options> {
@@ -362,8 +361,13 @@ auto parse_seal_options(int argc, char** argv) -> liquid::result<seal_options> {
             output.namespace_ = value;
         } else if (argument == "--name" && !output.name) {
             output.name = value;
-        } else if (argument == "--value" && !output.value) {
-            output.value = value;
+        } else if (argument == "--value") {
+            // A value on the command line is readable by every local user in ps and
+            // /proc/<pid>/cmdline, and lands in shell history (L-12, liquid#394).
+            return std::unexpected(cli_error(liquid::errc::invalid_argument,
+                                             "--value is not accepted: pass the value on stdin "
+                                             "or with --value-file",
+                                             "secret seal"));
         } else if (argument == "--value-file" && !output.value_file) {
             output.value_file = value;
         } else if (argument == "--out" && !output.output) {
@@ -375,7 +379,7 @@ auto parse_seal_options(int argc, char** argv) -> liquid::result<seal_options> {
     }
     const auto remote = !output.lake.empty();
     const auto direct = !output.public_key.empty() && !output.kid.empty();
-    if (remote == direct || output.cluster.empty() || (output.value && output.value_file) ||
+    if (remote == direct || output.cluster.empty() ||
         (remote && (!output.public_key.empty() || !output.kid.empty())) ||
         (!remote && (output.public_key.empty() || output.kid.empty()))) {
         return std::unexpected(
@@ -409,10 +413,7 @@ auto seal_command(int argc, char** argv) -> int {
         recipient = {.kid = std::move(options->kid), .key = *key};
     }
     auto plaintext = liquid::result<std::vector<std::byte>>{};
-    if (options->value) {
-        const auto* first = reinterpret_cast<const std::byte*>(options->value->data());
-        plaintext = std::vector<std::byte>{first, first + options->value->size()};
-    } else if (options->value_file) {
+    if (options->value_file) {
         plaintext = read_file(*options->value_file);
     } else {
         plaintext = read_stream(std::cin, "stdin");

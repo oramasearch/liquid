@@ -2,8 +2,10 @@
 
 `nativelink.json5` starts a local NativeLink CAS, capabilities service, and worker endpoint on
 port 50051. It is intentionally plaintext so HTTP/2 prior-knowledge h2c is the phase proof.
-`nativelink-tls.json5` starts the same service on port 50053 with the committed self-signed
-certificate and private key. They are test fixtures only.
+`nativelink-tls.json5` starts the same service on port 50053 with a self-signed localhost
+certificate and key that the test build makes at configure time (`<build>/tests/tls/`, from
+`tests/CMakeLists.txt`). No private key is committed (liquid#409); `run-tls-interop.sh` mounts the
+build's pair.
 
 From the Linux CI container, run the automated bidirectional probe after building:
 

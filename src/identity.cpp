@@ -119,8 +119,19 @@ bool valid_key_id(std::string_view key_id) {
            key_id.find('\0') == std::string_view::npos;
 }
 
+// Upper bounds on the Argon2i cost a wrapped key file may ask for (L-29, liquid#405): the
+// parameters come from the file, and unbounded they would size the work area (memory_kib KiB) and
+// the passes past anything a machine can give. 4 GiB, 64 passes and 64 lanes is far beyond any
+// key this tool writes.
+inline constexpr std::uint32_t argon2_maximum_memory_kib = 4U * 1024U * 1024U;
+inline constexpr std::uint32_t argon2_maximum_iterations = 64;
+inline constexpr std::uint32_t argon2_maximum_lanes = 64;
+
 result<void> validate_argon2(argon2_parameters parameters) {
     if (parameters.lanes == 0 || parameters.iterations == 0 ||
+        parameters.lanes > argon2_maximum_lanes ||
+        parameters.iterations > argon2_maximum_iterations ||
+        parameters.memory_kib > argon2_maximum_memory_kib ||
         parameters.memory_kib < 8U * parameters.lanes) {
         return std::unexpected(
             key_error(errc::invalid_argument, "invalid Argon2i parameters", "passphrase_provider"));

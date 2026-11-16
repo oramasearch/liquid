@@ -30,7 +30,9 @@ configuration persisted in v3 is non-secret; credentials come only from the proc
 
 `passphrase_provider` derives a KEK using Argon2i. Each wrapped entry carries its salt and Argon2
 parameters, allowing the same passphrase to reopen the domain. Defaults are
-64 MiB, three passes, and one lane. `key_file_provider::open(path)` reads exactly 32 raw bytes.
+64 MiB, three passes, and one lane. Because the parameters come from the file, they are bounded
+above: at most 4 GiB, 64 passes and 64 lanes, or the entry is `invalid_argument` before any work
+area is allocated (L-29, liquid#405). `key_file_provider::open(path)` reads exactly 32 raw bytes.
 On POSIX the file must have mode `0600`; other modes return `unauthorized` and include the observed
 mode in `error::context`. Windows has no equivalent POSIX mode check; place raw key files under the
 current user's profile directory and restrict access with its ACL.
