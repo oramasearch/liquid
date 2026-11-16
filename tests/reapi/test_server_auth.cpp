@@ -26,7 +26,7 @@
 #include "liquid/runtime.hpp"
 #include "reapi/client.hpp"
 #include "reapi/messages.hpp"
-#include "temporary_directory.hpp"
+#include "../temporary_directory.hpp"
 
 namespace {
 
