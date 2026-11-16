@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
 #include <cstdlib>
-#include "credential_token.hpp"
 #include <filesystem>
 #include <format>
 #include <optional>
@@ -10,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "liquid/credential.hpp"
 #include "liquid/deploy.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
@@ -135,7 +135,7 @@ auto run(int argc, char** argv) -> int {
         return usage();
     }
     auto client_options = liquid::deploy_options{};
-    if (const auto token = liquid::token_detail::lake_token(); !token.empty()) {
+    if (const auto token = liquid::lake_token(); !token.empty()) {
         client_options.bearer_token = token;
     }
     if (parsed->command == "list") {

@@ -135,6 +135,7 @@ owning issue in `error::context`.
 | `liquid/daemon.hpp` | #21, #23, #85, #193, #200 | implemented on macOS and Linux; documented unsupported result on Windows | daemon lifecycle, ordered pluggable targets, per-target cursor status, flow watermarks and in-process consumer lag, capture controls, graph-memory and validation status, idle clean validation, configured plan retrieval, repository and direct-action build stream forwarding, attach, and shutdown |
 | `liquid/remote.hpp` | #16, #17, #18, #63 | implemented | REAPI endpoint and liquid-scheduler backend selection, TLS, header, deadline, batching, and publication configuration; `remote_blob_location`; transport-neutral source and executor operations including prepared scheduling records; and the move-only negotiated client handle |
 | `liquid/reapi.hpp` | #16, #415 | implemented | `reapi_serve_options` with its listener security and the coroutine-native repository CAS/ActionCache server entry point |
+| `liquid/credential.hpp` | #410, #545 | implemented | `lake_token()`, the process's Lake bearer from an owner-only `LIQUID_TOKEN_FILE` or `LIQUID_TOKEN`, and `scrub_environment_token()` for long-lived processes |
 | `liquid/listener.hpp` | #415, #403 | implemented | `listener_security` (TLS, mutual TLS, bearer token), the loopback-only default check, owner-only token files, and constant-time bearer comparison |
 | `liquid/workers.hpp` | #63 | implemented | scheduler and worker configuration plus coroutine-native long-running scheduler and worker entry points |
 | `liquid/sync.hpp` | #160, #165, #177, #189, Phase 6 | implemented | signed metadata items and reports, change-graph-derived per-ref authorization and outcomes, atomic push selection, public repository `sync_server`, missing-object `sync_session`, and the HTTP/1.1 `sync_endpoint` used by CLI push/pull and lake clients |
@@ -946,11 +947,15 @@ result<std::vector<std::byte>> encode_attestation_signature(const signature&);
 result<std::vector<std::byte>> encode_attestation(const attestation&);
 result<attestation> decode_attestation(std::span<const std::byte>);
 result<attestation_verification> verify_attestation(const attestation&, const attestation_verification_options& = {});
+result<signature_check> check_attestation_signature(const attestation&);
 ```
 
 `verify_attestation` rejects unknown profiles and validates the issuer signature, exact profile
 schema, subject kind, registered freshness rule, revocation status evidence, and disclosed
 commitments. [attestations.md](attestations.md) is the complete schema and wire-format guide.
+`check_attestation_signature` checks only the issuer signature, for display: with no identity
+chain on this machine it reports a valid signature by an unverified key instead of failing, and
+sets `identity_verified` only when a chain binds the issuer (`liquid attest show`).
 
 ### `liquid/release.hpp`
 

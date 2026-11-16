@@ -14,8 +14,6 @@
 #include "liquid/store.hpp"
 
 #include "cli/signer.hpp"
-#include "identity/taap.hpp"
-#include "objects/records.hpp"
 
 namespace liquid_cli {
 namespace {
@@ -150,13 +148,8 @@ auto attestation(int argc, char** argv) -> int {
         // The issuer is named only when an identity chain verifies the signature (liquid#512):
         // a self-signed statement claiming someone else's taap_id shows as unverified.
         auto issuer_verified = false;
-        if (auto signed_value = liquid::identity_detail::parse_signature(value->signature)) {
-            if (auto body = liquid::objects::encode_attestation_body_unchecked(*value)) {
-                if (auto checked =
-                        liquid::check_signature(value->issuer, "attestation", *body, *signed_value)) {
-                    issuer_verified = checked->identity_verified;
-                }
-            }
+        if (auto checked = liquid::check_attestation_signature(*value)) {
+            issuer_verified = checked->identity_verified;
         }
         std::println("issuer={}", liquid_cli::shown_signer(value->issuer, issuer_verified));
         std::println("issuer_verified={}", issuer_verified ? "true" : "false");

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
 #include <array>
-#include "credential_token.hpp"
 #include <charconv>
 #include <chrono>
 #include <cstdlib>
@@ -25,6 +24,7 @@ extern char** environ;
 #include <mach-o/dyld.h>
 #endif
 
+#include "liquid/credential.hpp"
 #include "liquid/daemon.hpp"
 #include "liquid/runtime.hpp"
 
@@ -200,12 +200,12 @@ auto daemon_command(int argc, char** argv) -> int {
         }
         checkout = argv[1];
         auto options = liquid::daemon_options{};
-        if (const auto token = liquid::token_detail::lake_token(); !token.empty()) {
+        if (const auto token = liquid::lake_token(); !token.empty()) {
             options.drive_bearer_token = token;
         }
         // The daemon lives long and starts build tools: the token leaves its environment and its
         // memory's copy of the environment block now that it is read (liquid#410).
-        liquid::token_detail::scrub_environment_token();
+        liquid::scrub_environment_token();
         for (auto index = 2; index < argc; ++index) {
             const auto argument = std::string_view{argv[index]};
             if ((argument == "--idle-ms" || argument == "--memory" ||

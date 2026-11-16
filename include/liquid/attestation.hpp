@@ -199,6 +199,12 @@ decode_attestation(std::span<const std::byte> bytes);
 [[nodiscard]] LIQUID_EXPORT result<attestation_verification>
 verify_attestation(const attestation& value, const attestation_verification_options& options = {});
 [[nodiscard]] LIQUID_EXPORT result<bool> verify(const attestation& value);
+// Checks the attestation's signature for display, as `check_signature` does: an issuer with no
+// identity chain on this machine is reported as signed by an unverified key, not refused. It
+// checks neither the profile schema nor status. Never use the result for a decision that trusts
+// the issuer unless `identity_verified` is set; `verify_attestation` is the decision.
+[[nodiscard]] LIQUID_EXPORT result<signature_check>
+check_attestation_signature(const attestation& value);
 // Checks that `value` is a complete `delegation/1` record and, with `parent`, that it is an
 // attenuation of `parent` linked to it (liquid#517): every child scope equals a parent scope or
 // lies under a parent `P/**` (or `**`) scope, no capability is added, `depth_remaining` decreases,

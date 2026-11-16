@@ -12,6 +12,10 @@ failure cleanup in its typed command table. The implementation lives in libliqui
 under `cli/`. Identity document export uses the public signed snapshot in `identity.cpp` and the
 existing canonical-CBOR codec. Library implementation directories follow the installed public API areas while
 keeping parsers, codecs, storage, network, solver, and runtime implementation types private.
+Adapters under `cli/` include only `liquid/` and `cli/` headers (`cli-public-includes`):
+`credential.cpp` exports the private `credential_token.hpp` bearer reader through
+`liquid/credential.hpp`, and `liquid attest show` checks the issuer with
+`check_attestation_signature`.
 The command table exposes `verify --log <log-url>` so callers can require transparency inclusion
 for agreeing reproducibility attestations.
 The projection implementation includes the Debian Tier B source writer and its committed,

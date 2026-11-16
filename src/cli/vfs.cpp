@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
 #include <chrono>
-#include "credential_token.hpp"
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
@@ -11,6 +10,7 @@
 #include <string_view>
 #include <utility>
 
+#include "liquid/credential.hpp"
 #include "liquid/repository.hpp"
 #include "liquid/runtime.hpp"
 #include "liquid/vfs.hpp"
@@ -57,7 +57,7 @@ auto vfs_mount(int argc, char** argv) -> int {
         return usage("mount requires a mountpoint and optional --read-only");
     }
     auto options = liquid::mount_options{};
-    if (const auto token = liquid::token_detail::lake_token(); !token.empty()) {
+    if (const auto token = liquid::lake_token(); !token.empty()) {
         options.bearer_token = token;
     }
     if (argc == 2) {
