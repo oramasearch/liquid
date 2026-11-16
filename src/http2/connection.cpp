@@ -1123,7 +1123,7 @@ auto connection::receive_data_part(std::uint32_t stream_id) -> runtime::task<dat
     if (received->type != frame_type::data) {
         co_return std::unexpected(protocol_error("expected DATA frame"));
     }
-    co_return data_part{std::move(received->payload), (received->flags & flag_end_stream) != 0};
+    co_return data_part{std::move(received->data), received->end_stream};
 }
 
 auto connection::cancel(std::uint32_t stream_id) -> runtime::task<void> {
