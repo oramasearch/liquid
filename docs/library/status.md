@@ -83,7 +83,11 @@ waits up to `owner_wait` for a draining or killed predecessor to release it (liq
 exclusive through `store_backend::put_if_absent` (liquid #326,
 [`store.md`](store.md#repository-state-through-the-backend)). A checkpoint's journal removal and
 a session's state removal on publish or discard end with a barrier, so what the operation
-acknowledged is durable when it returns (liquid #343). A store on a backend without a local
+acknowledged is durable when it returns (liquid #343). `store_backend` states its ordering
+contract between barriers: a crash may keep any subset of one interval's writes, each key's own
+writes in order, and the store depends on nothing stronger; the in-memory backend's subset crash
+mode checks the store, repository and session crash suites against it (liquid #344,
+[`store.md`](store.md#ordering-between-barriers)). A store on a backend without a local
 root takes the same ownership through an injected `store_options::owner` whose grant carries a
 fence: the backend's fenced view sends it with every mutation, `put_if_absent` included, so the
 remote refuses a stale holder, and a lost grant refuses every later mutation with `errc::locked`

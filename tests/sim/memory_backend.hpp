@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -12,6 +13,21 @@
 #include "liquid/store.hpp"
 
 namespace liquid::sim {
+
+// What a crash keeps of the mutations issued since the last successful barrier (liquid #344).
+// store_backend's ordering contract (include/liquid/store.hpp) is `subset`; the stronger modes are
+// what particular backends give and liquid may not rely on.
+enum class crash_durability : std::uint8_t {
+    // Every issued mutation survives: a crash of the process, not of the backend.
+    everything,
+    // None survives: a backend that keeps only what a barrier covered.
+    barriered,
+    // A prefix of the issue order survives, as from a backend with one ordered log.
+    prefix,
+    // Any subset survives, except that each key keeps a prefix of its own mutations: a backend
+    // that sends different keys' writes concurrently, or keeps them in different logs.
+    subset,
+};
 
 class memory_store_backend final : public store_backend {
 public:
@@ -30,7 +46,12 @@ public:
     // unbarriered would. Losing all of them is a prefix of any issue order (the empty one), so it
     // holds under every ordering contract between barriers (liquid #344).
     void lose_unbarriered();
-    // How many mutations a crash now would lose.
+    // A crash of the process using this backend (liquid #344): what was barriered stays, and of the
+    // mutations since the last successful barrier the backend keeps what `durability` allows,
+    // chosen deterministically from `seed`. Returns how many of them survived. Call it with the
+    // backend not frozen, after the crashed process's handles are gone.
+    std::size_t crash(crash_durability durability, std::uint64_t seed);
+    // How many mutations a crash now could lose.
     [[nodiscard]] std::size_t unbarriered() const;
 
     [[nodiscard]] runtime::task<void> put(std::string key, std::vector<std::byte> bytes) override;

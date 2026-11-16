@@ -700,6 +700,19 @@ runtime::task<void> chunk_index::rebuild(std::vector<index_entry> entries) {
                 source.mapping.close();
         }
         states_.clear();
+        // The manifest goes first, behind its own barrier (liquid #344): a backend may keep any
+        // subset of the removals issued between two barriers, and a surviving manifest that names
+        // a removed run fails the next open instead of rebuilding. Without a manifest the next open
+        // rebuilds from the packs, whatever else of the old index survived; a new run reuses an old
+        // run's key, and a key's own writes keep their order.
+        auto manifest_removed = co_await backend_->remove(key("MANIFEST"));
+        if (!manifest_removed && manifest_removed.error().code != errc::not_found) {
+            co_return std::unexpected(manifest_removed.error());
+        }
+        auto ordered = co_await backend_->barrier();
+        if (!ordered) {
+            co_return std::unexpected(ordered.error());
+        }
         auto removed = co_await remove_backend_prefix(backend_, prefix_);
         if (!removed) {
             co_return std::unexpected(removed.error());

@@ -86,7 +86,8 @@ remove-then-put fails the first memory seed.
 written before the crash survives. A real backend may also lose acknowledged writes no barrier has
 covered yet. `memory_store_backend::lose_unbarriered()` models that crash: it drops every mutation
 since the last successful barrier, which is a prefix of any issue order (the empty one) and so
-holds whatever ordering contract a backend keeps between barriers (liquid #344).
+holds under the ordering contract between barriers
+([Ordering between barriers](#ordering-between-barriers), liquid #344).
 `RepositoryStateDurability.CutIsDurableWhenItReturns` and
 `Collaboration.published_and_discarded_sessions_stay_gone_after_a_crash` use it right after a cut,
 a session publish and a session discard return (liquid #343): before those operations ended with a
@@ -123,6 +124,51 @@ The default run is 40 seeds per backend.
 The default CTest job, including the Linux sanitizer job, runs this harness. CI checkout currently
 depends on the organization `ORAMA_SUBMODULES_TOKEN`; until that secret is configured, the matrix
 and sanitizer jobs fail before tests begin.
+
+## Ordering between barriers
+
+The schedules above keep every write issued before the crash. A backend may keep less: of the
+writes since the last barrier, `store_backend`'s contract lets a crash keep any subset, with each
+key's own writes in issue order ([store.md](store.md#ordering-between-barriers), liquid #344).
+`memory_store_backend::crash(durability, seed)` models it after the crashed process's handles are
+gone. It keeps an undo state per key and a log of every mutation since the last successful barrier,
+restores the barriered state, and replays the part of the log the mode keeps, chosen from the seed:
+
+| `crash_durability` | What survives of the unbarriered log |
+|---|---|
+| `everything` | all of it: a crash of the process, not the backend (what the schedules above do) |
+| `barriered` | none (`lose_unbarriered()`) |
+| `prefix` | a prefix of the issue order, as a backend with one ordered log gives (Lake's workspace store today) |
+| `subset` | for each key independently, a prefix of that key's writes: the contract |
+
+Suites that run under it, each crashing at fault points chosen as above, freezing the backend at the
+crash, then calling `crash`:
+
+- `StoreCrashDurability` (`tests/sim/test_store_sim.cpp`): the store schedule on the memory and
+  write-once memory backends, under `prefix` and `subset`, 200 seeds each by default
+  (`LIQUID_SIM_SEEDS`, `LIQUID_SIM_SEED`).
+- `StoreCompactionCrashDurability`: one compaction crashed at each of its fault points, 8 seeds
+  each (`LIQUID_COMPACTION_CRASH_SEEDS`). Recovery must leave exactly one of the old pack and its
+  replacement. `Prefix` passed before the fix; `Subset` found the compactor's marker ordering.
+- `StoreCompactionRecoveryCrash`: the recovery of an uncommitted compaction crashed at each of its
+  fault points under `subset`. The replacement must not outlive recovery.
+- `RepositoryCrashDurability` (`tests/sim/test_repository_state.cpp`): the repository schedule on the
+  memory backend under `prefix` and `subset`, 40 seeds each (`LIQUID_REPOSITORY_SIM_SEEDS`).
+- `RepositoryCollectionCrashDurability`: a repository collection crashed at every fault point, 2
+  seeds each under `subset` (`LIQUID_COLLECTION_CRASH_SEEDS`).
+- `SessionCrashDurability` (`tests/test_collaboration.cpp`): a session's publish and its discard
+  crashed at every fault point, under `everything` and, 2 seeds each, `subset`. The file holds the
+  fork point's value or the session's, a session that comes back can be discarded, and the
+  repository accepts a new change.
+
+Every check is the same under each mode, so a seed that fails under `subset` and passes under
+`prefix` is liquid relying on more order than the contract gives. The four found are listed in
+[store.md](store.md#ordering-between-barriers), each now separated by a barrier.
+
+```sh
+ctest --test-dir build -R 'CrashDurability|CompactionRecoveryCrash' --output-on-failure
+LIQUID_SIM_SEEDS=1000 ctest --test-dir build -R StoreCrashDurability --output-on-failure
+```
 
 ## Adding a subject
 

@@ -404,6 +404,13 @@ store_backend::recover_pending_compactions(const collection_manifest& manifest) 
             if (!removed && removed.error().code != errc::not_found) {
                 co_return std::unexpected(removed.error());
             }
+            // The pack's removal is durable before the marker's (liquid #344): a backend may keep
+            // any subset of the writes between two barriers, and the marker is the only record
+            // that the pack is to go.
+            auto ordered = co_await persistence_->barrier();
+            if (!ordered) {
+                co_return std::unexpected(ordered.error());
+            }
             removed = co_await persistence_->remove(entry.key);
             if (!removed && removed.error().code != errc::not_found) {
                 co_return std::unexpected(removed.error());

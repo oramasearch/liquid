@@ -49,6 +49,18 @@ public:
     [[nodiscard]] virtual runtime::task<void> remove(std::string key) = 0;
     [[nodiscard]] virtual runtime::task<std::vector<store_backend_entry>>
     list(std::string prefix) = 0;
+    // Ordering and durability (liquid #344). Barriers cut the mutations issued through a backend
+    // (put, put_if_absent, put_range, remove) into intervals. When barrier() succeeds, every
+    // mutation that succeeded before it is durable, so a crash never keeps a mutation issued after
+    // a barrier without everything issued before it. Within one interval a crash may keep any
+    // subset of the interval's mutations, with one exception: the mutations of one key keep their
+    // issue order, so a crash keeps a prefix of each key's own mutations (a put_range never
+    // survives without the ranges before it, and an earlier put never overwrites a later one).
+    // Reads see every mutation that succeeded. Liquid puts a barrier between any two mutations of
+    // different keys whose order its recovery depends on, and relies on nothing stronger, so a
+    // backend may send one interval's writes to different keys concurrently. A backend may also
+    // give more: Lake's workspace store keeps a prefix of the whole issue order. See
+    // docs/library/store.md, "Ordering between barriers".
     [[nodiscard]] virtual runtime::task<void> barrier() = 0;
 
     // A view of this backend whose every mutation carries an owner's fence (liquid #327). An open
