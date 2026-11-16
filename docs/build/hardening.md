@@ -1,11 +1,14 @@
 # Hardening, sanitizers and fuzzing
 
 liquid reads bytes from peers, servers, stores and files other people wrote: sync frames, object
-records, drips, identity documents, HTTP/1 and HTTP/2, Git objects, protobuf, manifests and lock
-records. This page says how the build defends against bad bytes and how to look for them: the
+records, drips, identity documents, HTTP/1 and HTTP/2, Git objects and packs, protobuf, manifests
+and lock records, store packs and indexes, deltas, JSON and `.env`, archives, binaries, data and
+model files, DER, X.509 and CMS, sealed secrets, the workers protocol, TUF metadata and
+transparency evidence. This page says how the build defends against bad bytes and how to look for them: the
 hardening flags every build carries, the sanitizer configuration, and the libFuzzer harnesses.
 It came from the October 2026 security review, finding L-25 (F10, F30), tracked as liquid
-[#407](https://github.com/oramasearch/liquid/issues/407).
+[#407](https://github.com/oramasearch/liquid/issues/407); the harnesses for the parsers that #407
+left out are liquid [#463](https://github.com/oramasearch/liquid/issues/463).
 
 **No CI runs any of this.** The org rule is no CI. The runs are local, or on the Linux BuildKit lane
 below, and their results are recorded here by whoever runs them.
@@ -104,9 +107,25 @@ Each harness is `build-fuzz/fuzz/liquid-fuzz-<name>`:
 | `resolve` | Lock records: package specs, package records, concretised specs. |
 | `git` | Git loose-object headers with the identifier check, commit and tree payloads, pack deltas. |
 | `protobuf` | The protobuf wire reader and the REAPI v2 messages a remote execution peer sends. |
+| `store` | The store's pack files (the frame scan of an open pack, the table of a sealed one, each frame read back and decompressed) and the chunk index (manifest and runs), through an in-memory backend. The footer, manifest and run-header checksums are recomputed so inputs reach what they guard. |
+| `gitpack` | Git pack files and version 2 pack indexes as `git_detail::object_store` reads them from disk (written to a temporary Git directory): 31-bit and 64-bit offsets, packed headers, `OFS_DELTA` and `REF_DELTA` bases, inflation, then the commit and tree parsers. |
+| `delta` | liquid's binary delta: the delta record, with a round-trip property, and zstd patches applied to a source whose digests the harness fills in. |
+| `text` | JSON, with a round-trip property, and `.env` files (reparsed with the same keys). |
+| `archive` | The container codecs (ZIP, OOXML, ODF, wheel, JAR, tar, deb, RPM, APK), Debian's `ar` reader, and the whole format registry with nested containers. Each codec is recognised, unpacked with small limits, canonicalised, diffed and repacked. |
+| `binary` | ELF, Mach-O and PE: the codecs, and the structured readers SBOM inference, ABI extraction and relocation checking use. |
+| `data` | The HDF5, Parquet, SQLite and PDF codecs. |
+| `model` | The Jupyter, safetensors and pickle codecs. |
+| `der` | DER elements walked to any depth up to 64, X.509 certificates, PEM and DER trust anchors, certificate paths for timestamp signing, CMS SignedData. |
+| `secret` | Sealed-secret v1 records, with a round-trip property; unsealing with the test fixture's recipient key; Lake's sealing-public-key response. |
+| `workers` | The nine scheduler messages of the workers protocol, each decoded and encoded again. |
+| `tuf` | TUF metadata: a root to pin, and an update's timestamp, snapshot, targets and rotated roots, against a repository made once in a temporary directory. |
+| `transparency` | RFC 3161 timestamp tokens and RFC 4998 evidence records against a trust anchor, and a log's entry and hash tiles. |
+| `automerge-load`, `automerge-leb128`, `automerge-change-chunk` | automerge-cpp's own fuzzers (document load and save, LEB128, change chunks), compiled by [`fuzz/CMakeLists.txt`](../../fuzz/CMakeLists.txt) from `modules/automerge-cpp/fuzz/`. Its own CMake file stays off (`AUTOMERGE_CPP_BUILD_FUZZ OFF`) because it adds the internal headers from `${CMAKE_SOURCE_DIR}`, which is liquid's root in a subproject; liquid's targets use the submodule's root instead, without changing the submodule. Seeds are automerge-cpp's own corpus. |
 
 The input layout (a selector byte, two-byte length prefixes) is described in
-[`fuzz/fuzz.hpp`](../../fuzz/fuzz.hpp). Useful libFuzzer flags: `-max_total_time=<s>`,
+[`fuzz/fuzz.hpp`](../../fuzz/fuzz.hpp); each harness's own header comment gives its decoders. The
+`store` harness's raw index input carries a run, which is at least 262,188 bytes, so its seed sets
+libFuzzer's guessed `-max_len` above the 4,096-byte default. Useful libFuzzer flags: `-max_total_time=<s>`,
 `-jobs=<n> -workers=<n>` for several processes, `-rss_limit_mb=4096`, and `-artifact_prefix=<dir>/`
 to keep crash inputs out of the working directory. A crash input replays with
 `build-fuzz/fuzz/liquid-fuzz-<name> <file>`.
@@ -163,6 +182,32 @@ minutes and then 30 more minutes from the grown corpus:
 | resolve | 3.9 M | 6524 | 893 | clean |
 | sync | 10.6 M | 4072 | 673 | clean |
 
+The harnesses added by [#463](https://github.com/oramasearch/liquid/issues/463) have no recorded
+run yet:
+
+| Harness | Recorded runs |
+|---|---|
+| store | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| gitpack | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| delta | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| text | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| archive | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| binary | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| data | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| model | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| der | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| secret | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| workers | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| tuf | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| transparency | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| automerge-load | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| automerge-leb128 | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+| automerge-change-chunk | not run (Steve, 2026-11-14: no runs in this PR; see #464) |
+
+Known before any run: the `store` harness reaches the unbounded frame allocation of
+[#411](https://github.com/oramasearch/liquid/issues/411) (a frame's stated raw length is allocated
+before it is checked), so it reports out-of-memory inputs until that lands.
+
 The sanitizer suite (`-DLIQUID_SANITIZE=address;undefined`, macOS): 750 of 753 passed. Two tests
 fail because of an out-of-bounds read in the tree-sitter-swift scanner
 ([#462](https://github.com/oramasearch/liquid/issues/462)), and one is a timing-sensitive socket
@@ -171,6 +216,10 @@ test that passes when run again.
 ## What is not done
 
 - 24 CPU-hour runs per harness: [#464](https://github.com/oramasearch/liquid/issues/464).
-- Harnesses for the remaining parsers: [#463](https://github.com/oramasearch/liquid/issues/463).
+- Runs of the harnesses added by [#463](https://github.com/oramasearch/liquid/issues/463): with the
+  24 CPU-hour runs, [#464](https://github.com/oramasearch/liquid/issues/464).
+- The transparency log's checkpoint and proof documents are parsed inside `http_log_source` from
+  HTTP responses and have no in-memory entry point, so no harness reaches them; the `transparency`
+  harness covers the tiles, timestamp tokens and evidence records.
 - Thread sanitizer, `-Wall` and clang-tidy: [#465](https://github.com/oramasearch/liquid/issues/465).
 - The Linux sanitizer and fuzz runs through `tools/hardening/` have not been run yet.
