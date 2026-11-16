@@ -426,7 +426,8 @@ and non-executing pickle codecs through a versioned C module ABI. Format trees d
 repository and CLI container diffs, archive entries use `!/` paths in search, and Tier 1 and Tier 2
 entries are retained as deduplicated blobs beside the verbatim container. Uncompressed tar has a
 deterministic writer, while hard or unsupported format surfaces retain honest tiers and opaque
-reasons ([`formats.md`](formats.md)).
+reasons ([`formats.md`](formats.md)). The Parquet and PDF readers charge every allocation sized by the file, and
+the bytes they decompress, to one byte budget per unpack before making it (liquid #433).
 
 **Projection.** The CLI resolves ordinary-repository changes and trees without build configuration;
 `liquid tree` prints the recorded root digest. Result-ID projection retains build-repository

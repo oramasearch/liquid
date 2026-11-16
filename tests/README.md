@@ -143,7 +143,8 @@ catalog records whose patch is range-hydrated through the on-disk remote source,
 the same source's target chunks, and reject patch-blob or final-target digest mismatches.
 The `formats/` cases cover the common registry contract, launch ZIP/tar/HDF5/Parquet/SQLite
 decoders, exact Tier 1 repack, deterministic tar and SquashFS writing, volatile fields, malformed
-boundaries, Parquet RLE/bit-packed runs with wrapping lengths or invalid widths, nesting limits,
+boundaries, Parquet RLE/bit-packed runs with wrapping lengths or invalid widths, Parquet and PDF
+allocations charged to one byte budget before they are made, nesting limits,
 and a dynamically loaded C11 module. The strict JSON and `.env` codecs
 used by
 structured configuration encryption remain covered there; `encryption/`

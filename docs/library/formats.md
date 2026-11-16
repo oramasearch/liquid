@@ -105,6 +105,18 @@ above 64, run-header varints wider than 64 bits, and any run longer than the byt
 stream; run lengths are checked by division before they are multiplied, so a crafted run length
 cannot wrap the bounds check (liquid #432).
 
+One allowance, the caller's byte budget, covers the whole Parquet unpack, and every allocation
+sized by the file is charged to it before it is made (liquid #433). That includes Thrift lists,
+maps, binaries, and struct fields in the footer and page headers, schema leaf paths, each page
+buffer at its declared decompressed size, level and index vectors at the page's declared value
+count, PLAIN values, dictionary copies, and the column bytes the tree keeps. A Thrift list or map
+that declares more elements than its remaining bytes could hold is corrupt, and schema nesting stops
+at 64 levels. Decompressed pages, dictionaries, the footer, and column bytes stay charged for the
+whole unpack, so column chunks that name the same page cannot each decode it on a fresh allowance.
+A page's levels and values are returned to the budget when the page is done, because each value they
+produce is charged again as output. A column that exhausts the budget ends the unpack with
+`format_tree::truncated` set; a footer that exhausts it fails with `unsupported`.
+
 ### SQLite
 
 The Tier 2 reader validates the database header, walks table b-tree interior and leaf pages, decodes
@@ -136,6 +148,11 @@ extracts literal text used with standard text-show operators, and exposes title,
 and keyword metadata. `/ID`, `/CreationDate`, `/ModDate`, and `/Producer` are volatile. Rendering,
 encrypted files, JBIG2, JPX, JavaScript, malformed xref repair, and full font encoding support are
 outside the reader's subset.
+
+Object bytes, inflated stream bytes, and extracted text are all charged to one byte budget for the
+whole file (liquid #433). Each stream inflates only into what is left, and the text taken from it
+must fit what is left after that, so many individually small streams cannot add up past the
+budget. A stream or its text that does not fit fails the unpack with `unsupported`.
 
 ### Jupyter and model files
 
