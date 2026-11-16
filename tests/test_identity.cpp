@@ -397,6 +397,57 @@ TEST(Identity, SignerNameWithoutAChainDoesNotVerify) {
     std::filesystem::remove_all(verifier_home, code);
 }
 
+// liquid#429: a signature checked without a chain is reported as signed by an unverified key. It
+// never carries the identity it names, and only a chain makes `identity_verified` true.
+TEST(Identity, SignatureWithoutAChainIsReportedAsAnUnverifiedKey) {
+    const auto victim_home = rotation_home("unverified-victim");
+    const auto attacker_home = rotation_home("unverified-attacker");
+    const auto verifier_home = rotation_home("unverified-verifier");
+    auto victim = open_signer_in(victim_home);
+    auto attacker = open_signer_in(attacker_home);
+    const auto body = bytes("drip body");
+    auto signed_value = liquid::runtime::block_on(attacker.sign("drip", body));
+    ASSERT_TRUE(signed_value) << signed_value.error().message;
+    auto forged = attacker.identity();
+    forged.taap_id = victim.identity().taap_id;
+    forged.fingerprint = victim.identity().fingerprint;
+
+    set_identity_home(verifier_home);
+    const auto unverified = liquid::check_signature(forged, "drip", body, *signed_value);
+    ASSERT_TRUE(unverified) << unverified.error().message;
+    EXPECT_TRUE(unverified->signature_valid);
+    EXPECT_FALSE(unverified->identity_verified) << "a key without a chain verified an identity";
+    EXPECT_FALSE(liquid::verify(forged, "drip", body, *signed_value));
+    EXPECT_EQ(liquid::unverified_signer_label, "signed by an unverified key");
+
+    // A tampered body is still a bad signature, not an unverified one.
+    auto tampered = body;
+    tampered.push_back(std::byte{0});
+    EXPECT_FALSE(liquid::check_signature(forged, "drip", tampered, *signed_value));
+
+    // Once the victim's chain is known, the attacker's key is refused outright.
+    const auto victim_document = victim.document();
+    ASSERT_TRUE(victim_document) << victim_document.error().message;
+    ASSERT_TRUE(liquid::trust_identity_chain(std::array{*victim_document}));
+    const auto refused = liquid::check_signature(forged, "drip", body, *signed_value);
+    ASSERT_FALSE(refused);
+    EXPECT_EQ(refused.error().message, "signing key is not in the identity chain");
+
+    // The attacker's own chain verifies the attacker, and only the attacker.
+    const auto attacker_document = attacker.document();
+    ASSERT_TRUE(attacker_document) << attacker_document.error().message;
+    ASSERT_TRUE(liquid::trust_identity_chain(std::array{*attacker_document}));
+    const auto honest = liquid::check_signature(attacker.identity(), "drip", body, *signed_value);
+    ASSERT_TRUE(honest) << honest.error().message;
+    EXPECT_TRUE(honest->signature_valid);
+    EXPECT_TRUE(honest->identity_verified);
+
+    std::error_code code;
+    std::filesystem::remove_all(victim_home, code);
+    std::filesystem::remove_all(attacker_home, code);
+    std::filesystem::remove_all(verifier_home, code);
+}
+
 // A document that claims another identity's name with its own key is self-consistent and
 // self-signed, but its identifier is not derived from its key, so it binds nothing.
 TEST(Identity, InitialDocumentMustBeNamedAfterItsOwnKey) {

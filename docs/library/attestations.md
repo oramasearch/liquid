@@ -16,8 +16,13 @@ profile is invalid, including when its signature is otherwise valid.
 
 `verify_attestation` first reconstructs and verifies the TAAP signature, then verifies the
 registered profile, subject kind, schema, freshness, status evidence, and supplied attribute
-disclosures. Its result is `{ verified, reason }`; `verify(attestation)` remains the compact
-boolean form. Encode also validates the profile schema so invalid records cannot be emitted by
+disclosures. Its result is `{ verified, reason, unknown_signer }`; `verify(attestation)` remains
+the compact boolean form. The signature is checked only through the issuer's identity chain, so
+`verified` means the issuer's identity was verified, not only its signature: an attestation signed
+by the key it carries, with no chain for the issuer it names, sets `unknown_signer` and never
+`verified`. Every caller that trusts `issuer.taap_id` (approved issuers and builders, admission,
+release signers, provenance) relies on that (Steve, 2026-11-14; liquid#429;
+[identity.md](identity.md#every-decision-that-trusts-an-identity-requires-a-verified-chain)). Encode also validates the profile schema so invalid records cannot be emitted by
 the public encoder.
 
 | Profile | Subject kind | Required attributes | Optional attributes | Status policy |

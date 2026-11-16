@@ -109,6 +109,9 @@ struct LIQUID_EXPORT sync_ref_verdict {
     std::string reason;
 };
 
+// Runs before the pushed records are imported, so `sync_item::author` is still the name the frame
+// claims, not a verified identity. Authorize on the authenticated caller; the import that follows
+// refuses any drip or change whose author no identity chain verifies (liquid#429).
 using sync_authorizer = std::function<runtime::task<std::vector<sync_ref_verdict>>(
     const sync_item&, std::span<const sync_ref_update> reference_updates)>;
 

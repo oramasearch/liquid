@@ -42,6 +42,11 @@ auto usage(std::string_view message) -> int {
     return 2;
 }
 
+// A record's author is shown only when an identity chain verified it (liquid#429).
+auto shown_signer(const liquid::actor& by, bool identity_verified) -> std::string_view {
+    return identity_verified ? std::string_view{by.taap_id} : liquid::unverified_signer_label;
+}
+
 auto json_string(std::string_view value) -> std::string {
     auto output = std::string{"\""};
     for (const auto character : value) {
@@ -616,7 +621,7 @@ auto repo_log(int argc, char** argv) -> int {
                            json_string(liquid::to_string(drip.id.value)),
                            json_string(liquid::to_string(drip.base.value)),
                            strings_json(paths),
-                           json_string(drip.by.taap_id),
+                           json_string(shown_signer(drip.by, drip.identity_verified)),
                            drip.at.time_since_epoch().count(),
                            reasoned_from,
                            cursor,
@@ -628,7 +633,7 @@ auto repo_log(int argc, char** argv) -> int {
             for (const auto& drip : *drips) {
                 std::println("{} {} {}",
                              liquid::to_string(drip.id.value),
-                             drip.by.taap_id,
+                             shown_signer(drip.by, drip.identity_verified),
                              drip.revalidated == liquid::stale_revalidation::disjoint ? "disjoint"
                              : drip.revalidated == liquid::stale_revalidation::forced ? "forced"
                                                                                       : "");
@@ -648,7 +653,7 @@ auto repo_log(int argc, char** argv) -> int {
                        index == 0 ? "" : ",",
                        json_string(liquid::to_string(change.id.value)),
                        json_string(change.message),
-                       json_string(change.author.taap_id),
+                       json_string(shown_signer(change.author, change.identity_verified)),
                        change.at.time_since_epoch().count());
         }
         std::println("]");
@@ -656,7 +661,7 @@ auto repo_log(int argc, char** argv) -> int {
         for (const auto& change : *changes) {
             std::println("{} {} {}",
                          liquid::to_string(change.id.value),
-                         change.author.taap_id,
+                         shown_signer(change.author, change.identity_verified),
                          change.message);
         }
     }

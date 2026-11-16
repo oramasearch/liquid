@@ -26,7 +26,12 @@ chain with `liquid identity show --chain` and accept it with `liquid identity tr
 identity may issue the policy is liquid#384. It counts distinct
 TAAP identity identifiers that appear in the policy. Repeated approvals from one identity count
 once. An approval from an unlisted identity, for another artifact or policy, after policy expiry,
-or at or after that key's signed compromise declaration does not count. The result reports
+or at or after that key's signed compromise declaration does not count. An approval signed only by
+the key it carries never counts, whatever `taap_id` its issuer names (Steve, 2026-11-14;
+liquid#429): self-signed `release_approval/1` statements that name listed signers but are signed by
+throwaway keys are `unknown_signers` while the verifier lacks the named signers' chains, and are
+refused once it holds them, because their keys are not in those chains. Trusting the throwaway
+identities' own chains changes nothing, since they are not the identities the policy lists. The result reports
 `satisfied`, the sorted `distinct_valid_signers`, and the policy identities still `missing`.
 
 These are the same role and distinct-issuer semantics used by TUF metadata. Client-side TUF
@@ -66,7 +71,11 @@ duplicate-identity counting, and two-of-three success.
 `ReleaseApproval.approval_after_declared_compromise_is_rejected` proves that the identity chain's
 signing-time compromise rule applies to release approvals. The threshold test first verifies with no
 other identity trusted (the policy is refused), then with only the policy issuer trusted (both
-approvals are `unknown_signers`), before trusting the approvers. `cli-release` does the same through
+approvals are `unknown_signers`), before trusting the approvers.
+`ReleaseApproval.self_signed_approvals_naming_listed_signers_do_not_count` forges two approvals
+naming two of three listed signers with throwaway keys and shows that neither counts toward the
+2-of-3 threshold, with and without the named signers' and the throwaway identities' chains trusted,
+and that a real approval beside a forged one counts once. `cli-release` does the same through
 `liquid identity show --chain` and `liquid identity trust`.
 
 Real hardware is not required by CI. Hardware runs should record the date, token model, selected

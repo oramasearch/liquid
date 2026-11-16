@@ -3151,6 +3151,28 @@ auto export_directory_messages(const crdt::directory_document& document,
         failure(errc::corrupt, "directory export did not quiesce", "repository sync"));
 }
 
+// True only when an identity chain binds `author` to the key that signed the record. History
+// signed by an identity whose chain this machine never received (for example before liquid#448)
+// is reported as signed by an unverified key, never as `author` (liquid#429).
+auto signed_by_verified_identity(const actor& author,
+                                 std::string_view artifact_type,
+                                 std::span<const std::byte> body,
+                                 std::span<const std::byte> encoded_signature) -> bool {
+    auto signature = identity_detail::parse_signature(encoded_signature);
+    if (!signature) {
+        return false;
+    }
+    auto checked = check_signature(author, artifact_type, body, *signature);
+    return checked && checked->identity_verified;
+}
+
+auto change_signed_by_verified_identity(const change& value) -> bool {
+    auto body = objects::encode_change_body(value);
+    return body && signed_by_verified_identity(value.author, "change", *body, value.sig);
+}
+
+// The author of an imported drip or change is accepted only through `verify`, which requires the
+// author's identity chain (liquid#429): a record signed only by the key it carries is refused.
 auto import_synced_drip(repository_document& candidate,
                         std::vector<persisted_drip>& imported_drips,
                         const sync_item& item) -> result<void> {
@@ -6599,6 +6621,10 @@ runtime::task<std::vector<drip>> repository::drips() {
                           .reasoned_from = decoded->reasoned_from,
                           .revalidated = decoded->revalidated,
                           .delegation = decoded->delegation};
+        const auto signing_author =
+            saved.author.taap_id.empty() ? impl_->signing_key.identity() : saved.author;
+        value.identity_verified =
+            signed_by_verified_identity(signing_author, "drip", saved.body, saved.signature);
         for (auto& path : decoded->paths) {
             value.ops.push_back({std::move(path)});
         }
@@ -7670,6 +7696,7 @@ runtime::task<std::vector<change>> repository::log(log_options options) {
             auto value = objects::decode_change(*bytes, next->value.alg);
             if (!value)
                 co_return std::unexpected(value.error());
+            value->identity_verified = change_signed_by_verified_identity(*value);
             output.push_back(*value);
             if (value->parents.empty() ||
                 !history_repository(impl_->current, value->parents.front().repo_id)) {
@@ -7698,6 +7725,7 @@ runtime::task<std::vector<change>> repository::log(log_options options) {
         auto value = objects::decode_change(*bytes, id.value.alg);
         if (!value)
             co_return std::unexpected(value.error());
+        value->identity_verified = change_signed_by_verified_identity(*value);
         indexes.emplace(key, changes.size());
         changes.push_back(*value);
         for (const auto& parent : value->parents)
