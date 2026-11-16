@@ -19,6 +19,10 @@ Server-side action execution uses the same fixed `SOURCE_DATE_EPOCH` and `ZERO_A
 as local and wrapped actions, keeping archive timestamps outside output identity.
 The scheduler client uploads its prepared native graph directly instead of issuing one large
 FindMissingBlobs request; content addressing keeps repeated writes idempotent.
+The server reads each request stream through a bounded gRPC message reader (liquid#451): a unary
+request is one message of at most 5 MiB, a ByteStream Write is applied one message at a time, and a
+stream answered before it ended closes the connection. The client sends a large Write as 1 MiB
+messages on one stream (`grpc_client::call_messages`).
 Normal connection closure, including the transport's lowercase EOF spelling, is not logged as a
 server error.
 

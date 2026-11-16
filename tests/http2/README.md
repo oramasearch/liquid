@@ -2,7 +2,9 @@
 
 The HTTP/2 tests exercise frame-envelope validation, HPACK's RFC 7541 Huffman example and
 stateful dynamic table, gRPC message and trailer framing, and a flow-controlled TCP loopback h2c
-round trip. `Http2Interop.GetsCapabilitiesFromNativeLinkOverH2c` uses the peer supplied by
+round trip. `GrpcMessageReader.*` cover the incremental reader the REAPI server uses (liquid#451):
+messages split across parts or packed into one, a message over the limit refused from its prefix,
+and at most one unfinished message held. `Http2Interop.GetsCapabilitiesFromNativeLinkOverH2c` uses the peer supplied by
 `tools/reapi-peers`; it skips with a diagnostic unless `LIQUID_HTTP2_NATIVE_LINK` is set.
 The loopback exchange finishes through HTTP/2 GOAWAY so both peers complete their final writes.
 

@@ -13,7 +13,8 @@ action remains unable to execute an arbitrary external binary.
 The wrap launcher installs `wrap_hook.c` only in the child sandbox: Linux bind-mounts it and injects
 `LD_PRELOAD`; macOS permits its path in the generated profile and injects
 `DYLD_INSERT_LIBRARIES`. The hook records process identity, parent, executable, normalized working
-directory, and argv, then exits a process early when its per-run plan entry is a validated hit.
+directory, and argv, keyed by their BLAKE3-256 digest (`liquid_wrap_process_key_hex`, liquid#449),
+then exits a process early when its per-run plan entry is a validated hit.
 Conditional hit rows also carry the size and BLAKE3-256 digest of previously invalidated inputs.
 The hook checks those inputs in the mounted working tree at process entry, after their producers
 have finished, and executes the process if either differs. `wrap_plan.c` (shared by the hook and

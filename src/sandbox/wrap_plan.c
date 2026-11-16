@@ -217,8 +217,72 @@ static int conditional_input_matches(const char* root,
     return size == expected_size && same_digest(actual, expected_hex);
 }
 
-int liquid_wrap_plan_status(const char* plan, size_t size, uint64_t key, const char* root) {
-    if (plan == NULL) {
+/* Feeds a 64-bit little-endian length and then the bytes, so the parts of a key cannot run into
+ * one another. */
+static void hash_part(blake3_hasher* hasher, const void* data, size_t size) {
+    uint8_t length[8];
+    uint64_t value = (uint64_t)size;
+    for (size_t index = 0; index < sizeof(length); ++index) {
+        length[index] = (uint8_t)(value & 0xffU);
+        value >>= 8U;
+    }
+    blake3_hasher_update(hasher, length, sizeof(length));
+    blake3_hasher_update(hasher, data, size);
+}
+
+void liquid_wrap_process_key_hex(const char* executable,
+                                 size_t executable_size,
+                                 const char* directory,
+                                 size_t directory_size,
+                                 const char* arguments,
+                                 size_t arguments_size,
+                                 char output[LIQUID_WRAP_KEY_HEX_SIZE + 1]) {
+    static const char label[] = "liquid wrap process key v2";
+    blake3_hasher hasher;
+    blake3_hasher_init(&hasher);
+    hash_part(&hasher, label, sizeof(label) - 1);
+    hash_part(&hasher, executable, executable_size);
+    hash_part(&hasher, directory, directory_size);
+    hash_part(&hasher, arguments, arguments_size);
+    uint8_t digest[BLAKE3_OUT_LEN];
+    blake3_hasher_finalize(&hasher, digest, sizeof(digest));
+    hex_encode(digest, sizeof(digest), output);
+}
+
+/* Reads `<kind>\t<64 hex>\t` at the start of `line`. Returns the text after the second tab when
+ * the row is of that kind and its key is exactly 64 lowercase hex digits equal to `key`;
+ * otherwise NULL. */
+static const char* row_for_key(const char* line, char kind, const char* key) {
+    if (line[0] != kind || line[1] != '\t') {
+        return NULL;
+    }
+    const char* candidate = line + 2;
+    for (size_t index = 0; index < LIQUID_WRAP_KEY_HEX_SIZE; ++index) {
+        if (hex_value(candidate[index]) < 0) {
+            return NULL;
+        }
+    }
+    if (candidate[LIQUID_WRAP_KEY_HEX_SIZE] != '\t' || !same_digest(candidate, key)) {
+        return NULL;
+    }
+    return candidate + LIQUID_WRAP_KEY_HEX_SIZE + 1;
+}
+
+static int parse_status(const char* text, int* status) {
+    if (*text < '0' || *text > '9') {
+        return 0;
+    }
+    char* end = NULL;
+    const long value = strtol(text, &end, 10);
+    if (end == text || *end != '\0' || value < 0 || value > 255) {
+        return 0;
+    }
+    *status = (int)value;
+    return 1;
+}
+
+int liquid_wrap_plan_status(const char* plan, size_t size, const char* key, const char* root) {
+    if (plan == NULL || !is_digest_hex(key)) {
         return -1;
     }
     int found = 0;
@@ -236,28 +300,25 @@ int liquid_wrap_plan_status(const char* plan, size_t size, uint64_t key, const c
         }
         memcpy(line, start, length);
         line[length] = '\0';
-        unsigned long long candidate = 0;
-        int candidate_status = 0;
-        if (sscanf(line, "H\t%llx\t%d", &candidate, &candidate_status) == 2) {
-            if ((uint64_t)candidate == key) {
-                found = 1;
-                status = candidate_status;
+        const char* hit = row_for_key(line, 'H', key);
+        if (hit != NULL) {
+            int candidate_status = 0;
+            if (!parse_status(hit, &candidate_status)) {
+                return -1;
             }
+            found = 1;
+            status = candidate_status;
             continue;
         }
-        if (sscanf(line, "C\t%llx\t", &candidate) != 1 || (uint64_t)candidate != key) {
+        const char* condition = row_for_key(line, 'C', key);
+        if (condition == NULL) {
             continue;
         }
         /* A condition for this key that cannot be parsed or does not match is a miss. */
         char expected[LIQUID_WRAP_DIGEST_HEX_SIZE + 1];
         unsigned long long expected_size = 0;
         char encoded[8192];
-        if (sscanf(line,
-                   "C\t%llx\t%64s\t%llu\t%8191s",
-                   &candidate,
-                   expected,
-                   &expected_size,
-                   encoded) != 4 ||
+        if (sscanf(condition, "%64s\t%llu\t%8191s", expected, &expected_size, encoded) != 3 ||
             !conditional_input_matches(root, encoded, expected, (uint64_t)expected_size)) {
             return -1;
         }

@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <print>
 #include <set>
 #include <span>
@@ -66,6 +67,15 @@ struct resource_digest {
     reapi::Digest wire;
 };
 
+// liquid#451: no request stream is read whole. The batch size the server advertises; a unary
+// request is one message of at most that plus room for its own fields (digests, names), so a
+// full BatchUpdateBlobs fits and a larger body is refused before it is held.
+constexpr auto max_batch_total_size_bytes = std::size_t{4} * 1024 * 1024;
+constexpr auto max_unary_message_bytes = max_batch_total_size_bytes + std::size_t{1024} * 1024;
+// A ByteStream Write is read one message at a time, and each message is applied to the partial
+// write before the next is read, so one stream holds at most one message of this size.
+constexpr auto max_write_message_bytes = max_unary_message_bytes;
+
 struct server_state {
     server_state(store objects,
                  std::filesystem::path action_cache,
@@ -86,22 +96,87 @@ auto server_error(errc code, std::string message, std::string context = {}) -> e
     return {code, std::move(message), std::move(context)};
 }
 
+// A request stream read one DATA frame at a time into a bounded message reader.
+class request_stream {
+public:
+    request_stream(http2::connection& connection, std::uint32_t id, std::size_t max_message_bytes)
+        : connection_(connection), id_(id), reader_(max_message_bytes) {}
+
+    // The next message, or nothing once the peer has ended the stream.
+    runtime::task<std::optional<http2::grpc_message>> next() {
+        for (;;) {
+            auto message = reader_.next();
+            if (!message) {
+                co_return std::unexpected(message.error());
+            }
+            if (*message) {
+                co_return std::move(*message);
+            }
+            if (ended_) {
+                if (reader_.buffered() != 0) {
+                    co_return std::unexpected(
+                        server_error(errc::corrupt, "gRPC message body is incomplete"));
+                }
+                co_return std::optional<http2::grpc_message>{};
+            }
+            auto part = co_await connection_.receive_data_part(id_);
+            if (!part) {
+                co_return std::unexpected(part.error());
+            }
+            ended_ = part->end_stream;
+            auto appended = reader_.append(part->bytes);
+            if (!appended) {
+                co_return std::unexpected(appended.error());
+            }
+        }
+    }
+
+    // Whether the peer has ended the stream and every byte of it has been read.
+    [[nodiscard]] auto finished() const noexcept -> bool {
+        return ended_ && reader_.buffered() == 0;
+    }
+
+    // Whether a message was refused for its size.
+    [[nodiscard]] auto exceeded() const noexcept -> bool {
+        return reader_.exceeded();
+    }
+
+    [[nodiscard]] auto limit() const noexcept -> std::size_t {
+        return reader_.max_message_bytes();
+    }
+
+private:
+    http2::connection& connection_;
+    std::uint32_t id_;
+    http2::grpc_message_reader reader_;
+    bool ended_{};
+};
+
 auto header(std::span<const http2::header_field> values, std::string_view name)
     -> std::optional<std::string> {
     const auto found = std::ranges::find(values, name, &http2::header_field::name);
     return found == values.end() ? std::nullopt : std::optional<std::string>{found->value};
 }
 
-auto request_message(std::span<const std::byte> body) -> result<std::vector<std::byte>> {
-    auto messages = http2::decode_grpc_messages(body);
-    if (!messages) {
-        return std::unexpected(messages.error());
+// A unary request: one uncompressed message, then the end of the stream.
+runtime::task<std::vector<std::byte>> request_message(request_stream& request) {
+    auto first = co_await request.next();
+    if (!first) {
+        co_return std::unexpected(first.error());
     }
-    if (messages->size() != 1 || messages->front().compressed) {
-        return std::unexpected(
+    if (!*first || (*first)->compressed) {
+        co_return std::unexpected(
             server_error(errc::corrupt, "REAPI request must contain one uncompressed message"));
     }
-    return std::move(messages->front().bytes);
+    auto rest = co_await request.next();
+    if (!rest) {
+        co_return std::unexpected(rest.error());
+    }
+    if (*rest) {
+        co_return std::unexpected(
+            server_error(errc::corrupt, "REAPI request must contain one uncompressed message"));
+    }
+    co_return std::move((*first)->bytes);
 }
 
 auto grpc_code(errc code) -> std::uint32_t {
@@ -532,7 +607,7 @@ runtime::task<void> handle_capabilities(http2::connection& connection,
                                                             reapi::DigestFunctionValue::sha256}
                                               : std::vector{reapi::DigestFunctionValue::sha256},
                 .action_cache_update_capabilities = reapi::ActionCacheUpdateCapabilities{true},
-                .max_batch_total_size_bytes = 4U * 1024U * 1024U,
+                .max_batch_total_size_bytes = static_cast<std::int64_t>(max_batch_total_size_bytes),
                 .symlink_absolute_path_strategy = reapi::SymlinkAbsolutePathStrategy::disallowed,
                 .max_cas_blob_size_bytes = std::numeric_limits<std::int64_t>::max()},
         .execution_capabilities =
@@ -753,18 +828,28 @@ runtime::task<void> handle_read(http2::connection& connection,
 runtime::task<void> handle_write(http2::connection& connection,
                                  std::uint32_t stream,
                                  server_state& state,
-                                 std::span<const std::byte> body) {
-    auto messages = http2::decode_grpc_messages(body);
-    if (!messages || messages->empty()) {
-        co_return co_await send_failure(
-            connection,
-            stream,
-            messages ? server_error(errc::corrupt, "ByteStream Write has no messages")
-                     : messages.error());
-    }
+                                 request_stream& messages) {
     auto committed = std::int64_t{};
     auto resource_name = std::string{};
-    for (const auto& message : *messages) {
+    auto count = std::size_t{};
+    for (;;) {
+        // One message at a time: each is applied before the next is read (liquid#451).
+        auto next = co_await messages.next();
+        if (!next && messages.exceeded()) {
+            co_return co_await send_status(
+                connection,
+                stream,
+                8,
+                std::format("ByteStream Write message exceeds {} bytes", messages.limit()));
+        }
+        if (!next) {
+            co_return co_await send_failure(connection, stream, next.error());
+        }
+        if (!*next) {
+            break;
+        }
+        const auto message = std::move(**next);
+        ++count;
         if (message.compressed) {
             co_return co_await send_failure(
                 connection,
@@ -827,6 +912,10 @@ runtime::task<void> handle_write(http2::connection& connection,
                 co_return co_await send_failure(connection, stream, stored.error());
             }
         }
+    }
+    if (count == 0) {
+        co_return co_await send_failure(
+            connection, stream, server_error(errc::corrupt, "ByteStream Write has no messages"));
     }
     co_return co_await send_message(
         connection, stream, reapi::WriteResponse{.committed_size = committed});
@@ -1339,28 +1428,48 @@ runtime::task<void> session(std::shared_ptr<server_state> state,
             }
             continue;
         }
-        auto body = co_await connection.receive_data(*stream_id);
-        if (!body) {
-            co_return std::unexpected(body.error());
-        }
+        // The body is never read whole (liquid#451): a Write is applied one message at a time
+        // and a unary request is one message, each within its limit.
+        auto request = request_stream{connection,
+                                      *stream_id,
+                                      *method == write_method ? max_write_message_bytes
+                                                              : max_unary_message_bytes};
         if (*method == write_method) {
-            auto handled = co_await handle_write(connection, *stream_id, *state, *body);
+            auto handled = co_await handle_write(connection, *stream_id, *state, request);
             if (!handled) {
                 co_return std::unexpected(handled.error());
             }
-            continue;
-        }
-        auto message = request_message(*body);
-        if (!message) {
-            auto failed = co_await send_failure(connection, *stream_id, message.error());
-            if (!failed) {
-                co_return std::unexpected(failed.error());
+        } else {
+            auto message = co_await request_message(request);
+            if (!message) {
+                auto failed =
+                    request.exceeded()
+                        ? co_await send_status(connection,
+                                               *stream_id,
+                                               8,
+                                               std::format("request message exceeds {} bytes",
+                                                           request.limit()))
+                        : co_await send_failure(connection, *stream_id, message.error());
+                if (!failed) {
+                    co_return std::unexpected(failed.error());
+                }
+            } else {
+                auto handled =
+                    co_await dispatch(connection, *stream_id, *state, *method, *message);
+                if (!handled) {
+                    co_return std::unexpected(handled.error());
+                }
             }
-            continue;
         }
-        auto handled = co_await dispatch(connection, *stream_id, *state, *method, *message);
-        if (!handled) {
-            co_return std::unexpected(handled.error());
+        // A stream answered before the peer finished sending it (a refused or malformed request)
+        // still has bytes on the way. Reading them would hold them; leaving them would queue
+        // them. Close the connection instead.
+        if (!request.finished()) {
+            auto closed = co_await connection.goaway();
+            if (!closed) {
+                co_return std::unexpected(closed.error());
+            }
+            co_return {};
         }
     }
 }

@@ -638,9 +638,27 @@ so the writer and the reader hash and parse the same way.
 The plan has two row kinds:
 
 ```
-H\t<process key, hex>\t<exit status>
-C\t<process key, hex>\t<BLAKE3-256 of the input, 64 hex>\t<size>\t<relative path, hex>
+H\t<process key, 64 hex>\t<exit status>
+C\t<process key, 64 hex>\t<BLAKE3-256 of the input, 64 hex>\t<size>\t<relative path, hex>
 ```
+
+- **The process key is BLAKE3-256** (liquid#449). It names a wrapped process: the hook hashes the
+  label `liquid wrap process key v2`, then the executable, the fixed-root working directory and the
+  NUL-separated argv, each preceded by its length as eight little-endian bytes, so no byte can move
+  from one part to the next (`liquid_wrap_process_key_hex`). The key is written as 64 lowercase hex
+  digits in the trace and the plan, and carried as a 32-byte digest through the trace parser, the
+  plan rows and the saved wrap state in `src/build/wrap.cpp`. It was 64-bit FNV-1a until
+  liquid#449. An author who controls part of a command line (an argument, a file name) could find a
+  second command with a cached command's key and have it answered from the first one's result.
+  `WrapPlan.command_lines_whose_fnv1a_keys_collide_get_different_keys_and_do_not_hit` uses the
+  colliding pair below as two executables: their old keys are equal, their keys differ, and a plan
+  row for one is not a hit for the other. A row whose key is not exactly 64 lowercase hex digits
+  never matches, so a plan in the old form has no hits.
+- **The saved wrap state is versioned.** The state file in the wrap cache directory starts with
+  `V\t2`. A state without that line (written with 64-bit keys) or with another version is not read:
+  the run starts from an empty state, executes what it must, and writes a current one. A version-2
+  state with a key in any other form is corrupt and is refused, never read as a key
+  (`WrapState.a_state_with_64_bit_process_keys_is_ignored_and_rebuilt`).
 
 - **Conditional inputs are revalidated with BLAKE3-256**, the hash liquid content-addresses with. A
   `C` row names an input the cached action read that an earlier action in this run may have
@@ -663,12 +681,9 @@ C\t<process key, hex>\t<BLAKE3-256 of the input, 64 hex>\t<size>\t<relative path
   regular file owned by the effective user or root that no other user can write
   (`src/sandbox/override.hpp`); otherwise the built-in locations are used.
 
-The process key itself is still 64-bit FNV-1a over executable, working directory and argv; moving it
-to BLAKE3 changes the persisted wrap state and is tracked in
-[liquid#449](https://github.com/oramasearch/liquid/issues/449). Code running inside an action
-can already write any output it likes, so the plan checks protect the cache from data an author
+Code running inside an action can already write any output it likes, so the plan checks protect the cache from data an author
 controls (a conditional input) and from files planted outside the run, not from the action's own
-code. Verify with `tests/build/test_wrap_plan.cpp` (`WrapPlan.*` on every platform,
+code. Verify with `tests/build/test_wrap_plan.cpp` (`WrapPlan.*` and `WrapState.*` on every platform,
 `WrapHook.macos_hook_runs_the_tool_unless_a_bound_plan_beside_the_mount_matches` with the real hook
 on macOS).
 

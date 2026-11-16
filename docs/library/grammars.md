@@ -21,6 +21,9 @@ per-file parser, scanner, and tags digests make the reviewed executable inputs v
 recomputed by CTest. Fetching these exact bytes therefore has the same trust boundary as vendoring
 them. A changed upstream tag, branch, archive, generated parser, scanner, or query is rejected.
 
+A locked patch is the one exception to building the fetched bytes as they are, and it is applied
+under the same identity rules (see *Locked patches* below).
+
 The SHA-256 of the canonical lock is the grammar set identity. `liquid version --json` reports it,
 and syntactic `symbols/1` records carry it as `grammar`. This proves which reviewed parser set
 produced a derived record. Compiler-origin symbol records omit the field.
@@ -33,7 +36,27 @@ The version 1 JSON object contains `runtime` and a language-sorted `grammars` ar
 records `language`, `repository`, full `commit`, archive SHA-256, `parser` path and SHA-256, every
 compiled `scanners` path and SHA-256, tree-sitter ABI version, SPDX licence expression, exported C
 `symbol`, extensions, and an optional `tags` path and SHA-256. A null `tags` value means parsing is
-available but `units` and syntactic symbols are explicitly unsupported.
+available but `units` and syntactic symbols are explicitly unsupported. An optional `patches` array
+lists locked patches; when a patch changes a parser, scanner or query, that file's digest in the
+entry is the patched digest.
+
+### Locked patches
+
+A grammar's fetched source can be fixed in place when upstream has a fix but no reviewed commit
+that publishes generated sources carries it (liquid#462). Each patch records `path`, the exact
+`find` text, its `replace` text, a `reference` (the liquid issue and the upstream fix), the file's
+`upstream_sha256` before the patch and its `sha256` after. `cmake/Grammars.cmake` applies a patch
+only to a file with the upstream digest, requires `find` to occur exactly once, and checks the
+patched digest; a file that already has the patched digest was patched by an earlier configure.
+Any other content fails the configure. `grammar-lock-digests` checks every patched file again.
+
+Patches are added with `tools/grammars/manage.py patch`, never by editing the lock, and a bump
+carries them forward: if the text no longer occurs at the new commit, the bump stops, and once the
+upstream commit carries the fix the patch is dropped with `add ... --no-patches`.
+
+| Language | File | Patch | Why |
+|---|---|---|---|
+| swift | `src/scanner.c` | `calloc(0, sizeof(struct ScannerState))` becomes `calloc(1, …)` | The scanner allocated zero bytes for its state and then read and wrote a four-byte field, a heap read past the allocation that AddressSanitizer reports on the locked sample (liquid#462). Upstream fixed it in [`8abb3e8b3325`](https://github.com/alex-pinkus/tree-sitter-swift/commit/8abb3e8b33256d89127a35e87480736f74755ff9). The generated-sources releases that carry the fix (0.7.2 to 0.7.4) also add compiler-directive scanning with its own out-of-bounds read, fixed only in [`0c5444e4f179`](https://github.com/alex-pinkus/tree-sitter-swift/commit/0c5444e4f179), which no generated-sources release carries yet. The pin therefore stays at the reviewed commit with this one-line fix. |
 
 The runtime is tree-sitter commit
 [`a467ea8502d9`](https://github.com/tree-sitter/tree-sitter/commit/a467ea8502d95562171f97953a6dc5b2a8622609).

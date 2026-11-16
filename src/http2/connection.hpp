@@ -84,6 +84,12 @@ struct connection_options {
     -> std::string_view;
 [[nodiscard]] auto validate_tls_protocol(const boost::corosio::tls_stream& stream) -> result<void>;
 
+// One DATA frame's payload, and whether the peer ended the stream with it.
+struct data_part {
+    std::vector<std::byte> bytes;
+    bool end_stream{};
+};
+
 class connection {
 public:
     connection(boost::capy::any_stream& stream,
@@ -104,6 +110,10 @@ public:
     [[nodiscard]] auto receive_stream() -> runtime::task<std::uint32_t>;
     [[nodiscard]] auto receive_data(std::uint32_t stream_id)
         -> runtime::task<std::vector<std::byte>>;
+    // The stream's next DATA frame, so a caller can bound what it holds instead of reading the
+    // whole body (liquid#451). Once the peer has ended the stream and nothing is left, returns an
+    // empty part with `end_stream` set.
+    [[nodiscard]] auto receive_data_part(std::uint32_t stream_id) -> runtime::task<data_part>;
     [[nodiscard]] auto cancel(std::uint32_t stream_id) -> runtime::task<void>;
     [[nodiscard]] auto ping(std::span<const std::byte, 8> opaque) -> runtime::task<void>;
     [[nodiscard]] auto goaway() -> runtime::task<void>;

@@ -177,5 +177,8 @@ executor fixture marks one action eligible and verifies `/etc/hostname` is refus
 `test_wrap_plan.cpp` covers what the wrap hook trusts (liquid#401): two inputs with the same
 FNV-1a value no longer satisfy each other's conditional row, a condition in the old FNV-1a form is
 a miss, a plan is read only when its bytes hash to the digest liquid passed, and a shared or linked
-plan is refused. On macOS it preloads the real hook into `wrap_probe.c` and checks that the tool
+plan is refused. For the process key (liquid#449) it checks that two command lines whose old
+FNV-1a keys collide get different BLAKE3-256 keys and that a row for one is not a hit for the other,
+that each part of a key is hashed with its length, that a row with a key in any other form never
+hits, and that a saved wrap state without the version-2 line is ignored. On macOS it preloads the real hook into `wrap_probe.c` and checks that the tool
 runs unless a bound, private plan beside the mount matches.

@@ -15,7 +15,7 @@ identities in the same store. The client implements:
 |---|---|
 | Capabilities | `GetCapabilities`; cache digest negotiation happens before any object request. |
 | CAS | `FindMissingBlobs`, `BatchReadBlobs`, `BatchUpdateBlobs`; the configured batch limit selects the batch path. |
-| ByteStream | `Read`, `Write`, and `QueryWriteStatus`; large writes resume from the committed offset. |
+| ByteStream | `Read`, `Write`, and `QueryWriteStatus`; large writes resume from the committed offset and are sent on one stream as 1 MiB `WriteRequest` messages, never as one message (liquid#451). |
 | ActionCache | `GetActionResult` and `UpdateActionResult`; publication is disabled unless `publish` is true. |
 | Execution | `Execute` followed by `WaitExecution` when needed; operation streams are decoded until completion. A failed or expired wait sends `CancelOperation`. |
 
@@ -74,6 +74,26 @@ under an entry's name is replaced and its target never opened. `src/reapi/action
 implements both rules. The cache-only server intentionally does not offer Execution;
 `liquid scheduler` reuses it with Execution and Operations enabled, as documented in
 [`workers.md`](workers.md).
+
+**Request limits (liquid#451).** The server never reads a request stream whole. It reads DATA
+frames into a gRPC message reader that holds at most one message:
+
+- A unary request is one message of at most 5 MiB: the 4 MiB `max_batch_total_size_bytes` it
+  advertises plus 1 MiB for the message's own fields, so a full `BatchUpdateBlobs` fits.
+- A ByteStream `Write` is read one message at a time, each of at most 5 MiB, and each is applied to
+  the upload before the next is read. A blob of any size is uploaded as many messages on one stream
+  (as Bazel and liquid's own client send it); one message larger than the limit is refused.
+- A message whose five-byte prefix declares more than the limit is refused from the prefix, before
+  any of its body is held, with gRPC `RESOURCE_EXHAUSTED` (8).
+- A stream the server answers before the client has finished sending it (a refused or malformed
+  request) is followed by GOAWAY and the connection is closed, so its remaining bytes are neither
+  held nor queued. The client reconnects for its next call.
+
+The bytes an unfinished upload keeps between Write calls (`partial_writes`) are a separate limit:
+per upload, in total, by count and by idle expiry. That is
+[liquid#494](https://github.com/oramasearch/liquid/pull/494) (liquid#444). Proof:
+`tests/reapi/test_request_limits.cpp` and the `GrpcMessageReader.*` tests in
+`tests/http2/test_codecs.cpp`.
 
 The server accepts HTTP/2 prior-knowledge h2c. Its initial SETTINGS frame precedes its acknowledgement
 of the client preface, which is required by strict stock clients. TLS termination is expected in

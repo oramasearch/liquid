@@ -12,3 +12,6 @@ size, flow control and a cap on bytes queued for unread streams, and it closes t
 GOAWAY ENHANCE_YOUR_CALM on rapid reset, CONTINUATION, PING, SETTINGS and empty-frame floods
 (liquid#412). The limits and their defaults are in
 [`docs/library/http2.md`](../../docs/library/http2.md).
+trailer status parsing, and `grpc_message_reader`, which assembles messages from a stream's DATA
+frames (`connection::receive_data_part`) while holding at most one message of a set size
+(liquid#451). Connection I/O will remain Corosio-only through `runtime/net.hpp`.

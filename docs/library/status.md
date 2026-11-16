@@ -264,8 +264,9 @@ output-producing tool processes into cached actions. Before execution it looks u
 candidate key, validates every observed manifest path against the current input tree, and reports
 the first differing input on a miss. The on-disk action index rebuilds from its leased store root.
 The exec-time hook revalidates conditional inputs by BLAKE3-256 and reads only a plan at liquid's
-own location whose bytes hash to the digest liquid passed (#401); process keys are still FNV-1a
-(#449).
+own location whose bytes hash to the digest liquid passed (#401). Process keys are BLAKE3-256 over
+executable, working directory and argv, and a saved wrap state from before that change is ignored
+and rebuilt (#449).
 
 **Verification.** `liquid verify` re-executes cached actions in fresh sandboxes, compares exit
 status and every output digest, signs a `reproducibility/1` attestation, and permanently
@@ -323,6 +324,9 @@ file, and entries are never opened through a symbolic link (liquid #428). The HT
 transport under both enforces the limits it advertises (concurrent streams, header list and table
 sizes, frame size, flow control) and closes on rapid reset, CONTINUATION, PING and SETTINGS floods
 ([`http2.md`](http2.md), liquid#412). Liquid's
+and `liquid serve reapi` exposes liquid's CAS and ActionCache ([`reapi.md`](reapi.md)). The
+server reads each request one bounded message at a time and refuses a message over 5 MiB with
+`RESOURCE_EXHAUSTED` (#451). Liquid's
 action-digest scheduler and TAAP-signed worker fleet are implemented, including one bounded requeue
 after worker loss, size-class placement from #18's recorded decision, REAPI Execution and
 ActionCache, and deployable health, metrics, REST, OpenAPI, and MCP surfaces
@@ -387,7 +391,9 @@ outside libliquid, and the native liquify plugin descriptor accepts a versioned 
 and attribution event callback table ([`frontends.md`](frontends.md)). The bundled tree-sitter fallback fetches 49
 exact-commit grammars under archive and per-file SHA-256 checks, registers their extensions, and
 discovers units from pinned tag queries where upstream supplies them; syntactic records and
-`liquid version --json` carry the grammar-lock digest. The distribution decision and inventory are
+`liquid version --json` carry the grammar-lock digest. A grammar can carry a locked, exact-text
+patch to a fetched file; the Swift scanner carries upstream's fix for a heap read past a
+zero-byte allocation (#462). The distribution decision and inventory are
 in [`grammars.md`](grammars.md). The Clang C++ module emits definition actions and assembles their
 outputs into a relocatable translation-unit object. A function-body edit therefore executes only
 that definition's new action; recorded header reads invalidate the definitions that use them.

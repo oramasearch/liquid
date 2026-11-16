@@ -34,55 +34,55 @@ platform rows state where the language-independent Tier 1 wrapper is available.
 | Language | Extensions | Tier | Mechanism | Notes |
 |---|---|---:|---|---|
 | `*` | * | 0 | `chunking` | Every language and file type has this floor. |
-| `bash` | .bash, .bash_profile, .bashrc, .ebuild, .eclass, .sh | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `c` | .c, .h | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `c#` | .cs | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
+| `bash` | .bash, .bash_profile, .bashrc, .ebuild, .eclass, .sh | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `c` | .c, .h | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `c#` | .cs | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
 | `c++` | .cc, .cpp, .cxx, .h, .hh, .hpp, .hxx | 3 | `frontend(clang-cpp)` | Compiler frontend module. |
-| `cmake` | .cmake, CMakeLists.txt | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `css` | .css | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `dart` | .dart | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `dockerfile` | .container, .Containerfile, .docker, .dockerfile, Dockerfile | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `elixir` | .ex, .exs | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `elm` | .elm | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `erlang` | .app, .app.src, .erl, .escript, .hrl, .rebar.config | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `fortran` | .F90, .f90, .F95, .f95 | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `go` | .go | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `haskell` | .hs, .hs-boot | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `hcl` | .hcl | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `html` | .html | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `java` | .java | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `javascript` | .cjs, .js, .jsx, .mjs | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `json` | .json | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `julia` | .jl | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `kotlin` | .kt, .kts | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `latex` | .tex | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `lua` | .lua | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `make` | .mk, Makefile | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `markdown` | .md | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `nix` | .nix | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `objective-c` | .h, .m, .objc | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `ocaml` | .ml | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `perl` | .pl, .pm, .t | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `php` | .php | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `protocol-buffers` | .proto | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `python` | .py | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `r` | .R, .r | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `ruby` | .rb | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `rust` | .rs | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `scala` | .sbt, .scala | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `scss` | .scss | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `solidity` | .sol | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `sql` | .sql | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `svelte` | .svelte | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `swift` | .swift | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `toml` | .toml | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `tsx` | .tsx | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `typescript` | .ts | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `verilog` | .sv, .svh, .v, .vh | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `vue` | .vue | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `xml` | .rng, .svg, .xml, .xsd, .xsl, .xslt | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `yaml` | .yaml, .yml | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
-| `zig` | .zig | 2 | `grammar(sha256:92258da99c9c91950226d7ff3af9a65fa08a5d5a2c1a2f82558b4047d0da42b5)` | Digest-locked tree-sitter grammar. |
+| `cmake` | .cmake, CMakeLists.txt | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `css` | .css | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `dart` | .dart | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `dockerfile` | .container, .Containerfile, .docker, .dockerfile, Dockerfile | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `elixir` | .ex, .exs | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `elm` | .elm | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `erlang` | .app, .app.src, .erl, .escript, .hrl, .rebar.config | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `fortran` | .F90, .f90, .F95, .f95 | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `go` | .go | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `haskell` | .hs, .hs-boot | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `hcl` | .hcl | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `html` | .html | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `java` | .java | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `javascript` | .cjs, .js, .jsx, .mjs | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `json` | .json | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `julia` | .jl | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `kotlin` | .kt, .kts | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `latex` | .tex | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `lua` | .lua | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `make` | .mk, Makefile | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `markdown` | .md | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `nix` | .nix | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `objective-c` | .h, .m, .objc | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `ocaml` | .ml | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `perl` | .pl, .pm, .t | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `php` | .php | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `protocol-buffers` | .proto | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `python` | .py | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `r` | .R, .r | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `ruby` | .rb | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `rust` | .rs | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `scala` | .sbt, .scala | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `scss` | .scss | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `solidity` | .sol | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `sql` | .sql | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `svelte` | .svelte | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `swift` | .swift | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `toml` | .toml | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `tsx` | .tsx | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `typescript` | .ts | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `verilog` | .sv, .svh, .v, .vh | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `vue` | .vue | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `xml` | .rng, .svg, .xml, .xsd, .xsl, .xslt | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `yaml` | .yaml, .yml | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
+| `zig` | .zig | 2 | `grammar(sha256:c6b377e72d6a387ac1c5d883100986eeb00e010eb829b7802c3c5620325f4f64)` | Digest-locked tree-sitter grammar. |
 
 ### Declared Tier 1 platforms
 
