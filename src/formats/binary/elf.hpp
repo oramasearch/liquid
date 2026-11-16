@@ -52,6 +52,14 @@ struct image {
     std::vector<symbol> exported_symbols;
     std::vector<std::string> needed_libraries;
     std::vector<path_reference> path_references;
+    // inspect_<format>(bytes, uint64_t byte_budget) charges retained name bytes plus a fixed
+    // sizeof(record) cost for every retained record, before each copy. Count repeated offsets
+    // and every separate name copy; moving a charged name requires no additional charge.
+    // Stop collecting at the budget, keep earlier facts, and mark truncated for any name cap.
+    // Registry adapters subtract symbol_bytes before adding entries; other consumers report
+    // truncated so that partial symbols cannot become a complete compatibility claim.
+    bool truncated{};
+    std::uint64_t symbol_bytes{};
 };
 
 [[nodiscard]] auto inspect_elf(std::span<const std::byte> bytes) -> result<image>;

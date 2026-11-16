@@ -2,6 +2,8 @@
 
 [`git/`](git/README.md) owns verified Git object decoding and the shared inflation and delta
 budgets used by local import (#443).
+`abi.cpp` carries binary-reader truncation into public descriptors and JSON. ABI comparisons
+refuse compatibility claims from partial symbol lists, including descriptors loaded from storage.
 
 `liquid split` documents owned destination storage, original signed history, nested support, and
 failure cleanup in its typed command table. The implementation lives in libliquid.

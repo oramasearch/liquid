@@ -68,6 +68,8 @@ auto change_name(liquid::abi_change_kind kind) -> std::string_view {
         return "size_changed";
     case liquid::abi_change_kind::version_changed:
         return "version_changed";
+    case liquid::abi_change_kind::inspection_truncated:
+        return "inspection_truncated";
     }
     return "type_changed";
 }
