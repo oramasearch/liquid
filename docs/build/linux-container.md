@@ -1,7 +1,7 @@
 # The full suite in an unprivileged Linux container
 
-liquid's Linux proof runs the whole CTest suite inside an unprivileged container: the cluster
-BuildKit lane (Ubuntu 24.04, clang 19, CMake 3.31, Release, every target built, `ctest -j 1`,
+liquid's Linux proof runs the whole CTest suite inside an unprivileged container: a
+BuildKit build on the image from `tools/linux-ci/Dockerfile` (Ubuntu 24.04, clang 19, CMake 3.31, Release, every target built, `ctest -j 1`,
 running as root but without extra capabilities). Such a container has no `/dev/fuse` and refuses
 new user and network namespaces. Before [#348](https://github.com/oramasearch/liquid/issues/348)
 the tests that need those capabilities failed there instead of skipping, so a Linux run could not
@@ -47,6 +47,6 @@ or skipped with a reason, 68 skipped (30 before), none Not Run, and one failure,
 
 ## Running it
 
-The lane is `codex-work/build/liquid-linux-test/run-liquid-linux-tests.sh` (outside this
-repository): `BUILD_TARGET=all CTEST_JOBS=1 run-liquid-linux-tests.sh <worktree> <label> '*' 1 '.'`.
-It lists every skipped test with `SKIPPED_TEST` lines, so the skips can be read after each run.
+Build every target in a container from `tools/linux-ci/Dockerfile`, run as root with no extra
+capabilities and no `/dev/fuse`, then run `ctest -j 1 --output-on-failure`. CTest lists each skipped
+test with the reason it printed, so the skips can be read after each run.
