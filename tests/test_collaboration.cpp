@@ -547,7 +547,7 @@ TEST(Collaboration, published_and_discarded_sessions_stay_gone_after_a_crash) {
     ASSERT_TRUE(liquid::runtime::block_on(shared->cut("fork point")));
 
     const auto agent = current_actor();
-    auto authority = delegation(agent, {"src/**"});
+    auto authority = delegation(*shared, agent, {"src/**"});
     ASSERT_TRUE(authority) << authority.error().message;
     auto published_fork =
         liquid::runtime::block_on(shared->fork_session({.actor = agent, .delegation = *authority}));
@@ -683,7 +683,7 @@ auto run_session_crash(const std::filesystem::path& root,
             return "could not cut the fork point";
         }
         const auto agent = current_actor();
-        auto authority = delegation(agent, {"src/**"});
+        auto authority = delegation(*shared, agent, {"src/**"});
         if (!authority) {
             return "delegation failed: " + authority.error().message;
         }
