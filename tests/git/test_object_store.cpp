@@ -93,6 +93,82 @@ TEST(GitObjectStore, orders_tree_entries_as_git_does) {
     EXPECT_EQ(entries[4].name, "ab");
 }
 
+// A Git tree payload with one entry `name` pointing at `child` (liquid #386).
+auto tree_payload(std::string_view mode,
+                  std::string_view name,
+                  const liquid::git_detail::sha1& child) -> std::vector<std::byte> {
+    auto output = bytes(std::string{mode} + " " + std::string{name});
+    output.push_back(std::byte{});
+    output.insert(output.end(), child.begin(), child.end());
+    return output;
+}
+
+TEST(GitObjectStore, read_tree_refuses_unsafe_entry_names) {
+    temporary_directory temporary;
+    const auto blob = liquid::git_detail::write_loose_object(
+        temporary.path(), liquid::git_detail::object_kind::blob, bytes("payload"));
+    ASSERT_TRUE(blob) << blob.error().message;
+    liquid::git_detail::object_store store{temporary.path()};
+    for (const auto* name : {".",
+                             "..",
+                             "../../.bashrc",
+                             "/etc/x",
+                             "a/b",
+                             "a\\b",
+                             ".git",
+                             ".GIT",
+                             "git~1",
+                             ".git.",
+                             ".g\xe2\x80\x8cit"}) {
+        const auto tree =
+            liquid::git_detail::write_loose_object(temporary.path(),
+                                                   liquid::git_detail::object_kind::tree,
+                                                   tree_payload("100644", name, *blob));
+        ASSERT_TRUE(tree) << tree.error().message;
+        const auto entries = store.read_tree(*tree);
+        ASSERT_FALSE(entries) << "accepted " << name;
+        EXPECT_EQ(entries.error().code, liquid::errc::corrupt);
+    }
+    const auto safe =
+        liquid::git_detail::write_loose_object(temporary.path(),
+                                               liquid::git_detail::object_kind::tree,
+                                               tree_payload("100644", ".gitignore", *blob));
+    ASSERT_TRUE(safe);
+    const auto entries = store.read_tree(*safe);
+    ASSERT_TRUE(entries) << entries.error().message;
+    ASSERT_EQ(entries->size(), 1U);
+    EXPECT_EQ(entries->front().name, ".gitignore");
+}
+
+TEST(GitInteroperability, import_refuses_a_tree_entry_that_escapes) {
+    if (!run("git --version >/dev/null 2>&1"))
+        GTEST_SKIP() << "git is not installed";
+    temporary_directory source;
+    temporary_directory destination;
+    ASSERT_TRUE(run("git -C " + source.path().string() + " init -q"));
+    const auto objects = source.path() / ".git";
+    const auto blob = liquid::git_detail::write_loose_object(
+        objects, liquid::git_detail::object_kind::blob, bytes("export PATH=/tmp\n"));
+    ASSERT_TRUE(blob) << blob.error().message;
+    const auto tree =
+        liquid::git_detail::write_loose_object(objects,
+                                               liquid::git_detail::object_kind::tree,
+                                               tree_payload("100644", "../../.bashrc", *blob));
+    ASSERT_TRUE(tree) << tree.error().message;
+    const auto commit = capture("git -C " + source.path().string() +
+                                " -c user.name=Test -c user.email=test@example.test commit-tree " +
+                                liquid::git_detail::sha1_hex(*tree) + " -m crafted");
+    ASSERT_FALSE(commit.empty());
+    ASSERT_TRUE(run("git -C " + source.path().string() + " update-ref refs/heads/main " + commit));
+
+    auto created = liquid::runtime::block_on(liquid::repository::create(destination.path()));
+    ASSERT_TRUE(created) << created.error().message;
+    auto repository = std::move(*created);
+    const auto imported = liquid::runtime::block_on(liquid::import_git(repository, source.path()));
+    ASSERT_FALSE(imported);
+    EXPECT_EQ(imported.error().code, liquid::errc::corrupt);
+}
+
 TEST(GitObjectStore, refuses_a_corrupt_loose_object) {
     temporary_directory temporary;
     const auto id = liquid::git_detail::write_loose_object(

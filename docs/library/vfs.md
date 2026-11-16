@@ -43,7 +43,11 @@ persisted. The opaque `mount` handle exposes asynchronous `unmount()` and synchr
 `materialise(repository, target, path_prefix)` requires a missing or empty target. With no prefix,
 it reproduces the entire tree. A directory prefix writes that directory's contents into the target;
 a file prefix writes that file under its basename. File and directory permission bits are
-preserved.
+preserved. Every entry name is checked against the tree entry name rule in
+[`object-model.md`](object-model.md#records-in-the-store) before it is written, and every file and
+directory is created exclusively without following a symbolic link: a name that collides with an
+earlier one on the target filesystem, by case or Unicode normalisation, fails with
+`errc::already_exists` (liquid #386).
 
 ## Hydration and cache
 

@@ -2,8 +2,8 @@
 
 #include "liquid/vfs.hpp"
 
-#include <fstream>
-
+#include "fs/contained.hpp"
+#include "objects/entry_name.hpp"
 #include "vfs/repository_access.hpp"
 
 namespace liquid::vfs {
@@ -33,27 +33,6 @@ auto prepare_target(const std::filesystem::path& target) -> result<void> {
     return {};
 }
 
-auto write_file(const std::filesystem::path& path,
-                std::span<const std::byte> bytes,
-                std::uint32_t mode) -> result<void> {
-    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
-    if (!output)
-        return std::unexpected(filesystem_error("cannot create materialised file", path));
-    output.write(reinterpret_cast<const char*>(bytes.data()),
-                 static_cast<std::streamsize>(bytes.size()));
-    output.flush();
-    if (!output)
-        return std::unexpected(filesystem_error("cannot write materialised file", path));
-    auto code = std::error_code{};
-    std::filesystem::permissions(path,
-                                 static_cast<std::filesystem::perms>(mode & 0777),
-                                 std::filesystem::perm_options::replace,
-                                 code);
-    if (code)
-        return std::unexpected(filesystem_error(code.message(), path));
-    return {};
-}
-
 auto set_permissions(const std::filesystem::path& path, std::uint32_t mode) -> result<void> {
     auto code = std::error_code{};
     std::filesystem::permissions(path,
@@ -65,12 +44,17 @@ auto set_permissions(const std::filesystem::path& path, std::uint32_t mode) -> r
     return {};
 }
 
+// Materialised entries are created exclusively and without following a symbolic link (liquid
+// #386): an existing entry means two names collide on this filesystem, by case or by Unicode
+// normalisation, and is refused.
+auto write_file(const std::filesystem::path& path,
+                std::span<const std::byte> bytes,
+                std::uint32_t mode) -> result<void> {
+    return fs_detail::write_new_file(path, bytes, mode & 0777);
+}
+
 auto make_directory(const std::filesystem::path& path) -> result<void> {
-    auto code = std::error_code{};
-    std::filesystem::create_directory(path, code);
-    if (code)
-        return std::unexpected(filesystem_error(code.message(), path));
-    return {};
+    return fs_detail::make_new_directory(path);
 }
 
 auto joined(std::string_view parent, std::string_view name) -> std::string {
@@ -83,6 +67,8 @@ materialise_directory(repository& source, std::string source_path, std::filesyst
     if (!entries)
         co_return std::unexpected(entries.error());
     for (const auto& entry : *entries) {
+        if (auto valid = objects::validate_entry_name(entry.name, errc::corrupt); !valid)
+            co_return std::unexpected(valid.error());
         const auto child_source = joined(source_path, entry.name);
         const auto child_target = target / entry.name;
         if (entry.kind == node_kind::blob) {
@@ -108,8 +94,9 @@ materialise_directory(repository& source, std::string source_path, std::filesyst
         auto nested = co_await materialise_directory(source, child_source, child_target);
         if (!nested)
             co_return std::unexpected(nested.error());
-        auto permissions = co_await runtime::offload(
-            [child_target, mode = entry.mode] { return set_permissions(child_target, mode); });
+        auto permissions = co_await runtime::offload([child_target, mode = entry.mode] {
+            return fs_detail::set_mode(child_target, mode & 0777);
+        });
         if (!permissions)
             co_return std::unexpected(permissions.error());
         if (!*permissions)
@@ -148,6 +135,8 @@ runtime::task<void> materialise(repository& source,
     if (!selected)
         co_return std::unexpected(selected.error());
     if (selected->kind == node_kind::blob) {
+        if (auto valid = objects::validate_entry_name(selected->name, errc::corrupt); !valid)
+            co_return std::unexpected(valid.error());
         auto contents = co_await source.read(prefix);
         if (!contents)
             co_return std::unexpected(contents.error());

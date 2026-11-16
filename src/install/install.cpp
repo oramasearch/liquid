@@ -19,6 +19,7 @@
 #include "formats/deb/deb.hpp"
 #include "formats/package/common.hpp"
 #include "formats/rpm/rpm.hpp"
+#include "fs/contained.hpp"
 #include "install/faults.hpp"
 
 namespace liquid::install_detail {
@@ -258,42 +259,53 @@ auto make_directories(const std::filesystem::path& path) -> result<void> {
     return {};
 }
 
-auto write_bytes(const std::filesystem::path& path,
+// Every staged path is created below the staging directory without following a symbolic link,
+// so neither a link in the source nor a link an intent creates can redirect a later write
+// outside the generation (liquid #385).
+auto staged_path(const std::filesystem::path& staging, const std::filesystem::path& relative)
+    -> result<std::filesystem::path> {
+    auto parent = fs_detail::make_directories_within(staging, relative.parent_path());
+    if (!parent) {
+        return std::unexpected(parent.error());
+    }
+    return *parent / relative.filename();
+}
+
+auto write_bytes(const std::filesystem::path& staging,
+                 const std::filesystem::path& relative,
                  std::span<const std::byte> bytes,
                  std::uint32_t mode) -> result<void> {
-    auto created = make_directories(path.parent_path());
-    if (!created) {
-        return created;
+    auto path = staged_path(staging, relative);
+    if (!path) {
+        return std::unexpected(path.error());
     }
-    auto output = std::ofstream{path, std::ios::binary | std::ios::trunc};
-    output.write(reinterpret_cast<const char*>(bytes.data()),
-                 static_cast<std::streamsize>(bytes.size()));
-    output.close();
-    if (!output) {
-        return std::unexpected(failure(errc::io, "cannot write staged file", path.string()));
+    auto written = fs_detail::replace_file(*path, bytes, mode);
+    if (!written) {
+        return written;
     }
-    auto code = std::error_code{};
-    std::filesystem::permissions(path,
-                                 static_cast<std::filesystem::perms>(mode),
-                                 std::filesystem::perm_options::replace,
-                                 code);
-    if (code) {
-        return std::unexpected(failure(errc::io, code.message(), path.string()));
-    }
-    visit_fault({fault_operation::staged_file, path});
+    visit_fault({fault_operation::staged_file, *path});
     return {};
 }
 
 auto stage_entry(const source_entry& entry,
                  const std::filesystem::path& staging,
                  std::uint64_t& linked) -> result<void> {
-    const auto destination = staging / entry.path;
-    auto created = make_directories(destination.parent_path());
-    if (!created) {
-        return created;
+    if (!entry.symlink && !entry.source) {
+        return write_bytes(staging, entry.path, entry.bytes, entry.mode);
     }
+    auto staged = staged_path(staging, entry.path);
+    if (!staged) {
+        return std::unexpected(staged.error());
+    }
+    const auto& destination = *staged;
     auto code = std::error_code{};
     if (entry.symlink) {
+        if (!fs_detail::symlink_target_within(entry.path, entry.target)) {
+            return std::unexpected(
+                failure(errc::corrupt,
+                        "install source symlink points outside its root",
+                        entry.path.generic_string() + " -> " + entry.target.generic_string()));
+        }
         std::filesystem::create_symlink(entry.target, destination, code);
         if (code) {
             return std::unexpected(failure(errc::io, code.message(), destination.string()));
@@ -301,33 +313,39 @@ auto stage_entry(const source_entry& entry,
         visit_fault({fault_operation::staged_file, destination});
         return {};
     }
-    if (entry.source) {
-        std::filesystem::create_hard_link(*entry.source, destination, code);
-        if (!code) {
-            ++linked;
-            visit_fault({fault_operation::staged_file, destination});
-            return {};
-        }
-        code.clear();
-        std::filesystem::copy_file(
-            *entry.source, destination, std::filesystem::copy_options::none, code);
-        if (code) {
-            return std::unexpected(failure(errc::io, code.message(), destination.string()));
-        }
+    auto refused = fs_detail::refuse_symlink(destination);
+    if (!refused) {
+        return refused;
+    }
+    std::filesystem::create_hard_link(*entry.source, destination, code);
+    if (!code) {
+        ++linked;
         visit_fault({fault_operation::staged_file, destination});
         return {};
     }
-    return write_bytes(destination, entry.bytes, entry.mode);
+    code.clear();
+    std::filesystem::copy_file(
+        *entry.source, destination, std::filesystem::copy_options::none, code);
+    if (code) {
+        return std::unexpected(failure(errc::io, code.message(), destination.string()));
+    }
+    visit_fault({fault_operation::staged_file, destination});
+    return {};
 }
 
-auto generation_path(const std::filesystem::path& root, const std::filesystem::path& absolute)
-    -> std::filesystem::path {
-    return root / absolute.relative_path();
-}
-
-auto append_line_if_absent(const std::filesystem::path& path,
+auto append_line_if_absent(const std::filesystem::path& staging,
+                           const std::filesystem::path& relative,
                            std::string_view prefix,
                            std::string line) -> result<void> {
+    auto staged = staged_path(staging, relative);
+    if (!staged) {
+        return std::unexpected(staged.error());
+    }
+    const auto& path = *staged;
+    auto refused = fs_detail::refuse_symlink(path);
+    if (!refused) {
+        return refused;
+    }
     auto existing = std::string{};
     {
         auto input = std::ifstream{path};
@@ -345,49 +363,67 @@ auto append_line_if_absent(const std::filesystem::path& path,
     }
     existing += std::move(line);
     existing.push_back('\n');
-    return write_bytes(
-        path, {reinterpret_cast<const std::byte*>(existing.data()), existing.size()}, 0644);
+    return write_bytes(staging,
+                       relative,
+                       {reinterpret_cast<const std::byte*>(existing.data()), existing.size()},
+                       0644);
 }
 
-auto apply_intent(const install_intent& intent, const std::filesystem::path& staging)
+// Replaces `relative` below the staging directory with a symbolic link to `target`.
+auto stage_link(const std::filesystem::path& staging,
+                const std::filesystem::path& relative,
+                const std::filesystem::path& target) -> result<void> {
+    auto staged = staged_path(staging, relative);
+    if (!staged) {
+        return std::unexpected(staged.error());
+    }
+    const auto& path = *staged;
+    auto code = std::error_code{};
+    if (std::filesystem::is_symlink(std::filesystem::symlink_status(path, code)) &&
+        std::filesystem::read_symlink(path, code) == target && !code) {
+        return {};
+    }
+    code.clear();
+    std::filesystem::remove(path, code);
+    code.clear();
+    std::filesystem::create_symlink(target, path, code);
+    if (code) {
+        return std::unexpected(failure(errc::io, code.message(), path.string()));
+    }
+    visit_fault({fault_operation::staged_file, path});
+    return {};
+}
+
+// Directories, users and groups. Every intent's contents are applied before any intent's links,
+// so a link one intent creates is never below a path another intent writes (liquid #385).
+auto apply_intent_contents(const install_intent& intent, const std::filesystem::path& staging)
     -> result<void> {
     for (const auto& directory : intent.directories) {
-        const auto path = generation_path(staging, directory.path);
-        auto created = make_directories(path);
-        if (!created) {
-            return created;
+        auto path = fs_detail::make_directories_within(staging, directory.path.relative_path());
+        if (!path) {
+            return std::unexpected(path.error());
         }
-        auto code = std::error_code{};
-        std::filesystem::permissions(path,
-                                     static_cast<std::filesystem::perms>(directory.mode),
-                                     std::filesystem::perm_options::replace,
-                                     code);
-        if (code) {
-            return std::unexpected(failure(errc::io, code.message(), path.string()));
+        auto moded = fs_detail::set_mode(*path, directory.mode);
+        if (!moded) {
+            return moded;
         }
     }
     auto group_id = std::uint32_t{60000};
     for (const auto& group : intent.groups) {
-        const auto path = staging / "etc/group";
-        auto created = make_directories(path.parent_path());
-        if (!created) {
-            return created;
-        }
-        auto appended = append_line_if_absent(
-            path, group.name + ":", group.name + ":x:" + std::to_string(group_id++) + ":");
+        auto appended =
+            append_line_if_absent(staging,
+                                  "etc/group",
+                                  group.name + ":",
+                                  group.name + ":x:" + std::to_string(group_id++) + ":");
         if (!appended) {
             return appended;
         }
     }
     auto user_id = std::uint32_t{60000};
     for (const auto& user : intent.users) {
-        const auto path = staging / "etc/passwd";
-        auto created = make_directories(path.parent_path());
-        if (!created) {
-            return created;
-        }
         auto appended = append_line_if_absent(
-            path,
+            staging,
+            "etc/passwd",
             user.name + ":",
             user.name + ":x:" + std::to_string(user_id) + ":" + std::to_string(user_id) +
                 "::" + user.home.generic_string() + ":/usr/sbin/nologin");
@@ -396,56 +432,34 @@ auto apply_intent(const install_intent& intent, const std::filesystem::path& sta
         }
         ++user_id;
     }
+    return {};
+}
+
+// Symlinks, alternatives and service enablement links, created after every intent's contents.
+auto apply_intent_links(const install_intent& intent, const std::filesystem::path& staging)
+    -> result<void> {
     for (const auto& symlink : intent.symlinks) {
-        const auto path = generation_path(staging, symlink.path);
-        auto created = make_directories(path.parent_path());
-        if (!created) {
-            return created;
+        auto linked = stage_link(staging, symlink.path.relative_path(), symlink.target);
+        if (!linked) {
+            return linked;
         }
-        auto code = std::error_code{};
-        if (std::filesystem::is_symlink(path, code) &&
-            std::filesystem::read_symlink(path, code) == symlink.target) {
-            continue;
-        }
-        std::filesystem::remove(path, code);
-        code.clear();
-        std::filesystem::create_symlink(symlink.target, path, code);
-        if (code) {
-            return std::unexpected(failure(errc::io, code.message(), path.string()));
-        }
-        visit_fault({fault_operation::staged_file, path});
     }
     for (const auto& alternative : intent.alternatives) {
-        const auto path = staging / "usr/bin" / alternative.name;
-        auto created = make_directories(path.parent_path());
-        if (!created) {
-            return created;
+        auto linked = stage_link(
+            staging, std::filesystem::path{"usr/bin"} / alternative.name, alternative.path);
+        if (!linked) {
+            return linked;
         }
-        auto code = std::error_code{};
-        std::filesystem::remove(path, code);
-        code.clear();
-        std::filesystem::create_symlink(alternative.path, path, code);
-        if (code) {
-            return std::unexpected(failure(errc::io, code.message(), path.string()));
-        }
-        visit_fault({fault_operation::staged_file, path});
     }
     for (const auto& service : intent.services) {
-        const auto wants = staging / "etc/systemd/system/multi-user.target.wants";
-        auto created = make_directories(wants);
-        if (!created) {
-            return created;
+        auto linked =
+            stage_link(staging,
+                       std::filesystem::path{"etc/systemd/system/multi-user.target.wants"} /
+                           (service.name + ".service"),
+                       "/usr/lib/systemd/system/" + service.name + ".service");
+        if (!linked) {
+            return linked;
         }
-        const auto path = wants / (service.name + ".service");
-        auto code = std::error_code{};
-        std::filesystem::remove(path, code);
-        code.clear();
-        std::filesystem::create_symlink(
-            "/usr/lib/systemd/system/" + service.name + ".service", path, code);
-        if (code) {
-            return std::unexpected(failure(errc::io, code.message(), path.string()));
-        }
-        visit_fault({fault_operation::staged_file, path});
     }
     return {};
 }
@@ -527,7 +541,13 @@ auto install_sync(const std::filesystem::path& source, const std::filesystem::pa
         }
     }
     for (const auto& intent : loaded->intents) {
-        auto applied = apply_intent(intent, staging);
+        auto applied = apply_intent_contents(intent, staging);
+        if (!applied) {
+            return std::unexpected(applied.error());
+        }
+    }
+    for (const auto& intent : loaded->intents) {
+        auto applied = apply_intent_links(intent, staging);
         if (!applied) {
             return std::unexpected(applied.error());
         }

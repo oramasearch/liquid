@@ -158,6 +158,19 @@ package payloads are written with their recorded modes. Users and groups become 
 passwd/group entries, directories and symlinks stay below the generation, alternatives become
 generation-local links, and services become generation-local systemd enablement links.
 
+**Staging stays inside the generation** (liquid #385). Every write, link and mode change during
+staging walks the path one component at a time from the staging directory with `lstat`, creating
+missing directories and refusing any component that is a symbolic link or not a directory; files
+are opened with `O_NOFOLLOW`, and an existing `etc/passwd`, `etc/group` or payload path that is a
+symbolic link is refused, never written through. Intents apply in two passes: every intent's
+directories, users and groups first, then every intent's symlinks, alternatives and service links,
+so a link an intent creates is never below a path another intent writes. An intent symlink whose
+path already exists as a directory fails the install. A symbolic link in an install tree may point
+at an absolute path, which names a path inside the generation when it is used as a root, or at a
+relative path that stays below the generation; a relative target that climbs above it is refused
+with `errc::corrupt`. A refused install leaves only a `.staging` directory, which the next install
+discards; `current` is unchanged.
+
 A process interruption before the final rename cannot expose staged bytes through `current`.
 Stale `.staging` directories are discarded by the next install, while a fully staged generation
 left before the switch remains complete and unselected. `liquid install --list --root <dir>` lists

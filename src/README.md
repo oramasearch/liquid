@@ -29,3 +29,9 @@ writers retain their existing behavior.
 HTTP log sources validate URL syntax and numeric port bounds locally. The factory returns
 public errors; legacy sources return retained validation errors before transport access.
 See [the URL contract](../docs/library/transparency.md#http-url-validation-289).
+
+`fs/contained.hpp` holds the filesystem writes that never follow a symbolic link out of their
+root. Install staging and both tree materialisers write only through it (liquid #385, #386), and
+`objects/entry_name.hpp` holds the tree entry name rule they and the record codec share. See
+[the object model](../docs/library/object-model.md#records-in-the-store) and
+[install staging](../docs/library/projection.md#transactional-projected-tree-installation).

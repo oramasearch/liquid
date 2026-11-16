@@ -11,6 +11,8 @@
 
 #include <zlib.h>
 
+#include "objects/entry_name.hpp"
+
 namespace liquid::git_detail {
 namespace {
 
@@ -696,9 +698,15 @@ auto object_store::read_tree(const sha1& id) -> result<std::vector<tree_entry>> 
         const auto [end, code] = std::from_chars(header.data(), header.data() + space, mode, 8);
         if (space == std::string_view::npos || code != std::errc{} || end != header.data() + space)
             return std::unexpected(failure(errc::corrupt, "invalid Git tree mode", sha1_hex(id)));
+        const auto name = header.substr(space + 1);
+        if (const auto problem = objects::entry_name_problem(name))
+            return std::unexpected(
+                failure(errc::corrupt,
+                        std::string{*problem},
+                        sha1_hex(id) + " " + objects::printable_entry_name(name)));
         sha1 child{};
         std::ranges::copy_n(zero + 1, child.size(), child.begin());
-        entries.push_back({std::string{header.substr(space + 1)}, mode, child});
+        entries.push_back({std::string{name}, mode, child});
         offset = static_cast<std::size_t>(zero - object->payload.begin()) + 1 + child.size();
     }
     return entries;

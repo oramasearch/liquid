@@ -94,6 +94,7 @@ add_executable(liquid-tests
   build/test_graph.cpp
   build/test_content.cpp
   build/test_conflicts.cpp
+  build/test_materialise.cpp
   build/test_normalise.cpp
   build/test_provenance.cpp
   build/test_relocation.cpp

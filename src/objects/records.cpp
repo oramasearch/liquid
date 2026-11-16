@@ -10,6 +10,7 @@
 
 #include "encoding/cbor.hpp"
 #include "liquid/attestation.hpp"
+#include "objects/entry_name.hpp"
 
 namespace liquid::objects {
 namespace {
@@ -769,6 +770,8 @@ auto encode(const tree& value) -> result<std::vector<std::byte>> {
         return std::unexpected(error{errc::invalid_argument, "duplicate tree entry", "tree"});
     auto output = cbor::value::array{};
     for (const auto& entry : entries) {
+        if (auto valid = validate_entry_name(entry.name, errc::invalid_argument); !valid)
+            return std::unexpected(valid.error());
         auto fields =
             cbor::value::map{{"name", cbor::value{entry.name}},
                              {"mode", cbor::value{std::uint64_t{entry.mode}}},
@@ -1344,6 +1347,8 @@ auto decode_tree(std::span<const std::byte> bytes) -> result<tree> {
         if (!text || !bits || !type || *bits > std::numeric_limits<std::uint32_t>::max() ||
             *type > static_cast<std::uint64_t>(node_kind::conflict))
             return std::unexpected(corrupt("invalid tree entry"));
+        if (auto valid = validate_entry_name(*text, errc::corrupt); !valid)
+            return std::unexpected(valid.error());
         auto object =
             id ? decode_digest(*id) : result<digest>{std::unexpected(corrupt("tree id missing"))};
         auto identity = node ? decode_node_id(*node)

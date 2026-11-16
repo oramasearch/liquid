@@ -7,6 +7,7 @@
 #include <string>
 
 #include "encoding/cbor.hpp"
+#include "objects/entry_name.hpp"
 #include "objects/records.hpp"
 
 namespace {
@@ -25,6 +26,102 @@ auto example_digest(unsigned char value) -> liquid::digest {
     auto digest = liquid::digest{liquid::algorithm::blake3, {}};
     digest.bytes.front() = std::byte{value};
     return digest;
+}
+
+// A tree record with one entry whose name is `name`, written as raw CBOR so that names the
+// encoder refuses can still reach the decoder. CBOR arrays and maps count items, not bytes, so
+// swapping one short text string for another leaves the record well formed (liquid #386).
+auto tree_bytes_named(std::string_view name) -> std::vector<std::byte> {
+    constexpr auto placeholder = std::string_view{"placeholder-entry-name"};
+    auto value = liquid::tree{};
+    value.entries.push_back({std::string{placeholder},
+                             0100644,
+                             liquid::node_kind::blob,
+                             example_digest(1),
+                             liquid::node_id{},
+                             example_digest(1),
+                             std::nullopt});
+    auto encoded = liquid::objects::encode(value);
+    EXPECT_TRUE(encoded);
+    auto search =
+        std::vector<std::byte>{std::byte{static_cast<unsigned char>(0x60 + placeholder.size())}};
+    for (const auto item : placeholder) {
+        search.push_back(static_cast<std::byte>(item));
+    }
+    auto replacement =
+        std::vector<std::byte>{std::byte{static_cast<unsigned char>(0x60 + name.size())}};
+    for (const auto item : name) {
+        replacement.push_back(static_cast<std::byte>(item));
+    }
+    const auto found = std::ranges::search(*encoded, search);
+    EXPECT_FALSE(found.empty());
+    const auto offset = std::distance(encoded->begin(), found.begin());
+    encoded->erase(found.begin(), found.end());
+    encoded->insert(encoded->begin() + offset, replacement.begin(), replacement.end());
+    return *encoded;
+}
+
+auto unsafe_entry_names() -> std::vector<std::string> {
+    return {"",
+            ".",
+            "..",
+            "../../.bashrc",
+            "/etc/x",
+            "a/b",
+            "a\\b",
+            "..\\x",
+            std::string{"a\0b", 3},
+            ".git",
+            ".GIT",
+            ".Git",
+            ".git.",
+            ".git ",
+            ".git::$INDEX_ALLOCATION",
+            "GIT~1",
+            ".g\xe2\x80\x8cit",
+            "\xef\xbb\xbf.git"};
+}
+
+TEST(Records, tree_decode_refuses_unsafe_entry_names) {
+    ASSERT_TRUE(liquid::objects::decode_tree(tree_bytes_named("safe-name")));
+    for (const auto& name : unsafe_entry_names()) {
+        auto decoded = liquid::objects::decode_tree(tree_bytes_named(name));
+        ASSERT_FALSE(decoded) << "accepted " << liquid::objects::printable_entry_name(name);
+        EXPECT_EQ(decoded.error().code, liquid::errc::corrupt);
+    }
+}
+
+TEST(Records, tree_encode_refuses_unsafe_entry_names) {
+    for (const auto& name : unsafe_entry_names()) {
+        auto value = liquid::tree{};
+        value.entries.push_back({name,
+                                 0100644,
+                                 liquid::node_kind::blob,
+                                 example_digest(1),
+                                 liquid::node_id{},
+                                 example_digest(1),
+                                 std::nullopt});
+        auto encoded = liquid::objects::encode(value);
+        ASSERT_FALSE(encoded) << "accepted " << liquid::objects::printable_entry_name(name);
+        EXPECT_EQ(encoded.error().code, liquid::errc::invalid_argument);
+    }
+}
+
+TEST(Records, tree_entry_names_that_only_resemble_reserved_ones_round_trip) {
+    for (const auto* name : {"...",
+                             "a..b",
+                             ".gitignore",
+                             ".github",
+                             ".git-blame-ignore-revs",
+                             "git~2",
+                             "x.git",
+                             "README",
+                             "caf\xc3\xa9"}) {
+        auto decoded = liquid::objects::decode_tree(tree_bytes_named(name));
+        ASSERT_TRUE(decoded) << name << ": " << decoded.error().message;
+        ASSERT_EQ(decoded->entries.size(), 1U);
+        EXPECT_EQ(decoded->entries.front().name, name);
+    }
 }
 
 TEST(Records, empty_tree_fixture_is_canonical) {
