@@ -239,7 +239,9 @@ samples on the shared runtime by default.
 `wrap --input <name>=<result|tree>` and direct named inputs mount upstream bytes read-only below
 `deps/<name>/`; an identical normalised upstream tree stops the downstream cascade. Directory
 modes, `ar` headers, and Python bytecode are normalised before storage, with the rule set bound
-into the sandbox digest. `wrap --install-prefix` stages a canonical `bin/lib/include/share` install
+into the sandbox digest. Output collection opens each path with `O_NOFOLLOW` and fails an action
+whose declared outputs contain a symbolic link or special file before reading it; normalised bytes
+go to a parent-owned staged copy, never back into the output (liquid #425). `wrap --install-prefix` stages a canonical `bin/lib/include/share` install
 tree with relative ELF or Mach-O lookup paths. Publication rejects embedded sandbox or install
 prefixes and absolute binary or package-metadata paths; an explicit waiver is retained in result
 diagnostics ([`relocation.md`](relocation.md)).

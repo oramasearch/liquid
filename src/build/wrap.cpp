@@ -2908,48 +2908,29 @@ runtime::task<action_result> run_wrapped_action(repository& source,
         }
         co_return std::unexpected(launched->error());
     }
+    const auto staging = run / "staging";
+    std::filesystem::create_directories(staging, code);
+    if (code) {
+        static_cast<void>(remove_run(run));
+        co_return std::unexpected(wrap_error(errc::io, code.message(), staging));
+    }
     auto output_values = std::vector<action_output>{};
     for (const auto& declared : expected.outputs) {
-        const auto relative = declared.path;
-        const auto path = mount / relative;
-        if (!std::filesystem::exists(path, code)) {
-            continue;
-        }
-        const auto directory = std::filesystem::is_directory(path, code);
-        if (code) {
+        auto staged = build_detail::stage_output(
+            mount, declared.path, build_detail::output_shape::either, staging, false);
+        if (!staged) {
             static_cast<void>(remove_run(run));
-            co_return std::unexpected(wrap_error(errc::io, code.message(), path));
+            co_return std::unexpected(staged.error());
         }
-        auto files = std::vector<std::filesystem::path>{};
-        if (directory) {
-            for (auto iterator = std::filesystem::recursive_directory_iterator{path, code};
-                 !code && iterator != std::filesystem::recursive_directory_iterator{};
-                 ++iterator) {
-                if (iterator->is_regular_file()) {
-                    files.push_back(iterator->path());
-                }
-            }
-        } else {
-            files.push_back(path);
-        }
-        if (code) {
-            static_cast<void>(remove_run(run));
-            co_return std::unexpected(wrap_error(errc::io, code.message(), path));
-        }
-        for (const auto& file : files) {
-            auto stored = co_await repository_detail::build_access::put_file(source, file);
+        for (auto& file : *staged) {
+            auto stored = co_await repository_detail::build_access::put_file(source, file.staged);
+            auto removed = std::error_code{};
+            std::filesystem::remove(file.staged, removed);
             if (!stored) {
                 static_cast<void>(remove_run(run));
                 co_return std::unexpected(stored.error());
             }
-            const auto status = std::filesystem::status(file, code);
-            if (code) {
-                static_cast<void>(remove_run(run));
-                co_return std::unexpected(wrap_error(errc::io, code.message(), file));
-            }
-            output_values.push_back({std::filesystem::relative(file, mount).generic_string(),
-                                     static_cast<std::uint32_t>(status.permissions()) & 0777U,
-                                     *stored});
+            output_values.push_back({std::move(file.path), file.mode, *stored});
         }
     }
     std::ranges::sort(output_values, {}, &action_output::path);

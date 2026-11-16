@@ -12,8 +12,14 @@ The SBOM finalization bound publishes 24 producer actions and gives one final ac
 `test_content.cpp` covers canonical output-tree paths and modes plus read-only named dependency
 folding. `test_normalise.cpp` proves two `ar` headers with different owner, group, mode, and time
 normalise identically, timestamp-form Python bytecode becomes one payload-addressed form, fixed-root
-binary and text kinds are unchanged, and tree modes preserve only portable executability. The
-provenance tests also enumerate the stored signed input/output claim.
+binary and text kinds are unchanged, and tree modes preserve only portable executability. Its
+output-collection cases (liquid #425) prove that a symbolic link to a host file, a linked declared
+output or parent directory at any depth, and a FIFO fail collection without reading or rewriting
+the target or staging anything; that escaping declared paths are refused; and that regular outputs
+are staged and normalised while the action's own copy stays untouched. On Linux,
+`Build.output_symlink_fails_before_its_host_target_is_read_or_rewritten` runs an action that links
+`out/payload.pyc` to a host sentinel and requires the action to fail with the sentinel unchanged.
+The provenance tests also enumerate the stored signed input/output claim.
 `test_conflicts.cpp` proves that reaching a conflict entry fails materialisation with its path and
 digest while a tree containing only the unaffected input materialises normally.
 
