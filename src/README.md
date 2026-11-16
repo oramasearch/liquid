@@ -1,5 +1,8 @@
 # Source implementation
 
+[`git/`](git/README.md) owns verified Git object decoding and the shared inflation and delta
+budgets used by local import (#443).
+
 `liquid split` documents owned destination storage, original signed history, nested support, and
 failure cleanup in its typed command table. The implementation lives in libliquid.
 

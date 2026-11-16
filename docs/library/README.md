@@ -1,5 +1,8 @@
 # Library implementation notes
 
+[Git interoperability](git-interop.md) documents local object inflation and shared delta
+budgets, strictly earlier offset bases, and compatibility limits for import (#443).
+
 The [documentation index](../README.md#library) lists one entry for each library topic.
 [Implementation status](status.md) is the authoritative inventory of implemented behavior and
 known limits. [libliquid](libliquid.md) covers CMake targets, the installed dependency closure,

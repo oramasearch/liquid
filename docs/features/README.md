@@ -4,6 +4,9 @@ The [VFS conformance harness](../library/vfs.md#backend-conformance-301) specifi
 projection checks for decisions 39 and 41. Nine cases run against the direct core reference; every
 replacement must run them itself. Linux libfuse calibration is still owed against #299.
 
+[Git import](../library/git-interop.md) bounds object inflation and delta reconstruction,
+including reference bases in other packs; malformed or over-budget objects fail closed (#443).
+
 This tree states what liquid **does**. It is the counterpart to
 [`docs/research/`](../research/), which states what the world currently does and
 why it is insufficient.
