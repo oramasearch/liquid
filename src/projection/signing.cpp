@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/projection.hpp"
 
 #include <algorithm>

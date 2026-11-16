@@ -1,0 +1,1936 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "liquid-d7a70cb226ce",
+  "documentNamespace": "https://github.com/oramasearch/liquid/sbom/d7a70cb226cee9532901c3dc628acc0de6e5b61a",
+  "creationInfo": {
+    "created": "2026-11-16T01:55:40Z",
+    "creators": [
+      "Organization: OramaSearch, Inc.",
+      "Tool: tools/sbom.py",
+      "Tool: syft"
+    ],
+    "licenseListVersion": "3.29",
+    "comment": "Made from source commit d7a70cb226cee9532901c3dc628acc0de6e5b61a by tools/sbom.py."
+  },
+  "documentDescribes": [
+    "SPDXRef-DocumentRoot"
+  ],
+  "packages": [
+    {
+      "name": "age test vectors",
+      "SPDXID": "SPDXRef-Component-age-test-vectors-3009553e9b0b5952",
+      "versionInfo": "4448f2097b2daa812c91a26141f9f36c2096b9ca",
+      "downloadLocation": "https://github.com/C2SP/CCTV",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "0BSD OR CC0-1.0 OR Unlicense",
+      "comment": "C2SP CCTV. How it is used: test fixtures (tests/fixtures/age/). Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/C2SP/CCTV",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/C2SP/CCTV@4448f2097b2daa812c91a26141f9f36c2096b9ca"
+        }
+      ]
+    },
+    {
+      "name": "AppImage type 2 runtime",
+      "SPDXID": "SPDXRef-Component-AppImage-type-2-runtime-2f95e0751b0182d8",
+      "versionInfo": "75849dce7cc37e4319b633df1f116ca895c71a12",
+      "downloadLocation": "https://github.com/AppImage/type2-runtime",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: vendored binaries in third_party/appimage-runtimes/, embedded in liquid. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/AppImage/type2-runtime",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/AppImage/type2-runtime@75849dce7cc37e4319b633df1f116ca895c71a12"
+        }
+      ]
+    },
+    {
+      "name": "automerge-cpp",
+      "SPDXID": "SPDXRef-Component-automerge-cpp-edcad248950bb82f",
+      "versionInfo": "06408d32fa7dbefdd658f3b17d518c4a681dbf0b",
+      "downloadLocation": "git+https://github.com/homer6/automerge-cpp.git@06408d32fa7dbefdd658f3b17d518c4a681dbf0b",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: submodule, linked privately. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/homer6/automerge-cpp",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/homer6/automerge-cpp@06408d32fa7dbefdd658f3b17d518c4a681dbf0b"
+        }
+      ]
+    },
+    {
+      "name": "BLAKE3",
+      "SPDXID": "SPDXRef-Component-BLAKE3-815c7907ad9e5ce1",
+      "versionInfo": "1.8.7",
+      "downloadLocation": "https://github.com/BLAKE3-team/BLAKE3",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception",
+      "comment": "C implementation. How it is used: fetched at build, compiled privately. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/BLAKE3-team/BLAKE3",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/BLAKE3-team/BLAKE3@1.8.7"
+        }
+      ]
+    },
+    {
+      "name": "Boost",
+      "SPDXID": "SPDXRef-Component-Boost-1b4f4c0e810341fd",
+      "versionInfo": "1.91.0-1",
+      "downloadLocation": "https://github.com/boostorg/boost",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSL-1.0",
+      "comment": "CMake release: json, url, assert, config, core, mp11, system, throw_exception, type_traits, winapi. How it is used: fetched at build, linked privately. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/boostorg/boost",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/boostorg/boost@1.91.0-1"
+        }
+      ]
+    },
+    {
+      "name": "Boost.Capy",
+      "SPDXID": "SPDXRef-Component-Boost.Capy-3bce0e447cd0e6a7",
+      "versionInfo": "ce1c7d710c4baaeeddb57fa101707c610f6eb975",
+      "downloadLocation": "git+https://github.com/cppalliance/capy.git@ce1c7d710c4baaeeddb57fa101707c610f6eb975",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSL-1.0",
+      "comment": "How it is used: submodule, linked publicly by libliquid. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/cppalliance/capy",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/cppalliance/capy@ce1c7d710c4baaeeddb57fa101707c610f6eb975"
+        }
+      ]
+    },
+    {
+      "name": "Boost.Corosio",
+      "SPDXID": "SPDXRef-Component-Boost.Corosio-ce423e89ec459008",
+      "versionInfo": "887166b82a1b7acc0a10ce9f3c61224d45ae80e4",
+      "downloadLocation": "git+https://github.com/oramasearch/corosio.git@887166b82a1b7acc0a10ce9f3c61224d45ae80e4",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSL-1.0",
+      "comment": "Orama's fork. How it is used: submodule, linked privately. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/oramasearch/corosio",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/oramasearch/corosio@887166b82a1b7acc0a10ce9f3c61224d45ae80e4"
+        }
+      ]
+    },
+    {
+      "name": "Boost.HTTP",
+      "SPDXID": "SPDXRef-Component-Boost.HTTP-0dbeb02a94dc16e8",
+      "versionInfo": "af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4",
+      "downloadLocation": "git+https://github.com/oramasearch/http.git@af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSL-1.0",
+      "comment": "Orama's fork, oramasearch/http. How it is used: submodule, linked privately. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/oramasearch/http",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/oramasearch/http@af0353a5b2868d5b8db7fb01ffb5c464f9deb8a4"
+        }
+      ]
+    },
+    {
+      "name": "command-line-arguments",
+      "SPDXID": "SPDXRef-Package-go-module-command-line-arguments-c4ac8c1612c5d4bf",
+      "versionInfo": "UNKNOWN",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "sourceInfo": "acquired package info from go module information: /tests/fixtures/projection/root/bin/liquid-fixture",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/command-line-arguments"
+        }
+      ]
+    },
+    {
+      "name": "GoogleTest",
+      "SPDXID": "SPDXRef-Component-GoogleTest-34101f2b39cec8bc",
+      "versionInfo": "v1.17.0",
+      "downloadLocation": "https://github.com/google/googletest",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "comment": "How it is used: fetched at build, tests only. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/google/googletest",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/google/googletest@v1.17.0"
+        }
+      ]
+    },
+    {
+      "name": "HIP test patch",
+      "SPDXID": "SPDXRef-Component-HIP-test-patch-bde2aa61db71c664",
+      "versionInfo": "NOASSERTION",
+      "downloadLocation": "https://github.com/ROCm/HIP",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "hip.patch. How it is used: test fixture (tests/import/fixtures/hip.patch), a patch from ROCm HIP. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/ROCm/HIP"
+    },
+    {
+      "name": "libfuse",
+      "SPDXID": "SPDXRef-Component-libfuse-ef224ce73d2f5ba4",
+      "versionInfo": "as built by the runtime at the commit above",
+      "downloadLocation": "https://github.com/libfuse/libfuse",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LGPL-2.1-only",
+      "comment": "inside the AppImage runtime. How it is used: statically linked into the vendored AppImage runtime binaries. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/libfuse/libfuse",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/libfuse/libfuse@as built by the runtime at the commit above"
+        }
+      ]
+    },
+    {
+      "name": "libfuse3",
+      "SPDXID": "SPDXRef-Component-libfuse3-f523f208b4691877",
+      "versionInfo": "3.x (system)",
+      "downloadLocation": "https://github.com/libfuse/libfuse",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LGPL-2.1-only",
+      "comment": "Linux. How it is used: system library, linked dynamically on Linux, not distributed. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/libfuse/libfuse",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/libfuse/libfuse@3.x (system)"
+        }
+      ]
+    },
+    {
+      "name": "liquid",
+      "SPDXID": "SPDXRef-DocumentRoot",
+      "versionInfo": "d7a70cb226ce",
+      "downloadLocation": "git+https://github.com/oramasearch/liquid.git",
+      "homepage": "https://github.com/oramasearch/liquid",
+      "filesAnalyzed": false,
+      "supplier": "Organization: OramaSearch, Inc.",
+      "originator": "Organization: OramaSearch, Inc.",
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright (c) 2026 OramaSearch, Inc.",
+      "primaryPackagePurpose": "SOURCE",
+      "comment": "The source tree of liquid. Packages found by syft in the files git tracks, plus the C and C++ components of THIRD_PARTY_LICENSES and the git submodules."
+    },
+    {
+      "name": "LMDB",
+      "SPDXID": "SPDXRef-Component-LMDB-0a7b4a90ef77b967",
+      "versionInfo": "LMDB_0.9.36",
+      "downloadLocation": "https://github.com/LMDB/lmdb",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "OLDAP-2.8",
+      "comment": "How it is used: fetched at build, benchmark only (bench/chunk-index). Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/LMDB/lmdb",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/LMDB/lmdb@LMDB_0.9.36"
+        }
+      ]
+    },
+    {
+      "name": "macFUSE",
+      "SPDXID": "SPDXRef-Component-macFUSE-fa5482d7ddbad991",
+      "versionInfo": "system install",
+      "downloadLocation": "https://macfuse.github.io",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LicenseRef-macFUSE-license-not-open-source",
+      "comment": "macOS, optional. How it is used: optional system library, linked dynamically if installed, not distributed. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://macfuse.github.io"
+    },
+    {
+      "name": "Monocypher",
+      "SPDXID": "SPDXRef-Component-Monocypher-ed4726faf758318c",
+      "versionInfo": "4.0.3",
+      "downloadLocation": "https://monocypher.org",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-2-Clause OR CC0-1.0",
+      "comment": "How it is used: fetched at build (SHA-256 pinned), compiled privately. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://monocypher.org"
+    },
+    {
+      "name": "OpenSSL",
+      "SPDXID": "SPDXRef-Component-OpenSSL-844c5a1b29c99b9c",
+      "versionInfo": "3.x (system)",
+      "downloadLocation": "https://github.com/openssl/openssl",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "comment": "How it is used: system library, linked dynamically, not distributed. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/openssl/openssl",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/openssl/openssl@3.x (system)"
+        }
+      ]
+    },
+    {
+      "name": "oramacore-cpp",
+      "SPDXID": "SPDXRef-Component-oramacore-cpp-339b170fefd1c12a",
+      "versionInfo": "9b74ce177f47d63024532ae6000c2cd62c73e0cd",
+      "downloadLocation": "git+https://github.com/oramasearch/oramacore-cpp.git@9b74ce177f47d63024532ae6000c2cd62c73e0cd",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: submodule, pinned; not built by liquid's CMake today. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/oramasearch/oramacore-cpp",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/oramasearch/oramacore-cpp@9b74ce177f47d63024532ae6000c2cd62c73e0cd"
+        }
+      ]
+    },
+    {
+      "name": "python",
+      "SPDXID": "SPDXRef-Image-python-7056b72e738dab8a",
+      "versionInfo": "3.13.7-slim-bookworm",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "primaryPackagePurpose": "CONTAINER",
+      "comment": "Container base image (python:3.13.7-slim-bookworm), FROM in tests/reapi/Dockerfile. Its own packages are in the image SBOM of each release image.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:docker/python@3.13.7-slim-bookworm"
+        }
+      ]
+    },
+    {
+      "name": "RocksDB",
+      "SPDXID": "SPDXRef-Component-RocksDB-0b22b81b4ddbab86",
+      "versionInfo": "v10.10.1",
+      "downloadLocation": "https://github.com/facebook/rocksdb",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "comment": "How it is used: fetched at build, benchmark only (bench/chunk-index). Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/facebook/rocksdb",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/facebook/rocksdb@v10.10.1"
+        }
+      ]
+    },
+    {
+      "name": "SHA-256 implementation",
+      "SPDXID": "SPDXRef-Component-SHA-256-implementation-89caa68cc66f794d",
+      "versionInfo": "cfbde48414baacf51fc7c74f275190881f037d32",
+      "downloadLocation": "https://github.com/B-Con/crypto-algorithms",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "LicenseRef-public-domain",
+      "comment": "Brad Conte, crypto-algorithms. How it is used: vendored in src/hash/. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/B-Con/crypto-algorithms",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/B-Con/crypto-algorithms@cfbde48414baacf51fc7c74f275190881f037d32"
+        }
+      ]
+    },
+    {
+      "name": "Spack package metadata export",
+      "SPDXID": "SPDXRef-Component-Spack-package-metadata-export-843d53decc088200",
+      "versionInfo": "2bfcc69fa870d3c6919be87593f22647981b648a",
+      "downloadLocation": "https://github.com/spack/spack",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "comment": "How it is used: test fixtures (tests/import/fixtures/), derived from Spack's package recipes. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/spack/spack",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/spack/spack@2bfcc69fa870d3c6919be87593f22647981b648a"
+        }
+      ]
+    },
+    {
+      "name": "squashfuse",
+      "SPDXID": "SPDXRef-Component-squashfuse-a9f4ec64166b681d",
+      "versionInfo": "as built by the runtime",
+      "downloadLocation": "https://github.com/vasi/squashfuse",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-2-Clause",
+      "comment": "inside the AppImage runtime. How it is used: statically linked into the vendored AppImage runtime binaries. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/vasi/squashfuse",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/vasi/squashfuse@as built by the runtime"
+        }
+      ]
+    },
+    {
+      "name": "stdlib",
+      "SPDXID": "SPDXRef-Package-go-module-stdlib-da3048b1e53b8a33",
+      "versionInfo": "go1.26.5",
+      "supplier": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "sourceInfo": "acquired package info from go module information: /tests/fixtures/projection/root/bin/liquid-fixture",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "SECURITY",
+          "referenceType": "cpe23Type",
+          "referenceLocator": "cpe:2.3:a:golang:go:1.26.5:-:*:*:*:*:*:*"
+        },
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/stdlib@1.26.5"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: bash",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-bash-5b54f107c98b6047",
+      "versionInfo": "a06c2e4415e9bc0346c6b86d401879ffb44058f7",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-bash",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-bash",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-bash@a06c2e4415e9bc0346c6b86d401879ffb44058f7"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: c",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-c-ee87946cd9b22987",
+      "versionInfo": "b780e47fc780ddc8da13afa35a3f4ed5c157823d",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-c",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-c",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-c@b780e47fc780ddc8da13afa35a3f4ed5c157823d"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: c#",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-c-4ea55af0678f7847",
+      "versionInfo": "9150f7d56bb47f1a809fa23623f1ba1413e93fa9",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-c-sharp",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-c-sharp",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-c-sharp@9150f7d56bb47f1a809fa23623f1ba1413e93fa9"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: c++",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-c-0e6c63c6ef78c0d9",
+      "versionInfo": "8b5b49eb196bec7040441bee33b2c9a4838d6967",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-cpp",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-cpp",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-cpp@8b5b49eb196bec7040441bee33b2c9a4838d6967"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: cmake",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-cmake-d4da2ca2ed4c0cf5",
+      "versionInfo": "ca627bb5828616b6246aafdc3c3222789e728e37",
+      "downloadLocation": "https://github.com/uyha/tree-sitter-cmake",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/uyha/tree-sitter-cmake",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/uyha/tree-sitter-cmake@ca627bb5828616b6246aafdc3c3222789e728e37"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: css",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-css-64fc557827e8471f",
+      "versionInfo": "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-css",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-css",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-css@dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: dart",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-dart-e277022272932026",
+      "versionInfo": "be07cf7118d3dba06236a3f19541685a68209934",
+      "downloadLocation": "https://github.com/UserNobody14/tree-sitter-dart",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "ISC",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/UserNobody14/tree-sitter-dart",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/UserNobody14/tree-sitter-dart@be07cf7118d3dba06236a3f19541685a68209934"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: dockerfile",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-dockerfile-9b405582038c14a6",
+      "versionInfo": "971acdd908568b4531b0ba28a445bf0bb720aba5",
+      "downloadLocation": "https://github.com/camdencheek/tree-sitter-dockerfile",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "ISC",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/camdencheek/tree-sitter-dockerfile",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/camdencheek/tree-sitter-dockerfile@971acdd908568b4531b0ba28a445bf0bb720aba5"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: elixir",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-elixir-226ad9c78004aa9f",
+      "versionInfo": "4b0c7118760af58a2e7081bbc8396e136f820b37",
+      "downloadLocation": "https://github.com/elixir-lang/tree-sitter-elixir",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/elixir-lang/tree-sitter-elixir",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/elixir-lang/tree-sitter-elixir@4b0c7118760af58a2e7081bbc8396e136f820b37"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: elm",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-elm-515f9863701c1bee",
+      "versionInfo": "e1e8fea161a1e66f3997855d316be2a43e4e956f",
+      "downloadLocation": "https://github.com/elm-tooling/tree-sitter-elm",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/elm-tooling/tree-sitter-elm",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/elm-tooling/tree-sitter-elm@e1e8fea161a1e66f3997855d316be2a43e4e956f"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: erlang",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-erlang-484fd4f78bb4bca0",
+      "versionInfo": "6ba4c762eb3065495e3db85697ffeecdf364ce35",
+      "downloadLocation": "https://github.com/WhatsApp/tree-sitter-erlang",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/WhatsApp/tree-sitter-erlang",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/WhatsApp/tree-sitter-erlang@6ba4c762eb3065495e3db85697ffeecdf364ce35"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: fortran",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-fortran-5c76394dacd9b1c9",
+      "versionInfo": "7edacd2b21aa80057d9725384a1304a1c758e0f8",
+      "downloadLocation": "https://github.com/stadelmanma/tree-sitter-fortran",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/stadelmanma/tree-sitter-fortran",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/stadelmanma/tree-sitter-fortran@7edacd2b21aa80057d9725384a1304a1c758e0f8"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: go",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-go-00a58e82972f59a0",
+      "versionInfo": "2346a3ab1bb3857b48b29d779a1ef9799a248cd7",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-go",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-go",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-go@2346a3ab1bb3857b48b29d779a1ef9799a248cd7"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: haskell",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-haskell-3d9124ab44a3cb7b",
+      "versionInfo": "0975ef72fc3c47b530309ca93937d7d143523628",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-haskell",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-haskell",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-haskell@0975ef72fc3c47b530309ca93937d7d143523628"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: hcl",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-hcl-421d5367c8a2683b",
+      "versionInfo": "64ad62785d442eb4d45df3a1764962dafd5bc98b",
+      "downloadLocation": "https://github.com/tree-sitter-grammars/tree-sitter-hcl",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter-grammars/tree-sitter-hcl",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter-grammars/tree-sitter-hcl@64ad62785d442eb4d45df3a1764962dafd5bc98b"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: html",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-html-a511c51f1239e9ad",
+      "versionInfo": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-html",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-html",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-html@73a3947324f6efddf9e17c0ea58d454843590cc0"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: java",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-java-b6262cabe46c9adc",
+      "versionInfo": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-java",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-java",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-java@e10607b45ff745f5f876bfa3e94fbcc6b44bdc11"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: javascript",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-javascript-febae34671eaf42d",
+      "versionInfo": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-javascript",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-javascript",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-javascript@58404d8cf191d69f2674a8fd507bd5776f46cb11"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: json",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-json-9362833c07d2e834",
+      "versionInfo": "254c42a6476413b776221e03982ac8ae159eeb72",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-json",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-json",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-json@254c42a6476413b776221e03982ac8ae159eeb72"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: julia",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-julia-be43a7f9ff97f121",
+      "versionInfo": "e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-julia",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-julia",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-julia@e0f9dcd180fdcfcfa8d79a3531e11d99e79321d3"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: kotlin",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-kotlin-9fbbf2ab691ac8c3",
+      "versionInfo": "1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1",
+      "downloadLocation": "https://github.com/fwcd/tree-sitter-kotlin",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/fwcd/tree-sitter-kotlin",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/fwcd/tree-sitter-kotlin@1852ea17b7f60fb3f9d84e0b1555d56b46b39fb1"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: latex",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-latex-4a9e89d47571c065",
+      "versionInfo": "a6c812704b3d3e1541b0853aa0d6d561301320e1",
+      "downloadLocation": "https://github.com/latex-lsp/tree-sitter-latex",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/latex-lsp/tree-sitter-latex",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/latex-lsp/tree-sitter-latex@a6c812704b3d3e1541b0853aa0d6d561301320e1"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: lua",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-lua-04adb6f0efe14376",
+      "versionInfo": "10fe0054734eec83049514ea2e718b2a56acd0c9",
+      "downloadLocation": "https://github.com/tree-sitter-grammars/tree-sitter-lua",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter-grammars/tree-sitter-lua",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter-grammars/tree-sitter-lua@10fe0054734eec83049514ea2e718b2a56acd0c9"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: make",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-make-b2a88413c6ce2e3c",
+      "versionInfo": "a4b9187417d6be349ee5fd4b6e77b4172c6827dd",
+      "downloadLocation": "https://github.com/alemuller/tree-sitter-make",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/alemuller/tree-sitter-make",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/alemuller/tree-sitter-make@a4b9187417d6be349ee5fd4b6e77b4172c6827dd"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: markdown",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-markdown-5b504c25811d14a5",
+      "versionInfo": "a0a00f817d02412bd92c54d316f164d827b57b5c",
+      "downloadLocation": "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter-grammars/tree-sitter-markdown@a0a00f817d02412bd92c54d316f164d827b57b5c"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: nix",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-nix-ed8e201fcb1668d4",
+      "versionInfo": "3d0173d903e630b6e14d17f1cf79488791379ded",
+      "downloadLocation": "https://github.com/nix-community/tree-sitter-nix",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/nix-community/tree-sitter-nix",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/nix-community/tree-sitter-nix@3d0173d903e630b6e14d17f1cf79488791379ded"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: objective-c",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-objective-c-dca64ffa837132e1",
+      "versionInfo": "181a81b8f23a2d593e7ab4259981f50122909fda",
+      "downloadLocation": "https://github.com/tree-sitter-grammars/tree-sitter-objc",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter-grammars/tree-sitter-objc",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter-grammars/tree-sitter-objc@181a81b8f23a2d593e7ab4259981f50122909fda"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: ocaml",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-ocaml-c5af0fd7204b196e",
+      "versionInfo": "a4ce49a6c17e88e7ca8350cfb666749d9a5c6630",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-ocaml",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-ocaml",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-ocaml@a4ce49a6c17e88e7ca8350cfb666749d9a5c6630"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: perl",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-perl-069ad3e20dec8a61",
+      "versionInfo": "5b97493ce70686e22ec8b9ea261437147e342b49",
+      "downloadLocation": "https://github.com/ganezdragon/tree-sitter-perl",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/ganezdragon/tree-sitter-perl",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/ganezdragon/tree-sitter-perl@5b97493ce70686e22ec8b9ea261437147e342b49"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: php",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-php-5adc86c8205864b4",
+      "versionInfo": "3fda2fb9577166c6399834917f9844f30370beea",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-php",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-php",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-php@3fda2fb9577166c6399834917f9844f30370beea"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: protocol-buffers",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-protocol-buffers-135e0fb0512bbabb",
+      "versionInfo": "e9f6b43f6844bd2189b50a422d4e2094313f6aa3",
+      "downloadLocation": "https://github.com/treywood/tree-sitter-proto",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/treywood/tree-sitter-proto",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/treywood/tree-sitter-proto@e9f6b43f6844bd2189b50a422d4e2094313f6aa3"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: python",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-python-6004c55b9516739e",
+      "versionInfo": "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-python",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-python",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-python@26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: r",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-r-710be359d74d9548",
+      "versionInfo": "58a22794466c0fc15b0d3b40531db751593721e8",
+      "downloadLocation": "https://github.com/r-lib/tree-sitter-r",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/r-lib/tree-sitter-r",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/r-lib/tree-sitter-r@58a22794466c0fc15b0d3b40531db751593721e8"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: ruby",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-ruby-55ec4aa20d82cba6",
+      "versionInfo": "ad907a69da0c8a4f7a943a7fe012712208da6dee",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-ruby",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-ruby",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-ruby@ad907a69da0c8a4f7a943a7fe012712208da6dee"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: rust",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-rust-0bc6dbc9bdd1f941",
+      "versionInfo": "77a3747266f4d621d0757825e6b11edcbf991ca5",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-rust",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-rust",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-rust@77a3747266f4d621d0757825e6b11edcbf991ca5"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: scala",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-scala-06d97d87718f804f",
+      "versionInfo": "db390f312a54b04b13790e1767bfac32665c17ac",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-scala",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-scala",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-scala@db390f312a54b04b13790e1767bfac32665c17ac"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: scss",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-scss-146791897be5e058",
+      "versionInfo": "c478c6868648eff49eb04a4df90d703dc45b312a",
+      "downloadLocation": "https://github.com/serenadeai/tree-sitter-scss",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/serenadeai/tree-sitter-scss",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/serenadeai/tree-sitter-scss@c478c6868648eff49eb04a4df90d703dc45b312a"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: solidity",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-solidity-2f83ab943dcd033b",
+      "versionInfo": "048fe686cb1fde267243739b8bdbec8fc3a55272",
+      "downloadLocation": "https://github.com/JoranHonig/tree-sitter-solidity",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/JoranHonig/tree-sitter-solidity",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/JoranHonig/tree-sitter-solidity@048fe686cb1fde267243739b8bdbec8fc3a55272"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: sql",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-sql-071e00681ad3dadb",
+      "versionInfo": "84a2b208f072a2ca78fc59b5fa51cbdbf9c5aa37",
+      "downloadLocation": "https://github.com/DerekStride/tree-sitter-sql",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/DerekStride/tree-sitter-sql",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/DerekStride/tree-sitter-sql@84a2b208f072a2ca78fc59b5fa51cbdbf9c5aa37"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: svelte",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-svelte-8ee5bbd0c7d20065",
+      "versionInfo": "ae5199db47757f785e43a14b332118a5474de1a2",
+      "downloadLocation": "https://github.com/tree-sitter-grammars/tree-sitter-svelte",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter-grammars/tree-sitter-svelte",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter-grammars/tree-sitter-svelte@ae5199db47757f785e43a14b332118a5474de1a2"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: swift",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-swift-bcc6ecb668c5dc77",
+      "versionInfo": "f47512c92fb3183b5b56c9ef40a442fdeb942853",
+      "downloadLocation": "https://github.com/alex-pinkus/tree-sitter-swift",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/alex-pinkus/tree-sitter-swift",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/alex-pinkus/tree-sitter-swift@f47512c92fb3183b5b56c9ef40a442fdeb942853"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: toml",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-toml-ff289d699817f5d6",
+      "versionInfo": "64b56832c2cffe41758f28e05c756a3a98d16f41",
+      "downloadLocation": "https://github.com/tree-sitter-grammars/tree-sitter-toml",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter-grammars/tree-sitter-toml",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter-grammars/tree-sitter-toml@64b56832c2cffe41758f28e05c756a3a98d16f41"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: tsx",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-tsx-0066fb0b95825860",
+      "versionInfo": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-typescript",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-typescript",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-typescript@75b3874edb2dc714fb1fd77a32013d0f8699989f"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: verilog",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-verilog-2a0efc1aab1caf9d",
+      "versionInfo": "227d277b6a1a5e2bf818d6206935722a7503de08",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter-verilog",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter-verilog",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter-verilog@227d277b6a1a5e2bf818d6206935722a7503de08"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: vue",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-vue-e07df47a547bc130",
+      "versionInfo": "ce8011a414fdf8091f4e4071752efc376f4afb08",
+      "downloadLocation": "https://github.com/tree-sitter-grammars/tree-sitter-vue",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter-grammars/tree-sitter-vue",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter-grammars/tree-sitter-vue@ce8011a414fdf8091f4e4071752efc376f4afb08"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: xml",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-xml-6800302a336420d8",
+      "versionInfo": "5000ae8f22d11fbe93939b05c1e37cf21117162d",
+      "downloadLocation": "https://github.com/tree-sitter-grammars/tree-sitter-xml",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter-grammars/tree-sitter-xml",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter-grammars/tree-sitter-xml@5000ae8f22d11fbe93939b05c1e37cf21117162d"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: yaml",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-yaml-68859ec709857d97",
+      "versionInfo": "a1c4812a73ec5e089de8e441fdea3a921e8d5079",
+      "downloadLocation": "https://github.com/tree-sitter-grammars/tree-sitter-yaml",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter-grammars/tree-sitter-yaml",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter-grammars/tree-sitter-yaml@a1c4812a73ec5e089de8e441fdea3a921e8d5079"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter grammar: zig",
+      "SPDXID": "SPDXRef-Component-tree-sitter-grammar-zig-df03001e0fa14757",
+      "versionInfo": "a80a6e9be81b33b182ce6305ae4ea28e29211bd5",
+      "downloadLocation": "https://github.com/maxxnino/tree-sitter-zig",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/maxxnino/tree-sitter-zig",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/maxxnino/tree-sitter-zig@a80a6e9be81b33b182ce6305ae4ea28e29211bd5"
+        }
+      ]
+    },
+    {
+      "name": "tree-sitter runtime",
+      "SPDXID": "SPDXRef-Component-tree-sitter-runtime-6548358ec535ef66",
+      "versionInfo": "a467ea8502d95562171f97953a6dc5b2a8622609",
+      "downloadLocation": "https://github.com/tree-sitter/tree-sitter",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "comment": "How it is used: fetched at build, compiled into the bundled frontend modules. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/tree-sitter/tree-sitter",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/tree-sitter/tree-sitter@a467ea8502d95562171f97953a6dc5b2a8622609"
+        }
+      ]
+    },
+    {
+      "name": "ubuntu",
+      "SPDXID": "SPDXRef-Image-ubuntu-246bf0cb8a2d8764",
+      "versionInfo": "24.04",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "primaryPackagePurpose": "CONTAINER",
+      "comment": "Container base image (ubuntu:24.04), FROM in tools/linux-ci/Dockerfile. Its own packages are in the image SBOM of each release image.",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:docker/ubuntu@24.04"
+        }
+      ]
+    },
+    {
+      "name": "zlib",
+      "SPDXID": "SPDXRef-Component-zlib-4c4d4a13a9590a03",
+      "versionInfo": "1.3.1",
+      "downloadLocation": "https://zlib.net",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Zlib",
+      "comment": "inside the AppImage runtime; also linked from the system by liquid. How it is used: statically linked into the AppImage runtime; system library for liquid. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://zlib.net"
+    },
+    {
+      "name": "Zstandard",
+      "SPDXID": "SPDXRef-Component-Zstandard-01bef5918314d720",
+      "versionInfo": "v1.5.7",
+      "downloadLocation": "https://github.com/facebook/zstd",
+      "filesAnalyzed": false,
+      "supplier": "NOASSERTION",
+      "copyrightText": "NOASSERTION",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "comment": "How it is used: fetched at build, compiled privately. Listed in THIRD_PARTY_LICENSES.",
+      "homepage": "https://github.com/facebook/zstd",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:github/facebook/zstd@v1.5.7"
+        }
+      ]
+    }
+  ],
+  "hasExtractedLicensingInfos": [
+    {
+      "licenseId": "LicenseRef-macFUSE-license-not-open-source",
+      "name": "macFUSE license (not open source)",
+      "extractedText": "macFUSE license (not open source): the full text is in THIRD_PARTY_LICENSES."
+    },
+    {
+      "licenseId": "LicenseRef-public-domain",
+      "name": "public domain",
+      "extractedText": "public domain: the full text is in THIRD_PARTY_LICENSES."
+    }
+  ],
+  "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Component-AppImage-type-2-runtime-2f95e0751b0182d8",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-BLAKE3-815c7907ad9e5ce1",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-Boost-1b4f4c0e810341fd",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-Boost.Capy-3bce0e447cd0e6a7",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-Boost.Corosio-ce423e89ec459008",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-Boost.HTTP-0dbeb02a94dc16e8",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-GoogleTest-34101f2b39cec8bc",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-HIP-test-patch-bde2aa61db71c664",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-LMDB-0a7b4a90ef77b967",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-Monocypher-ed4726faf758318c",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-OpenSSL-844c5a1b29c99b9c",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-RocksDB-0b22b81b4ddbab86",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-SHA-256-implementation-89caa68cc66f794d",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-Spack-package-metadata-export-843d53decc088200",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-Zstandard-01bef5918314d720",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-age-test-vectors-3009553e9b0b5952",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-automerge-cpp-edcad248950bb82f",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-libfuse-ef224ce73d2f5ba4",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-libfuse3-f523f208b4691877",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-macFUSE-fa5482d7ddbad991",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-oramacore-cpp-339b170fefd1c12a",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-squashfuse-a9f4ec64166b681d",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-bash-5b54f107c98b6047",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-c-0e6c63c6ef78c0d9",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-c-4ea55af0678f7847",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-c-ee87946cd9b22987",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-cmake-d4da2ca2ed4c0cf5",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-css-64fc557827e8471f",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-dart-e277022272932026",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-dockerfile-9b405582038c14a6",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-elixir-226ad9c78004aa9f",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-elm-515f9863701c1bee",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-erlang-484fd4f78bb4bca0",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-fortran-5c76394dacd9b1c9",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-go-00a58e82972f59a0",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-haskell-3d9124ab44a3cb7b",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-hcl-421d5367c8a2683b",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-html-a511c51f1239e9ad",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-java-b6262cabe46c9adc",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-javascript-febae34671eaf42d",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-json-9362833c07d2e834",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-julia-be43a7f9ff97f121",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-kotlin-9fbbf2ab691ac8c3",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-latex-4a9e89d47571c065",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-lua-04adb6f0efe14376",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-make-b2a88413c6ce2e3c",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-markdown-5b504c25811d14a5",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-nix-ed8e201fcb1668d4",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-objective-c-dca64ffa837132e1",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-ocaml-c5af0fd7204b196e",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-perl-069ad3e20dec8a61",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-php-5adc86c8205864b4",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-protocol-buffers-135e0fb0512bbabb",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-python-6004c55b9516739e",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-r-710be359d74d9548",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-ruby-55ec4aa20d82cba6",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-rust-0bc6dbc9bdd1f941",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-scala-06d97d87718f804f",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-scss-146791897be5e058",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-solidity-2f83ab943dcd033b",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-sql-071e00681ad3dadb",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-svelte-8ee5bbd0c7d20065",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-swift-bcc6ecb668c5dc77",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-toml-ff289d699817f5d6",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-tsx-0066fb0b95825860",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-verilog-2a0efc1aab1caf9d",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-vue-e07df47a547bc130",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-xml-6800302a336420d8",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-yaml-68859ec709857d97",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-grammar-zig-df03001e0fa14757",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-tree-sitter-runtime-6548358ec535ef66",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Component-zlib-4c4d4a13a9590a03",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-DocumentRoot",
+      "relationshipType": "DESCRIBES",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Image-python-7056b72e738dab8a",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Image-ubuntu-246bf0cb8a2d8764",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-go-module-command-line-arguments-c4ac8c1612c5d4bf",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-go-module-command-line-arguments-c4ac8c1612c5d4bf",
+      "relationshipType": "DEPENDENCY_OF",
+      "spdxElementId": "SPDXRef-Package-go-module-stdlib-da3048b1e53b8a33"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-go-module-stdlib-da3048b1e53b8a33",
+      "relationshipType": "CONTAINS",
+      "spdxElementId": "SPDXRef-DocumentRoot"
+    }
+  ]
+}

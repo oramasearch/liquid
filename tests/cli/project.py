@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+
 """Exercise repository selection through the installed public CLI surface."""
 
 import argparse

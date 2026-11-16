@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/node_store.hpp"
 
 #include <filesystem>

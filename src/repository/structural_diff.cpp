@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "repository/structural_diff.hpp"
 
 #include <algorithm>

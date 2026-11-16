@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // A repository's own state goes through store_backend (liquid #326): LIQUID_REPO, LIQUID_JOURNAL,
 // session state and replication cursors are backend keys, so a backend with no local root holds
 // every byte of a shared-store repository. These tests run the repository lifecycle against the

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "flow_control.hpp"
 
 #include <algorithm>

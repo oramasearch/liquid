@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+
 """Maintain liquid's canonical tree-sitter grammar lock and documentation table."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/ostree/ostree.hpp"
 
 #include <algorithm>

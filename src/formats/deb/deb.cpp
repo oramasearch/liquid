@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/deb/deb.hpp"
 
 #include <algorithm>

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Whole-repository transfer between two open stores (liquid #328). See
 // docs/library/store.md#whole-repository-transfer.
 

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 cmake_minimum_required(VERSION 3.28)
 
 # liquid is C++26. Capy/Corosio (when they arrive) need Clang 17+, so prefer a

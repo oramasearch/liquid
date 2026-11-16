@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/tiers.hpp"
 
 auto tiers_header() -> int {

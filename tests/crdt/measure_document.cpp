@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "crdt/document.hpp"
 
 #include <chrono>

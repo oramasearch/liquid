@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "http2/grpc.hpp"
 
 #include <charconv>

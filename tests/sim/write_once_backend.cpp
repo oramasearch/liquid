@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "write_once_backend.hpp"
 
 #include <algorithm>

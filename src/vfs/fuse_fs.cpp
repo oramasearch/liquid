@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "backend.hpp"
 
 #if defined(LIQUID_HAS_FUSE3)

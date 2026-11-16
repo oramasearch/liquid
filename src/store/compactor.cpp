@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "compactor.hpp"
 
 #include <algorithm>

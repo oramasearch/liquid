@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/transparency.hpp"
 
 #include <algorithm>

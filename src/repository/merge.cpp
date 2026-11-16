@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "repository/merge.hpp"
 
 #include <algorithm>

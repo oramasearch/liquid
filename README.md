@@ -423,3 +423,9 @@ When liquid gains or loses a capability, update the
 
 liquid is released under the MIT licence ([LICENSE](LICENSE)).
 Third-party notices are in [NOTICE](NOTICE).
+
+## License
+
+MIT, see [LICENSE](LICENSE). Third-party components and their licenses are in
+[THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES). Contributions are welcome under the
+[Contributor License Agreement](CLA.md); see [CONTRIBUTING.md](CONTRIBUTING.md).

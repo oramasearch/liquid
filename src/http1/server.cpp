@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "http1/server.hpp"
 
 #include <array>

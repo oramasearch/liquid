@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "value.h"
 
 int left(void) {

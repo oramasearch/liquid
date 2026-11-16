@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/test/forge_double.hpp"
 
 auto main() -> int {

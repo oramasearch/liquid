@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "capture/cursor.hpp"
 
 #include <fstream>

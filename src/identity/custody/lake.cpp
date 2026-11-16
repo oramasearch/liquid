@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "identity/custody/providers.hpp"
 
 #include <algorithm>

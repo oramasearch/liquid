@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "owner_lock.hpp"
 
 #include <algorithm>

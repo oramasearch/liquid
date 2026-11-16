@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/vfs.hpp"
 
 #include "vfs/backend.hpp"

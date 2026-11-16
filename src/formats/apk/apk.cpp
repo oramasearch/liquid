@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/apk/apk.hpp"
 
 #include <algorithm>

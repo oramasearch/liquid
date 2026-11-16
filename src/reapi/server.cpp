@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/reapi.hpp"
 
 #include <algorithm>

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 """Session D-Bus overlay provider for the liquid Dolphin integration."""
 
 import os

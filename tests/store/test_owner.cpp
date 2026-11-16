@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // liquid #321: one open handle owns a store root at a time, across processes, and a successor
 // can wait (bounded) for a draining or killed predecessor to release it. liquid #327: the same
 // ownership through an injected owner whose grant carries a fence, on a remote-shaped backend.

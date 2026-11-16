@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "capture/watcher.hpp"
 
 #include <CoreServices/CoreServices.h>

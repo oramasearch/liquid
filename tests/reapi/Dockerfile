@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 FROM python:3.13.7-slim-bookworm
 
 ARG REMOTE_APIS_COMMIT=77ec630134abbf9aa525f921eee4e5d11dc20f7e

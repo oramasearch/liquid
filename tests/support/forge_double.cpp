@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "forge_double.hpp"
 
 #include <algorithm>

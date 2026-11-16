@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "crdt/schema.hpp"
 
 #include <algorithm>

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "build/cache.hpp"
 #include "build/policy.hpp"
 

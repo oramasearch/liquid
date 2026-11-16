@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 include_guard(GLOBAL)
 
 set(LIQUID_GRAMMARS "all" CACHE STRING

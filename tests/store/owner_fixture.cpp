@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // A store writer process for the liquid #321 owner-lock tests.
 //
 //   liquid-store-owner-fixture <root> <ack-file> <seed> <count> <owner-wait-ms>

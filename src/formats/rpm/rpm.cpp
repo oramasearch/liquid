@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "formats/rpm/rpm.hpp"
 
 #include <algorithm>

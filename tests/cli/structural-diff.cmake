@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 if(NOT DEFINED LIQUID_CLI OR NOT DEFINED LIQUID_STRUCTURAL_DIFF_FIXTURE OR
    NOT DEFINED LIQUID_STRUCTURAL_DIFF_ROOT)
   message(FATAL_ERROR "structural diff test arguments are required")

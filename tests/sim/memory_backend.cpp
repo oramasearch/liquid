@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "memory_backend.hpp"
 
 #include <algorithm>

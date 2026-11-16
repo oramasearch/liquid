@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "pack.hpp"
 
 #include "backend.hpp"

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "git/object_store.hpp"
 
 #include <algorithm>

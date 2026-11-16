@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+
 """Regenerate deterministic Spack interchange fixtures used without a Spack checkout."""
 
 from __future__ import annotations

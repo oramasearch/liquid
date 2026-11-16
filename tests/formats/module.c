@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 #include "liquid/format_abi.h"
 
 static int unsupported(void* module_context,
